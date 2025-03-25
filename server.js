@@ -18,7 +18,7 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
-// PostgreSQL pool connection
+// PostgreSQL connection
 const pool = new Pool({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
@@ -38,14 +38,12 @@ app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   try {
     const result = await pool.query("SELECT * FROM admins WHERE username = $1", [username]);
-
     if (result.rows.length === 0) {
       return res.status(401).json({ error: "Invalid username" });
     }
 
     const admin = result.rows[0];
     const isMatch = await bcrypt.compare(password, admin.password);
-
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid password" });
     }
@@ -58,6 +56,7 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+// 🏏 Add a match
 app.post("/api/match", async (req, res) => {
   try {
     const { match_name, match_type } = req.body;
@@ -71,6 +70,7 @@ app.post("/api/match", async (req, res) => {
   }
 });
 
+// 📝 Submit match result
 app.post("/api/submit-result", async (req, res) => {
   try {
     const {
@@ -85,9 +85,21 @@ app.post("/api/submit-result", async (req, res) => {
       wickets2,
     } = req.body;
 
-    const match = await pool.query("SELECT * FROM matches WHERE id = $1", [match_id]);
-    const match_type = match.rows[0].match_type;
-    const match_name = match.rows[0].match_name;
+    // Fetch match info
+    const matchResult = await pool.query("SELECT * FROM matches WHERE id = $1", [match_id]);
+
+    if (matchResult.rows.length === 0) {
+      return res.status(400).json({ error: "Invalid match_id. Match not found." });
+    }
+
+    const match = matchResult.rows[0];
+
+    if (!match.match_type || !match.match_name) {
+      return res.status(400).json({ error: "match_name or match_type is missing for the provided match_id." });
+    }
+
+    const match_type = match.match_type;
+    const match_name = match.match_name;
 
     const maxOvers = match_type === "T20" ? 20 : 50;
     if (overs1 > maxOvers || overs2 > maxOvers) {
@@ -100,8 +112,7 @@ app.post("/api/submit-result", async (req, res) => {
     const overs2Decimal = convertOversToDecimal(overs2);
 
     let winner = "Match Draw";
-    let points1 = 1,
-      points2 = 1;
+    let points1 = 1, points2 = 1;
     if (runs1 > runs2) {
       winner = `${team1} won the match!`;
       points1 = 2;
@@ -112,6 +123,7 @@ app.post("/api/submit-result", async (req, res) => {
       points2 = 2;
     }
 
+    // Insert/update team 1
     await pool.query(
       `
       INSERT INTO teams 
@@ -141,6 +153,7 @@ app.post("/api/submit-result", async (req, res) => {
       ]
     );
 
+    // Insert/update team 2
     await pool.query(
       `
       INSERT INTO teams 
@@ -170,6 +183,7 @@ app.post("/api/submit-result", async (req, res) => {
       ]
     );
 
+    // Update NRR
     await pool.query(
       `
       UPDATE teams
@@ -185,6 +199,7 @@ app.post("/api/submit-result", async (req, res) => {
       [match_id]
     );
 
+    // Add to match history
     await pool.query(
       `INSERT INTO match_history 
         (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner) 
@@ -207,11 +222,14 @@ app.post("/api/submit-result", async (req, res) => {
 
     io.emit("matchUpdate", { match_id, winner });
     res.json({ message: winner });
+
   } catch (err) {
+    console.error("Submit Result Error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// 🏆 Leaderboard
 app.get("/api/teams", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -231,6 +249,7 @@ app.get("/api/teams", async (req, res) => {
   }
 });
 
+// 📜 Match History with filters
 app.get("/api/match-history", async (req, res) => {
   try {
     const { match_type, team, winner } = req.query;
@@ -263,11 +282,13 @@ app.get("/api/match-history", async (req, res) => {
   }
 });
 
+// 🔌 Socket connection
 io.on("connection", (socket) => {
   console.log("New client connected");
   socket.on("disconnect", () => console.log("Client disconnected"));
 });
 
+// ✅ Start server
 server.listen(5000, () => {
   console.log("✅ Server running on port 5000");
 });
