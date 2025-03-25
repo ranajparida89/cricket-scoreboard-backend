@@ -33,17 +33,23 @@ const convertOversToDecimal = (overs) => {
   return whole + balls / 6;
 };
 
-// 🔐 Admin Login
+// 🔐 Admin Login with Debug Logs
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   try {
+    console.log("Login attempt:", username);
+
     const result = await pool.query("SELECT * FROM admins WHERE username = $1", [username]);
+    console.log("DB result:", result.rows);
+
     if (result.rows.length === 0) {
       return res.status(401).json({ error: "Invalid username" });
     }
 
     const admin = result.rows[0];
     const isMatch = await bcrypt.compare(password, admin.password);
+    console.log("Password match:", isMatch);
+
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid password" });
     }
