@@ -9,9 +9,13 @@ const jwt = require("jsonwebtoken");
 
 const app = express();
 const server = http.createServer(app);
+
+// ✅ Allow frontend domain in CORS
 const io = socketIo(server, {
   cors: {
-    origin: "*",
+    origin: "https://crickedge.in",
+    methods: ["GET", "POST"],
+    credentials: true,
   },
 });
 
@@ -33,7 +37,7 @@ const convertOversToDecimal = (overs) => {
   return whole + balls / 6;
 };
 
-// 🔐 Admin Login with Debug Logs
+// 🔐 Admin Login (optional, not used currently)
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -91,7 +95,6 @@ app.post("/api/submit-result", async (req, res) => {
       wickets2,
     } = req.body;
 
-    // Fetch match info
     const matchResult = await pool.query("SELECT * FROM matches WHERE id = $1", [match_id]);
 
     if (matchResult.rows.length === 0) {
@@ -99,11 +102,6 @@ app.post("/api/submit-result", async (req, res) => {
     }
 
     const match = matchResult.rows[0];
-
-    if (!match.match_type || !match.match_name) {
-      return res.status(400).json({ error: "match_name or match_type is missing for the provided match_id." });
-    }
-
     const match_type = match.match_type;
     const match_name = match.match_name;
 
@@ -129,10 +127,8 @@ app.post("/api/submit-result", async (req, res) => {
       points2 = 2;
     }
 
-    // Insert/update team 1
     await pool.query(
-      `
-      INSERT INTO teams 
+      `INSERT INTO teams 
         (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled)
       VALUES 
         ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
@@ -144,8 +140,7 @@ app.post("/api/submit-result", async (req, res) => {
         total_runs = teams.total_runs + $6,
         total_overs = teams.total_overs + $7,
         total_runs_conceded = teams.total_runs_conceded + $8,
-        total_overs_bowled = teams.total_overs_bowled + $9
-    `,
+        total_overs_bowled = teams.total_overs_bowled + $9`,
       [
         match_id,
         team1,
@@ -159,10 +154,8 @@ app.post("/api/submit-result", async (req, res) => {
       ]
     );
 
-    // Insert/update team 2
     await pool.query(
-      `
-      INSERT INTO teams 
+      `INSERT INTO teams 
         (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled)
       VALUES 
         ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
@@ -174,8 +167,7 @@ app.post("/api/submit-result", async (req, res) => {
         total_runs = teams.total_runs + $6,
         total_overs = teams.total_overs + $7,
         total_runs_conceded = teams.total_runs_conceded + $8,
-        total_overs_bowled = teams.total_overs_bowled + $9
-    `,
+        total_overs_bowled = teams.total_overs_bowled + $9`,
       [
         match_id,
         team2,
@@ -189,23 +181,19 @@ app.post("/api/submit-result", async (req, res) => {
       ]
     );
 
-    // Update NRR
     await pool.query(
-      `
-      UPDATE teams
-      SET nrr = 
-        CASE 
-          WHEN total_overs > 0 AND total_overs_bowled > 0 THEN 
-            (total_runs::decimal / total_overs) - 
-            (total_runs_conceded::decimal / total_overs_bowled)
-          ELSE 0
-        END
-      WHERE match_id = $1
-    `,
+      `UPDATE teams
+       SET nrr = 
+         CASE 
+           WHEN total_overs > 0 AND total_overs_bowled > 0 THEN 
+             (total_runs::decimal / total_overs) - 
+             (total_runs_conceded::decimal / total_overs_bowled)
+           ELSE 0
+         END
+       WHERE match_id = $1`,
       [match_id]
     );
 
-    // Add to match history
     await pool.query(
       `INSERT INTO match_history 
         (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner) 
@@ -226,7 +214,9 @@ app.post("/api/submit-result", async (req, res) => {
       ]
     );
 
+    // ✅ Emit real-time update event
     io.emit("matchUpdate", { match_id, winner });
+
     res.json({ message: winner });
 
   } catch (err) {
@@ -235,7 +225,7 @@ app.post("/api/submit-result", async (req, res) => {
   }
 });
 
-// 🏆 Leaderboard
+// 🏆 Leaderboard API
 app.get("/api/teams", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -255,11 +245,10 @@ app.get("/api/teams", async (req, res) => {
   }
 });
 
-// 📜 Match History with filters
+// 📜 Match History API
 app.get("/api/match-history", async (req, res) => {
   try {
     const { match_type, team, winner } = req.query;
-
     let query = `SELECT * FROM match_history WHERE 1=1`;
     const params = [];
 
@@ -294,7 +283,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => console.log("Client disconnected"));
 });
 
-// ✅ Start server
+// ✅ Start the server
 server.listen(5000, () => {
   console.log("✅ Server running on port 5000");
 });
