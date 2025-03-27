@@ -10,7 +10,6 @@ const jwt = require("jsonwebtoken");
 const app = express();
 const server = http.createServer(app);
 
-// ✅ Allow frontend domain in CORS
 const io = socketIo(server, {
   cors: {
     origin: "https://crickedge.in",
@@ -31,32 +30,23 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
+// 🆕 Accurate overs to decimal (e.g., 49.3 => 49 + 3/6 = 49.5)
 const convertOversToDecimal = (overs) => {
-  const whole = Math.floor(overs);
-  const balls = (overs - whole) * 10;
-  return whole + balls / 6;
+  const parts = overs.toString().split(".");
+  const fullOvers = parseInt(parts[0]);
+  const balls = parts[1] ? parseInt(parts[1].padEnd(1, "0")) : 0;
+  return fullOvers + balls / 6;
 };
 
-// 🔐 Admin Login (optional, not used currently)
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   try {
-    console.log("Login attempt:", username);
-
     const result = await pool.query("SELECT * FROM admins WHERE username = $1", [username]);
-    console.log("DB result:", result.rows);
-
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: "Invalid username" });
-    }
+    if (result.rows.length === 0) return res.status(401).json({ error: "Invalid username" });
 
     const admin = result.rows[0];
     const isMatch = await bcrypt.compare(password, admin.password);
-    console.log("Password match:", isMatch);
-
-    if (!isMatch) {
-      return res.status(401).json({ error: "Invalid password" });
-    }
+    if (!isMatch) return res.status(401).json({ error: "Invalid password" });
 
     const token = jwt.sign({ username }, process.env.JWT_SECRET, { expiresIn: "1h" });
     res.json({ token });
@@ -66,7 +56,6 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// 🏏 Add a match
 app.post("/api/match", async (req, res) => {
   try {
     const { match_name, match_type } = req.body;
@@ -80,58 +69,38 @@ app.post("/api/match", async (req, res) => {
   }
 });
 
-// 📝 Submit match result
 app.post("/api/submit-result", async (req, res) => {
   try {
     const {
-      match_id,
-      team1,
-      team2,
-      runs1,
-      overs1,
-      wickets1,
-      runs2,
-      overs2,
-      wickets2,
+      match_id, team1, team2,
+      runs1, overs1, wickets1,
+      runs2, overs2, wickets2,
     } = req.body;
 
     const matchResult = await pool.query("SELECT * FROM matches WHERE id = $1", [match_id]);
+    if (matchResult.rows.length === 0) return res.status(400).json({ error: "Invalid match_id" });
 
-    if (matchResult.rows.length === 0) {
-      return res.status(400).json({ error: "Invalid match_id. Match not found." });
-    }
-
-    const match = matchResult.rows[0];
-    const match_type = match.match_type;
-    const match_name = match.match_name;
-
+    const { match_name, match_type } = matchResult.rows[0];
     const maxOvers = match_type === "T20" ? 20 : 50;
     if (overs1 > maxOvers || overs2 > maxOvers) {
-      return res.status(400).json({
-        error: `Invalid overs! Max allowed for ${match_type} is ${maxOvers}`,
-      });
+      return res.status(400).json({ error: `Overs exceed limit of ${maxOvers}` });
     }
 
-    const overs1Decimal = convertOversToDecimal(overs1);
-    const overs2Decimal = convertOversToDecimal(overs2);
+    const overs1Decimal = convertOversToDecimal(overs1); // 🆕
+    const overs2Decimal = convertOversToDecimal(overs2); // 🆕
 
     let winner = "Match Draw";
     let points1 = 1, points2 = 1;
     if (runs1 > runs2) {
-      winner = `${team1} won the match!`;
-      points1 = 2;
-      points2 = 0;
+      winner = `${team1} won the match!`; points1 = 2; points2 = 0;
     } else if (runs2 > runs1) {
-      winner = `${team2} won the match!`;
-      points1 = 0;
-      points2 = 2;
+      winner = `${team2} won the match!`; points1 = 0; points2 = 2;
     }
 
-    await pool.query(
-      `INSERT INTO teams 
-        (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled)
+    await pool.query(`INSERT INTO teams 
+      (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled)
       VALUES 
-        ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
+      ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (match_id, name) DO UPDATE SET
         matches_played = teams.matches_played + 1,
         wins = teams.wins + $3,
@@ -141,9 +110,7 @@ app.post("/api/submit-result", async (req, res) => {
         total_overs = teams.total_overs + $7,
         total_runs_conceded = teams.total_runs_conceded + $8,
         total_overs_bowled = teams.total_overs_bowled + $9`,
-      [
-        match_id,
-        team1,
+      [match_id, team1,
         points1 === 2 ? 1 : 0,
         points2 === 2 ? 1 : 0,
         points1,
@@ -154,11 +121,10 @@ app.post("/api/submit-result", async (req, res) => {
       ]
     );
 
-    await pool.query(
-      `INSERT INTO teams 
-        (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled)
+    await pool.query(`INSERT INTO teams 
+      (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled)
       VALUES 
-        ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
+      ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (match_id, name) DO UPDATE SET
         matches_played = teams.matches_played + 1,
         wins = teams.wins + $3,
@@ -168,9 +134,7 @@ app.post("/api/submit-result", async (req, res) => {
         total_overs = teams.total_overs + $7,
         total_runs_conceded = teams.total_runs_conceded + $8,
         total_overs_bowled = teams.total_overs_bowled + $9`,
-      [
-        match_id,
-        team2,
+      [match_id, team2,
         points2 === 2 ? 1 : 0,
         points1 === 2 ? 1 : 0,
         points2,
@@ -181,42 +145,30 @@ app.post("/api/submit-result", async (req, res) => {
       ]
     );
 
-    await pool.query(
-      `UPDATE teams
-       SET nrr = 
-         CASE 
-           WHEN total_overs > 0 AND total_overs_bowled > 0 THEN 
-             (total_runs::decimal / total_overs) - 
-             (total_runs_conceded::decimal / total_overs_bowled)
-           ELSE 0
-         END
-       WHERE match_id = $1`,
-      [match_id]
-    );
+    // 🆕 Accurate NRR using correct overs-to-decimal conversion
+    await pool.query(`
+      UPDATE teams
+      SET nrr = CASE 
+        WHEN total_overs > 0 AND total_overs_bowled > 0 THEN 
+          (total_runs::decimal / total_overs) - 
+          (total_runs_conceded::decimal / total_overs_bowled)
+        ELSE 0
+      END
+      WHERE match_id = $1
+    `, [match_id]);
 
-    await pool.query(
-      `INSERT INTO match_history 
-        (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner) 
-       VALUES 
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    await pool.query(`INSERT INTO match_history 
+      (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
-        match_name,
-        match_type,
-        team1,
-        runs1,
-        overs1Decimal,
-        wickets1,
-        team2,
-        runs2,
-        overs2Decimal,
-        wickets2,
-        winner,
+        match_name, match_type,
+        team1, runs1, overs1Decimal, wickets1,
+        team2, runs2, overs2Decimal, wickets2,
+        winner
       ]
     );
 
-    // ✅ Emit real-time update event
     io.emit("matchUpdate", { match_id, winner });
-
     res.json({ message: winner });
 
   } catch (err) {
@@ -225,7 +177,7 @@ app.post("/api/submit-result", async (req, res) => {
   }
 });
 
-// 🏆 Leaderboard API
+// Leaderboard
 app.get("/api/teams", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -245,7 +197,6 @@ app.get("/api/teams", async (req, res) => {
   }
 });
 
-// 📜 Match History API
 app.get("/api/match-history", async (req, res) => {
   try {
     const { match_type, team, winner } = req.query;
@@ -256,19 +207,16 @@ app.get("/api/match-history", async (req, res) => {
       params.push(match_type);
       query += ` AND match_type = $${params.length}`;
     }
-
     if (team) {
       params.push(`%${team}%`);
       query += ` AND (team1 ILIKE $${params.length} OR team2 ILIKE $${params.length})`;
     }
-
     if (winner) {
       params.push(`%${winner}%`);
       query += ` AND winner ILIKE $${params.length}`;
     }
 
     query += ` ORDER BY match_time DESC`;
-
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
@@ -277,13 +225,12 @@ app.get("/api/match-history", async (req, res) => {
   }
 });
 
-// 🔌 Socket connection
+// Socket.IO
 io.on("connection", (socket) => {
   console.log("New client connected");
   socket.on("disconnect", () => console.log("Client disconnected"));
 });
 
-// ✅ Start the server
 server.listen(5000, () => {
   console.log("✅ Server running on port 5000");
 });
