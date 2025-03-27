@@ -29,7 +29,7 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-// ✅ Ball-to-decimal overs conversion
+// ✅ Accurate ball-to-decimal overs conversion
 const convertOversToDecimal = (overs) => {
   const parts = overs.toString().split(".");
   const fullOvers = parseInt(parts[0]);
@@ -50,7 +50,6 @@ app.post("/api/login", async (req, res) => {
     const token = jwt.sign({ username }, process.env.JWT_SECRET, { expiresIn: "1h" });
     res.json({ token });
   } catch (err) {
-    console.error("Login error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -146,7 +145,7 @@ app.post("/api/submit-result", async (req, res) => {
       ]
     );
 
-    // 🆕 Accurate NRR calculation using total aggregate across matches
+    // ✅ ICC-style NRR calculation
     await pool.query(`
       WITH team_stats AS (
         SELECT name,
@@ -191,7 +190,7 @@ app.post("/api/submit-result", async (req, res) => {
   }
 });
 
-// 🏆 Leaderboard
+// ✅ Leaderboard with proper aggregate NRR logic
 app.get("/api/teams", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -200,10 +199,17 @@ app.get("/api/teams", async (req, res) => {
              SUM(wins) AS wins,
              SUM(losses) AS losses,
              SUM(points) AS points,
-             ROUND(SUM(nrr)::numeric, 2) AS nrr
+             ROUND(
+               (SUM(total_runs)::decimal / NULLIF(SUM(total_overs), 0)) -
+               (SUM(total_runs_conceded)::decimal / NULLIF(SUM(total_overs_bowled), 0)),
+             2) AS nrr
       FROM teams
       GROUP BY name
-      ORDER BY SUM(points) DESC, SUM(nrr) DESC
+      ORDER BY SUM(points) DESC, 
+               ROUND(
+                 (SUM(total_runs)::decimal / NULLIF(SUM(total_overs), 0)) -
+                 (SUM(total_runs_conceded)::decimal / NULLIF(SUM(total_overs_bowled), 0)), 2
+               ) DESC
     `);
     res.json(result.rows);
   } catch (err) {
@@ -211,7 +217,6 @@ app.get("/api/teams", async (req, res) => {
   }
 });
 
-// 📜 Match History
 app.get("/api/match-history", async (req, res) => {
   try {
     const { match_type, team, winner } = req.query;
@@ -235,12 +240,10 @@ app.get("/api/match-history", async (req, res) => {
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
-    console.error("Error fetching match history:", err);
     res.status(500).json({ error: "Failed to fetch match history" });
   }
 });
 
-// 🔌 Socket.IO
 io.on("connection", (socket) => {
   console.log("New client connected");
   socket.on("disconnect", () => console.log("Client disconnected"));
