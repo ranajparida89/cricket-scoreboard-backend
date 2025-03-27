@@ -21,7 +21,6 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
-// PostgreSQL connection
 const pool = new Pool({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
@@ -30,7 +29,7 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-// 🆕 Accurate overs to decimal (e.g., 49.3 => 49 + 3/6 = 49.5)
+// ✅ Ball-to-decimal overs conversion
 const convertOversToDecimal = (overs) => {
   const parts = overs.toString().split(".");
   const fullOvers = parseInt(parts[0]);
@@ -82,12 +81,12 @@ app.post("/api/submit-result", async (req, res) => {
 
     const { match_name, match_type } = matchResult.rows[0];
     const maxOvers = match_type === "T20" ? 20 : 50;
-    if (overs1 > maxOvers || overs2 > maxOvers) {
-      return res.status(400).json({ error: `Overs exceed limit of ${maxOvers}` });
-    }
 
-    const overs1Decimal = convertOversToDecimal(overs1); // 🆕
-    const overs2Decimal = convertOversToDecimal(overs2); // 🆕
+    const overs1DecimalRaw = convertOversToDecimal(overs1);
+    const overs2DecimalRaw = convertOversToDecimal(overs2);
+
+    const actualOvers1 = (wickets1 === 10) ? maxOvers : overs1DecimalRaw;
+    const actualOvers2 = (wickets2 === 10) ? maxOvers : overs2DecimalRaw;
 
     let winner = "Match Draw";
     let points1 = 1, points2 = 1;
@@ -110,14 +109,15 @@ app.post("/api/submit-result", async (req, res) => {
         total_overs = teams.total_overs + $7,
         total_runs_conceded = teams.total_runs_conceded + $8,
         total_overs_bowled = teams.total_overs_bowled + $9`,
-      [match_id, team1,
+      [
+        match_id, team1,
         points1 === 2 ? 1 : 0,
         points2 === 2 ? 1 : 0,
         points1,
         runs1,
-        overs1Decimal,
+        actualOvers1,
         runs2,
-        overs2Decimal,
+        overs2DecimalRaw,
       ]
     );
 
@@ -134,36 +134,50 @@ app.post("/api/submit-result", async (req, res) => {
         total_overs = teams.total_overs + $7,
         total_runs_conceded = teams.total_runs_conceded + $8,
         total_overs_bowled = teams.total_overs_bowled + $9`,
-      [match_id, team2,
+      [
+        match_id, team2,
         points2 === 2 ? 1 : 0,
         points1 === 2 ? 1 : 0,
         points2,
         runs2,
-        overs2Decimal,
+        actualOvers2,
         runs1,
-        overs1Decimal,
+        overs1DecimalRaw,
       ]
     );
 
-    // 🆕 Accurate NRR using correct overs-to-decimal conversion
+    // 🆕 Accurate NRR calculation using total aggregate across matches
     await pool.query(`
-      UPDATE teams
-      SET nrr = CASE 
-        WHEN total_overs > 0 AND total_overs_bowled > 0 THEN 
-          (total_runs::decimal / total_overs) - 
-          (total_runs_conceded::decimal / total_overs_bowled)
-        ELSE 0
-      END
-      WHERE match_id = $1
-    `, [match_id]);
+      WITH team_stats AS (
+        SELECT name,
+               SUM(total_runs) AS total_runs,
+               SUM(total_overs) AS total_overs,
+               SUM(total_runs_conceded) AS total_runs_conceded,
+               SUM(total_overs_bowled) AS total_overs_bowled
+        FROM teams
+        GROUP BY name
+      )
+      UPDATE teams t
+      SET nrr = (
+        SELECT 
+          CASE 
+            WHEN ts.total_overs > 0 AND ts.total_overs_bowled > 0 THEN 
+              (ts.total_runs::decimal / ts.total_overs) - 
+              (ts.total_runs_conceded::decimal / ts.total_overs_bowled)
+            ELSE 0
+          END
+        FROM team_stats ts
+        WHERE ts.name = t.name
+      )
+    `);
 
     await pool.query(`INSERT INTO match_history 
       (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner) 
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         match_name, match_type,
-        team1, runs1, overs1Decimal, wickets1,
-        team2, runs2, overs2Decimal, wickets2,
+        team1, runs1, actualOvers1, wickets1,
+        team2, runs2, actualOvers2, wickets2,
         winner
       ]
     );
@@ -177,7 +191,7 @@ app.post("/api/submit-result", async (req, res) => {
   }
 });
 
-// Leaderboard
+// 🏆 Leaderboard
 app.get("/api/teams", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -197,6 +211,7 @@ app.get("/api/teams", async (req, res) => {
   }
 });
 
+// 📜 Match History
 app.get("/api/match-history", async (req, res) => {
   try {
     const { match_type, team, winner } = req.query;
@@ -225,7 +240,7 @@ app.get("/api/match-history", async (req, res) => {
   }
 });
 
-// Socket.IO
+// 🔌 Socket.IO
 io.on("connection", (socket) => {
   console.log("New client connected");
   socket.on("disconnect", () => console.log("Client disconnected"));
