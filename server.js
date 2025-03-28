@@ -29,7 +29,7 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-// ✅ Accurate ball-to-decimal overs conversion
+// ✅ Ball-to-decimal overs conversion
 const convertOversToDecimal = (overs) => {
   const parts = overs.toString().split(".");
   const fullOvers = parseInt(parts[0]);
@@ -37,6 +37,25 @@ const convertOversToDecimal = (overs) => {
   return fullOvers + balls / 6;
 };
 
+// ✅ Ping Endpoint (frontend can call this every 5-10 mins)
+app.get("/api/ping", async (req, res) => {
+  try {
+    await pool.query("SELECT 1"); // lightweight ping
+    res.status(200).json({ message: "DB connection alive" });
+  } catch (err) {
+    console.error("Ping DB error:", err);
+    res.status(500).json({ message: "DB not reachable" });
+  }
+});
+
+// ✅ Internal ping every 5 seconds (backend-side keep-alive)
+setInterval(() => {
+  pool.query("SELECT 1").catch((err) =>
+    console.error("Periodic DB ping failed:", err)
+  );
+}, 5000);
+
+// 🔐 Admin Login
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -108,16 +127,8 @@ app.post("/api/submit-result", async (req, res) => {
         total_overs = teams.total_overs + $7,
         total_runs_conceded = teams.total_runs_conceded + $8,
         total_overs_bowled = teams.total_overs_bowled + $9`,
-      [
-        match_id, team1,
-        points1 === 2 ? 1 : 0,
-        points2 === 2 ? 1 : 0,
-        points1,
-        runs1,
-        actualOvers1,
-        runs2,
-        overs2DecimalRaw,
-      ]
+      [match_id, team1, points1 === 2 ? 1 : 0, points2 === 2 ? 1 : 0, points1,
+        runs1, actualOvers1, runs2, overs2DecimalRaw]
     );
 
     await pool.query(`INSERT INTO teams 
@@ -133,19 +144,10 @@ app.post("/api/submit-result", async (req, res) => {
         total_overs = teams.total_overs + $7,
         total_runs_conceded = teams.total_runs_conceded + $8,
         total_overs_bowled = teams.total_overs_bowled + $9`,
-      [
-        match_id, team2,
-        points2 === 2 ? 1 : 0,
-        points1 === 2 ? 1 : 0,
-        points2,
-        runs2,
-        actualOvers2,
-        runs1,
-        overs1DecimalRaw,
-      ]
+      [match_id, team2, points2 === 2 ? 1 : 0, points1 === 2 ? 1 : 0, points2,
+        runs2, actualOvers2, runs1, overs1DecimalRaw]
     );
 
-    // ✅ ICC-style NRR calculation
     await pool.query(`
       WITH team_stats AS (
         SELECT name,
@@ -173,12 +175,8 @@ app.post("/api/submit-result", async (req, res) => {
     await pool.query(`INSERT INTO match_history 
       (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner) 
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [
-        match_name, match_type,
-        team1, runs1, actualOvers1, wickets1,
-        team2, runs2, actualOvers2, wickets2,
-        winner
-      ]
+      [match_name, match_type, team1, runs1, actualOvers1, wickets1,
+        team2, runs2, actualOvers2, wickets2, winner]
     );
 
     io.emit("matchUpdate", { match_id, winner });
@@ -190,7 +188,6 @@ app.post("/api/submit-result", async (req, res) => {
   }
 });
 
-// ✅ Leaderboard with proper aggregate NRR logic
 app.get("/api/teams", async (req, res) => {
   try {
     const result = await pool.query(`
