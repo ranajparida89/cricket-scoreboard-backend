@@ -29,18 +29,23 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-// ✅ Ball-to-decimal overs conversion
-const convertOversToDecimal = (overs) => {
-  const parts = overs.toString().split(".");
-  const fullOvers = parseInt(parts[0]);
-  const balls = parts[1] ? parseInt(parts[1].padEnd(1, "0")) : 0;
+// ✅ Sanitize cricket overs (e.g., 45.5 is valid, 45.6+ is not)
+const sanitizeOversInput = (overs) => {
+  const [fullOversStr, ballsStr = "0"] = overs.toString().split(".");
+  const fullOvers = parseInt(fullOversStr);
+  const balls = parseInt(ballsStr.slice(0, 1));
+
+  if (isNaN(fullOvers) || isNaN(balls) || balls > 5) {
+    throw new Error(`Invalid overs format: ${overs}`);
+  }
+
   return fullOvers + balls / 6;
 };
 
 // ✅ Ping Endpoint (frontend can call this every 5-10 mins)
 app.get("/api/ping", async (req, res) => {
   try {
-    await pool.query("SELECT 1"); // lightweight ping
+    await pool.query("SELECT 1");
     res.status(200).json({ message: "DB connection alive" });
   } catch (err) {
     console.error("Ping DB error:", err);
@@ -48,11 +53,8 @@ app.get("/api/ping", async (req, res) => {
   }
 });
 
-// ✅ Internal ping every 5 seconds (backend-side keep-alive)
 setInterval(() => {
-  pool.query("SELECT 1").catch((err) =>
-    console.error("Periodic DB ping failed:", err)
-  );
+  pool.query("SELECT 1").catch((err) => console.error("Periodic DB ping failed:", err));
 }, 5000);
 
 // 🔐 Admin Login
@@ -100,8 +102,8 @@ app.post("/api/submit-result", async (req, res) => {
     const { match_name, match_type } = matchResult.rows[0];
     const maxOvers = match_type === "T20" ? 20 : 50;
 
-    const overs1DecimalRaw = convertOversToDecimal(overs1);
-    const overs2DecimalRaw = convertOversToDecimal(overs2);
+    const overs1DecimalRaw = sanitizeOversInput(overs1);
+    const overs2DecimalRaw = sanitizeOversInput(overs2);
 
     const actualOvers1 = (wickets1 === 10) ? maxOvers : overs1DecimalRaw;
     const actualOvers2 = (wickets2 === 10) ? maxOvers : overs2DecimalRaw;
