@@ -1,3 +1,4 @@
+// ✅ Updated server.js with overs sanitation logic
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -29,7 +30,7 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-// ✅ Sanitize cricket overs (e.g., 45.5 is valid, 45.6+ is not)
+// ✅ Sanitize overs: max 5 balls after decimal (e.g., 19.5 is okay, 19.6 is not)
 const sanitizeOversInput = (overs) => {
   const [fullOversStr, ballsStr = "0"] = overs.toString().split(".");
   const fullOvers = parseInt(fullOversStr);
@@ -42,7 +43,6 @@ const sanitizeOversInput = (overs) => {
   return fullOvers + balls / 6;
 };
 
-// ✅ Ping Endpoint (frontend can call this every 5-10 mins)
 app.get("/api/ping", async (req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -57,7 +57,6 @@ setInterval(() => {
   pool.query("SELECT 1").catch((err) => console.error("Periodic DB ping failed:", err));
 }, 5000);
 
-// 🔐 Admin Login
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   try {
