@@ -1,15 +1,15 @@
 // routes/testMatchRoutes.js
 const express = require("express");
 const router = express.Router();
-const pool = require("../cricket-scoreboard-backend/db"); // ✅ Adjust if needed based on your setup
+const pool = require("../db"); // ✅ Adjusted correctly for most setups
 
-// Validate overs format: only 0–5 balls allowed (e.g., 88.6 ❌)
+// ✅ Utility to check valid overs like 88.5 but not 88.6
 function isValidOverFormat(over) {
   const parts = over.toString().split(".");
   return !parts[1] || parseInt(parts[1]) <= 5;
 }
 
-// POST /api/test-match
+// ✅ POST /api/test-match
 router.post("/test-match", async (req, res) => {
   try {
     const {
@@ -21,15 +21,18 @@ router.post("/test-match", async (req, res) => {
       total_overs_used
     } = req.body;
 
-    if (!team1 || !team2 || !winner) {
+    // ✅ Validate required fields
+    if (!team1 || !team2 || !winner || !match_id) {
       return res.status(400).json({ error: "Missing required fields." });
     }
 
+    // ✅ Validate overs format
     const oversList = [overs1, overs2, overs1_2, overs2_2];
     if (!oversList.every(isValidOverFormat)) {
       return res.status(400).json({ error: "Invalid over format (balls must be 0–5)." });
     }
 
+    // ✅ Insert into test_match_results
     await pool.query(
       `
       INSERT INTO test_match_results (
