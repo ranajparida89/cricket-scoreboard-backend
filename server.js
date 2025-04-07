@@ -1,18 +1,19 @@
-// ✅ Updated server.js with overs sanitation logic
+// server.js
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const socketIo = require("socket.io");
-const { Pool } = require("pg");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
-const testMatchRoutes = require("./routes/testMatchRoutes"); // ✅ Step 3 Integration
+const pool = require("./db"); // ✅ Step 2: Centralized DB connection
+const testMatchRoutes = require("./routes/testMatchRoutes"); // ✅ Test Match Route
 
 const app = express();
 const server = http.createServer(app);
 
+// ✅ Enable real-time updates
 const io = socketIo(server, {
   cors: {
     origin: "https://crickedge.in",
@@ -21,20 +22,14 @@ const io = socketIo(server, {
   },
 });
 
+// ✅ Middleware
 app.use(cors());
 app.use(express.json());
-app.use("/api", testMatchRoutes);  // ✅ Fix: Makes it accessible at /api/test-match
- // ✅ Mount Test Match Route
 
-const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT,
-});
+// ✅ Route Mounts
+app.use("/api", testMatchRoutes); // Now handles /api/test-match
 
-// ✅ Sanitize overs: max 5 balls after decimal (e.g., 19.5 is okay, 19.6 is not)
+// ✅ Utility: overs format check (e.g., 49.5 ok, 49.6 ❌)
 const sanitizeOversInput = (overs) => {
   const [fullOversStr, ballsStr = "0"] = overs.toString().split(".");
   const fullOvers = parseInt(fullOversStr);
@@ -45,6 +40,7 @@ const sanitizeOversInput = (overs) => {
   return fullOvers + balls / 6;
 };
 
+// ✅ DB Ping Endpoint
 app.get("/api/ping", async (req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -59,6 +55,7 @@ setInterval(() => {
   pool.query("SELECT 1").catch((err) => console.error("Periodic DB ping failed:", err));
 }, 5000);
 
+// ✅ Admin Login
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -76,6 +73,7 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+// ✅ Create a match
 app.post("/api/match", async (req, res) => {
   try {
     const { match_name, match_type } = req.body;
@@ -89,6 +87,7 @@ app.post("/api/match", async (req, res) => {
   }
 });
 
+// ✅ T20/ODI Result Submission
 app.post("/api/submit-result", async (req, res) => {
   try {
     const {
@@ -117,6 +116,7 @@ app.post("/api/submit-result", async (req, res) => {
       winner = `${team2} won the match!`; points1 = 0; points2 = 2;
     }
 
+    // ✅ Team 1
     await pool.query(`INSERT INTO teams 
       (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled)
       VALUES 
@@ -134,6 +134,7 @@ app.post("/api/submit-result", async (req, res) => {
         runs1, actualOvers1, runs2, overs2DecimalRaw]
     );
 
+    // ✅ Team 2
     await pool.query(`INSERT INTO teams 
       (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled)
       VALUES 
@@ -151,6 +152,7 @@ app.post("/api/submit-result", async (req, res) => {
         runs2, actualOvers2, runs1, overs1DecimalRaw]
     );
 
+    // ✅ Update NRR for all teams
     await pool.query(`
       WITH team_stats AS (
         SELECT name,
@@ -175,6 +177,7 @@ app.post("/api/submit-result", async (req, res) => {
       )
     `);
 
+    // ✅ Insert match history
     await pool.query(`INSERT INTO match_history 
       (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner) 
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
@@ -191,6 +194,7 @@ app.post("/api/submit-result", async (req, res) => {
   }
 });
 
+// ✅ Leaderboard
 app.get("/api/teams", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -200,14 +204,14 @@ app.get("/api/teams", async (req, res) => {
              SUM(losses) AS losses,
              SUM(points) AS points,
              ROUND(
-               (SUM(total_runs)::decimal / NULLIF(SUM(total_overs), 0)) -
-               (SUM(total_runs_conceded)::decimal / NULLIF(SUM(total_overs_bowled), 0)),
-             2) AS nrr
+               (SUM(total_runs)::decimal / NULLIF(SUM(total_overs), 0)) - 
+               (SUM(total_runs_conceded)::decimal / NULLIF(SUM(total_overs_bowled), 0)), 2
+             ) AS nrr
       FROM teams
       GROUP BY name
-      ORDER BY SUM(points) DESC, 
+      ORDER BY SUM(points) DESC,
                ROUND(
-                 (SUM(total_runs)::decimal / NULLIF(SUM(total_overs), 0)) -
+                 (SUM(total_runs)::decimal / NULLIF(SUM(total_overs), 0)) - 
                  (SUM(total_runs_conceded)::decimal / NULLIF(SUM(total_overs_bowled), 0)), 2
                ) DESC
     `);
@@ -217,6 +221,7 @@ app.get("/api/teams", async (req, res) => {
   }
 });
 
+// ✅ Match History
 app.get("/api/match-history", async (req, res) => {
   try {
     const { match_type, team, winner } = req.query;
@@ -244,11 +249,13 @@ app.get("/api/match-history", async (req, res) => {
   }
 });
 
+// ✅ WebSocket Setup
 io.on("connection", (socket) => {
   console.log("New client connected");
   socket.on("disconnect", () => console.log("Client disconnected"));
 });
 
+// ✅ Start Server
 server.listen(5000, () => {
   console.log("✅ Server running on port 5000");
 });
