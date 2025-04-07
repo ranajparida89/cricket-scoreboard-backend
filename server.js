@@ -23,7 +23,8 @@ const io = socketIo(server, {
 
 app.use(cors());
 app.use(express.json());
-app.use("/api/test-match", testMatchRoutes); // ✅ Mount Test Match Route
+app.use("/api", testMatchRoutes);  // ✅ Fix: Makes it accessible at /api/test-match
+ // ✅ Mount Test Match Route
 
 const pool = new Pool({
   user: process.env.DB_USER,
