@@ -1,4 +1,3 @@
-// routes/testMatchRoutes.js
 const express = require("express");
 const router = express.Router();
 const pool = require("../db"); // ✅ Step 2: Centralized DB connection
@@ -63,6 +62,22 @@ router.post("/test-match", async (req, res) => {
 
     await pool.query(insertQuery, values);
 
+    // ✅ Insert Test match into match_history
+    await pool.query(`
+      INSERT INTO match_history (
+        match_name, match_type, team1, runs1, overs1, wickets1,
+        team2, runs2, overs2, wickets2, winner
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10, $11
+      )
+    `, [
+      `Test Match #${match_id}`, "Test", team1, runs1 + runs1_2, overs1 + overs1_2, 10,
+      team2, runs2 + runs2_2, overs2 + overs2_2, 10,
+      winner
+    ]);
+
     // ✅ Send proper result response
     const message =
       winner === "Draw"
@@ -78,13 +93,13 @@ router.post("/test-match", async (req, res) => {
 
 // ✅ GET /api/test-matches
 router.get("/test-matches", async (req, res) => {
-    try {
-      const result = await pool.query("SELECT * FROM test_match_results ORDER BY match_id DESC");
-      res.json(result.rows);
-    } catch (err) {
-      console.error("❌ Error fetching test matches:", err);
-      res.status(500).json({ error: "Failed to fetch test matches" });
-    }
-  });
-  
+  try {
+    const result = await pool.query("SELECT * FROM test_match_results ORDER BY match_id DESC");
+    res.json(result.rows);
+  } catch (err) {
+    console.error("❌ Error fetching test matches:", err);
+    res.status(500).json({ error: "Failed to fetch test matches" });
+  }
+});
+
 module.exports = router;
