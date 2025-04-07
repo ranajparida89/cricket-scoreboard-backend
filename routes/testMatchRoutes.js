@@ -76,4 +76,15 @@ router.post("/test-match", async (req, res) => {
   }
 });
 
+// ✅ GET /api/test-matches
+router.get("/test-matches", async (req, res) => {
+    try {
+      const result = await pool.query("SELECT * FROM test_match_results ORDER BY match_id DESC");
+      res.json(result.rows);
+    } catch (err) {
+      console.error("❌ Error fetching test matches:", err);
+      res.status(500).json({ error: "Failed to fetch test matches" });
+    }
+  });
+  
 module.exports = router;
