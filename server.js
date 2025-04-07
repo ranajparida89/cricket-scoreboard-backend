@@ -8,6 +8,8 @@ const { Pool } = require("pg");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
+const testMatchRoutes = require("./routes/testMatchRoutes"); // ✅ Step 3 Integration
+
 const app = express();
 const server = http.createServer(app);
 
@@ -21,6 +23,7 @@ const io = socketIo(server, {
 
 app.use(cors());
 app.use(express.json());
+app.use("/api/test-match", testMatchRoutes); // ✅ Mount Test Match Route
 
 const pool = new Pool({
   user: process.env.DB_USER,
@@ -35,11 +38,9 @@ const sanitizeOversInput = (overs) => {
   const [fullOversStr, ballsStr = "0"] = overs.toString().split(".");
   const fullOvers = parseInt(fullOversStr);
   const balls = parseInt(ballsStr.slice(0, 1));
-
   if (isNaN(fullOvers) || isNaN(balls) || balls > 5) {
     throw new Error(`Invalid overs format: ${overs}`);
   }
-
   return fullOvers + balls / 6;
 };
 
