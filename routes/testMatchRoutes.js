@@ -1,11 +1,17 @@
 const express = require("express");
 const router = express.Router();
-const pool = require("../db"); // ✅ Step 2: Centralized DB connection
+const pool = require("../db");
 
 // ✅ Validate overs like 49.5 or 122.3 (but NOT 49.6 or 122.7)
 const isValidOverFormat = (over) => {
   const parts = over.toString().split(".");
   return !parts[1] || parseInt(parts[1]) <= 5;
+};
+
+// ✅ Utility: Convert overs to decimal for summing (e.g., 49.3 → 49.5)
+const convertOversToDecimal = (overs) => {
+  const [fullOvers, balls = "0"] = overs.toString().split(".");
+  return parseInt(fullOvers) + parseInt(balls) / 6;
 };
 
 // ✅ POST /api/test-match
@@ -20,19 +26,17 @@ router.post("/test-match", async (req, res) => {
       total_overs_used
     } = req.body;
 
-    // ✅ Validate required fields
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
       return res.status(400).json({ error: "Missing required fields." });
     }
 
-    // ✅ Validate overs format
     const oversFields = [overs1, overs2, overs1_2, overs2_2];
     if (!oversFields.every(isValidOverFormat)) {
       return res.status(400).json({ error: "Invalid over format. Balls must be 0–5 only." });
     }
 
     // ✅ Insert into test_match_results
-    const insertQuery = `
+    await pool.query(`
       INSERT INTO test_match_results (
         match_id, match_type, team1, team2, winner, points,
         runs1, overs1, wickets1,
@@ -40,8 +44,7 @@ router.post("/test-match", async (req, res) => {
         runs1_2, overs1_2, wickets1_2,
         runs2_2, overs2_2, wickets2_2,
         total_overs_used
-      )
-      VALUES (
+      ) VALUES (
         $1, $2, $3, $4, $5, $6,
         $7, $8, $9,
         $10, $11, $12,
@@ -49,40 +52,47 @@ router.post("/test-match", async (req, res) => {
         $16, $17, $18,
         $19
       )
-    `;
-
-    const values = [
+    `, [
       match_id, match_type, team1, team2, winner, points,
       runs1, overs1, wickets1,
       runs2, overs2, wickets2,
       runs1_2, overs1_2, wickets1_2,
       runs2_2, overs2_2, wickets2_2,
       total_overs_used
-    ];
+    ]);
 
-    await pool.query(insertQuery, values);
+    // ✅ Combine 1st + 2nd innings (runs, overs, wickets)
+    const totalRuns1 = runs1 + runs1_2;
+    const totalOvers1 = convertOversToDecimal(overs1) + convertOversToDecimal(overs1_2);
+    const totalWickets1 = wickets1 + wickets1_2;
 
-    // ✅ Insert Test match into match_history
+    const totalRuns2 = runs2 + runs2_2;
+    const totalOvers2 = convertOversToDecimal(overs2) + convertOversToDecimal(overs2_2);
+    const totalWickets2 = wickets2 + wickets2_2;
+
+    // ✅ Insert combined data into match_history
     await pool.query(`
       INSERT INTO match_history (
         match_name, match_type, team1, runs1, overs1, wickets1,
-        team2, runs2, overs2, wickets2, winner
+        team2, runs2, overs2, wickets2, winner,
+        runs1_2, overs1_2, wickets1_2,
+        runs2_2, overs2_2, wickets2_2
       )
       VALUES (
         $1, $2, $3, $4, $5, $6,
-        $7, $8, $9, $10, $11
+        $7, $8, $9, $10, $11,
+        $12, $13, $14, $15, $16, $17, $18
       )
     `, [
-      `Test Match #${match_id}`, "Test", team1, runs1 + runs1_2, overs1 + overs1_2, 10,
-      team2, runs2 + runs2_2, overs2 + overs2_2, 10,
-      winner
+      `Test Match #${match_id}`, "Test", team1, totalRuns1, totalOvers1.toFixed(1), totalWickets1,
+      team2, totalRuns2, totalOvers2.toFixed(1), totalWickets2, winner,
+      runs1_2, overs1_2, wickets1_2,
+      runs2_2, overs2_2, wickets2_2
     ]);
 
-    // ✅ Send proper result response
-    const message =
-      winner === "Draw"
-        ? `🤝 The match ended in a draw!`
-        : `✅ ${winner} won the test match!`;
+    const message = winner === "Draw"
+      ? `🤝 The match ended in a draw!`
+      : `✅ ${winner} won the test match!`;
 
     res.json({ message });
   } catch (err) {
