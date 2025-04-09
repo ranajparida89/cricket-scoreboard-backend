@@ -117,7 +117,7 @@ router.get("/test-matches", async (req, res) => {
 // ✅ [Ranaj - 2025-04-09] GET: Fetch Test Match History for MatchHistory page
 router.get("/test-match-history", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM test_match_results ORDER BY match_time DESC");
+    const result = await pool.query("SELECT * FROM test_match_results ORDER BY created_at DESC");
     res.json(result.rows);
   } catch (error) {
     console.error("[Ranaj - 2025-04-09] Error fetching Test match history:", error);
