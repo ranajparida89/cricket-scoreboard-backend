@@ -1,3 +1,4 @@
+// ✅ testMatchRoutes.js
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
@@ -81,7 +82,8 @@ router.post("/test-match", async (req, res) => {
       VALUES (
         $1, $2, $3, $4, $5, $6,
         $7, $8, $9, $10, $11,
-        $12, $13, $14, $15, $16, $17, $18
+        $12, $13, $14,
+        $15, $16, $17, $18
       )
     `, [
       `Test Match #${match_id}`, "Test", team1, totalRuns1, totalOvers1.toFixed(1), totalWickets1,
@@ -109,6 +111,17 @@ router.get("/test-matches", async (req, res) => {
   } catch (err) {
     console.error("❌ Error fetching test matches:", err);
     res.status(500).json({ error: "Failed to fetch test matches" });
+  }
+});
+
+// ✅ [Ranaj - 2025-04-09] GET: Fetch Test Match History for MatchHistory page
+router.get("/test-match-history", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM test_match_results ORDER BY match_time DESC");
+    res.json(result.rows);
+  } catch (error) {
+    console.error("[Ranaj - 2025-04-09] Error fetching Test match history:", error);
+    res.status(500).json({ error: "Failed to fetch Test match history" });
   }
 });
 
