@@ -1,4 +1,3 @@
-// ✅ testMatchRoutes.js
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
@@ -18,6 +17,9 @@ const convertOversToDecimal = (overs) => {
 // ✅ POST /api/test-match
 router.post("/test-match", async (req, res) => {
   try {
+    // ✅ [Ranaj - 2025-04-09] Log incoming request for debugging
+    console.log("🛠️ Incoming Test Match Data:", req.body);
+
     const {
       match_id, match_type, team1, team2, winner, points,
       runs1, overs1, wickets1,
@@ -98,7 +100,8 @@ router.post("/test-match", async (req, res) => {
 
     res.json({ message });
   } catch (err) {
-    console.error("❌ Test Match Submission Error:", err.message);
+    // ✅ [Ranaj - 2025-04-09] Log full error for backend debugging
+    console.error("❌ Test Match Submission Error:", err);
     res.status(500).json({ error: "Server error while submitting test match." });
   }
 });
@@ -114,7 +117,7 @@ router.get("/test-matches", async (req, res) => {
   }
 });
 
-// ✅ [Ranaj - 2025-04-09] GET: Fetch Test Match History for MatchHistory page
+// ✅ [Ranaj - 2025-04-09] GET: Fetch Test Match History for TestMatchHistory.js
 router.get("/test-match-history", async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM test_match_results ORDER BY created_at DESC");
