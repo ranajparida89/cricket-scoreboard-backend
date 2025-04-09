@@ -73,25 +73,28 @@ router.post("/test-match", async (req, res) => {
     const totalOvers2 = convertOversToDecimal(overs2) + convertOversToDecimal(overs2_2);
     const totalWickets2 = wickets2 + wickets2_2;
 
-    // ✅ Insert combined data into match_history
+    // ✅ FIXED: Added `match_time` column and value
     await pool.query(`
       INSERT INTO match_history (
         match_name, match_type, team1, runs1, overs1, wickets1,
         team2, runs2, overs2, wickets2, winner,
         runs1_2, overs1_2, wickets1_2,
-        runs2_2, overs2_2, wickets2_2
+        runs2_2, overs2_2, wickets2_2,
+        match_time
       )
       VALUES (
         $1, $2, $3, $4, $5, $6,
         $7, $8, $9, $10, $11,
         $12, $13, $14,
-        $15, $16, $17, $18
+        $15, $16, $17,
+        $18
       )
     `, [
       `Test Match #${match_id}`, "Test", team1, totalRuns1, totalOvers1.toFixed(1), totalWickets1,
       team2, totalRuns2, totalOvers2.toFixed(1), totalWickets2, winner,
       runs1_2, overs1_2, wickets1_2,
-      runs2_2, overs2_2, wickets2_2
+      runs2_2, overs2_2, wickets2_2,
+      new Date() // ✅ Added match_time
     ]);
 
     const message = winner === "Draw"
