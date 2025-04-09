@@ -38,32 +38,6 @@ router.post("/test-match", async (req, res) => {
       return res.status(400).json({ error: "Invalid over format. Balls must be 0–5 only." });
     }
 
-    // ✅ Insert into test_match_results
-    await pool.query(`
-      INSERT INTO test_match_results (
-        match_id, match_type, team1, team2, winner, points,
-        runs1, overs1, wickets1,
-        runs2, overs2, wickets2,
-        runs1_2, overs1_2, wickets1_2,
-        runs2_2, overs2_2, wickets2_2,
-        total_overs_used
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6,
-        $7, $8, $9,
-        $10, $11, $12,
-        $13, $14, $15,
-        $16, $17, $18,
-        $19
-      )
-    `, [
-      match_id, match_type, team1, team2, winner, points,
-      runs1, overs1, wickets1,
-      runs2, overs2, wickets2,
-      runs1_2, overs1_2, wickets1_2,
-      runs2_2, overs2_2, wickets2_2,
-      total_overs_used
-    ]);
-
     // ✅ Combine 1st + 2nd innings (runs, overs, wickets)
     const totalRuns1 = runs1 + runs1_2;
     const totalOvers1 = convertOversToDecimal(overs1) + convertOversToDecimal(overs1_2);
@@ -73,7 +47,66 @@ router.post("/test-match", async (req, res) => {
     const totalOvers2 = convertOversToDecimal(overs2) + convertOversToDecimal(overs2_2);
     const totalWickets2 = wickets2 + wickets2_2;
 
-    // ✅ FIXED: Added `match_time` column and value
+    // ✅ [NEW - Draw case] If match is drawn, insert 2 records for both teams with 2 points each
+    if (winner === "Draw") {
+      await pool.query(`
+        INSERT INTO test_match_results (
+          match_id, match_type, team1, team2, winner, points,
+          runs1, overs1, wickets1,
+          runs2, overs2, wickets2,
+          runs1_2, overs1_2, wickets1_2,
+          runs2_2, overs2_2, wickets2_2,
+          total_overs_used
+        ) VALUES
+          ($1, $2, $3, $4, $5, 2,
+           $6, $7, $8,
+           $9, $10, $11,
+           $12, $13, $14,
+           $15, $16, $17,
+           $18),
+          ($1, $2, $4, $3, $5, 2,
+           $9, $10, $11,
+           $6, $7, $8,
+           $15, $16, $17,
+           $12, $13, $14,
+           $18)
+      `, [
+        match_id, match_type, team1, team2, winner,
+        runs1, overs1, wickets1,
+        runs2, overs2, wickets2,
+        runs1_2, overs1_2, wickets1_2,
+        runs2_2, overs2_2, wickets2_2,
+        total_overs_used
+      ]);
+    } else {
+      // ✅ If not draw, insert normal match result (winner gets 12, loser gets 4)
+      await pool.query(`
+        INSERT INTO test_match_results (
+          match_id, match_type, team1, team2, winner, points,
+          runs1, overs1, wickets1,
+          runs2, overs2, wickets2,
+          runs1_2, overs1_2, wickets1_2,
+          runs2_2, overs2_2, wickets2_2,
+          total_overs_used
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6,
+          $7, $8, $9,
+          $10, $11, $12,
+          $13, $14, $15,
+          $16, $17, $18,
+          $19
+        )
+      `, [
+        match_id, match_type, team1, team2, winner, points,
+        runs1, overs1, wickets1,
+        runs2, overs2, wickets2,
+        runs1_2, overs1_2, wickets1_2,
+        runs2_2, overs2_2, wickets2_2,
+        total_overs_used
+      ]);
+    }
+
+    // ✅ Insert into match_history (only once)
     await pool.query(`
       INSERT INTO match_history (
         match_name, match_type, team1, runs1, overs1, wickets1,
@@ -94,7 +127,7 @@ router.post("/test-match", async (req, res) => {
       team2, totalRuns2, totalOvers2.toFixed(1), totalWickets2, winner,
       runs1_2, overs1_2, wickets1_2,
       runs2_2, overs2_2, wickets2_2,
-      new Date() // ✅ Added match_time
+      new Date() // ✅ match_time
     ]);
 
     const message = winner === "Draw"
