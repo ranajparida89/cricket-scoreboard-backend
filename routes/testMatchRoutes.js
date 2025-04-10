@@ -18,7 +18,7 @@ const convertOversToDecimal = (overs) => {
 // ✅ POST /api/test-match
 router.post("/test-match", async (req, res) => {
   try {
-    // ✅ [Ranaj - 2025-04-09] Log incoming request for debugging
+    // ✅ [Ranaj Parida - 2025-04-10 | 10:33 PM] Log request for debugging
     console.log("🛠️ Incoming Test Match Data:", req.body);
 
     const {
@@ -49,7 +49,7 @@ router.post("/test-match", async (req, res) => {
     const totalOvers2 = convertOversToDecimal(overs2) + convertOversToDecimal(overs2_2);
     const totalWickets2 = wickets2 + wickets2_2;
 
-    // ✅ [NEW - Draw case] If match is drawn, insert 2 records for both teams with 2 points each
+    // ✅ [Ranaj Parida - 2025-04-10 | 10:33 PM] Insert user-provided match name in both branches
     if (winner === "Draw") {
       await pool.query(`
         INSERT INTO test_match_results (
@@ -59,7 +59,7 @@ router.post("/test-match", async (req, res) => {
           runs1_2, overs1_2, wickets1_2,
           runs2_2, overs2_2, wickets2_2,
           total_overs_used,
-          match_name -- ✅ [Ranaj Parida - 2025-04-10 | 10:33 PM] Store user-given match name
+          match_name -- ✅ Save match title (e.g., "Border Gavaskar") in DB
         ) VALUES
           ($1, $2, $3, $4, $5, 2,
            $6, $7, $8,
@@ -83,7 +83,6 @@ router.post("/test-match", async (req, res) => {
         match_name?.toUpperCase()
       ]);
     } else {
-      // ✅ If not draw, insert normal match result (winner gets 12, loser gets 4)
       await pool.query(`
         INSERT INTO test_match_results (
           match_id, match_type, team1, team2, winner, points,
@@ -92,7 +91,7 @@ router.post("/test-match", async (req, res) => {
           runs1_2, overs1_2, wickets1_2,
           runs2_2, overs2_2, wickets2_2,
           total_overs_used,
-          match_name -- ✅ [Ranaj Parida - 2025-04-10 | 10:33 PM] Store user-given match name
+          match_name -- ✅ Save match title (e.g., "Ashes Series")
         ) VALUES (
           $1, $2, $3, $4, $5, $6,
           $7, $8, $9,
@@ -112,7 +111,7 @@ router.post("/test-match", async (req, res) => {
       ]);
     }
 
-    // ✅ Insert into match_history (only once)
+    // ✅ Save into `match_history` for match records
     await pool.query(`
       INSERT INTO match_history (
         match_name, match_type, team1, runs1, overs1, wickets1,
