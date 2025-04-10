@@ -1,3 +1,4 @@
+// ✅ testMatchRoutes.js
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
@@ -26,7 +27,8 @@ router.post("/test-match", async (req, res) => {
       runs2, overs2, wickets2,
       runs1_2, overs1_2, wickets1_2,
       runs2_2, overs2_2, wickets2_2,
-      total_overs_used
+      total_overs_used,
+      match_name // ✅ [Ranaj Parida - 2025-04-10 | 10:33 PM] Accept user-input match name
     } = req.body;
 
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
@@ -56,27 +58,29 @@ router.post("/test-match", async (req, res) => {
           runs2, overs2, wickets2,
           runs1_2, overs1_2, wickets1_2,
           runs2_2, overs2_2, wickets2_2,
-          total_overs_used
+          total_overs_used,
+          match_name -- ✅ [Ranaj Parida - 2025-04-10 | 10:33 PM] Store user-given match name
         ) VALUES
           ($1, $2, $3, $4, $5, 2,
            $6, $7, $8,
            $9, $10, $11,
            $12, $13, $14,
            $15, $16, $17,
-           $18),
+           $18, $19),
           ($1, $2, $4, $3, $5, 2,
            $9, $10, $11,
            $6, $7, $8,
            $15, $16, $17,
            $12, $13, $14,
-           $18)
+           $18, $19)
       `, [
         match_id, match_type, team1, team2, winner,
         runs1, overs1, wickets1,
         runs2, overs2, wickets2,
         runs1_2, overs1_2, wickets1_2,
         runs2_2, overs2_2, wickets2_2,
-        total_overs_used
+        total_overs_used,
+        match_name?.toUpperCase()
       ]);
     } else {
       // ✅ If not draw, insert normal match result (winner gets 12, loser gets 4)
@@ -87,14 +91,15 @@ router.post("/test-match", async (req, res) => {
           runs2, overs2, wickets2,
           runs1_2, overs1_2, wickets1_2,
           runs2_2, overs2_2, wickets2_2,
-          total_overs_used
+          total_overs_used,
+          match_name -- ✅ [Ranaj Parida - 2025-04-10 | 10:33 PM] Store user-given match name
         ) VALUES (
           $1, $2, $3, $4, $5, $6,
           $7, $8, $9,
           $10, $11, $12,
           $13, $14, $15,
           $16, $17, $18,
-          $19
+          $19, $20
         )
       `, [
         match_id, match_type, team1, team2, winner, points,
@@ -102,7 +107,8 @@ router.post("/test-match", async (req, res) => {
         runs2, overs2, wickets2,
         runs1_2, overs1_2, wickets1_2,
         runs2_2, overs2_2, wickets2_2,
-        total_overs_used
+        total_overs_used,
+        match_name?.toUpperCase()
       ]);
     }
 
@@ -123,11 +129,11 @@ router.post("/test-match", async (req, res) => {
         $18
       )
     `, [
-      `Test Match #${match_id}`, "Test", team1, totalRuns1, totalOvers1.toFixed(1), totalWickets1,
+      match_name?.toUpperCase(), "Test", team1, totalRuns1, totalOvers1.toFixed(1), totalWickets1,
       team2, totalRuns2, totalOvers2.toFixed(1), totalWickets2, winner,
       runs1_2, overs1_2, wickets1_2,
       runs2_2, overs2_2, wickets2_2,
-      new Date() // ✅ match_time
+      new Date()
     ]);
 
     const message = winner === "Draw"
@@ -136,7 +142,6 @@ router.post("/test-match", async (req, res) => {
 
     res.json({ message });
   } catch (err) {
-    // ✅ [Ranaj - 2025-04-09] Log full error for backend debugging
     console.error("❌ Test Match Submission Error:", err);
     res.status(500).json({ error: "Server error while submitting test match." });
   }
