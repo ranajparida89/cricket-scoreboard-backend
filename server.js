@@ -204,25 +204,37 @@ app.post("/api/submit-result", async (req, res) => {
 });
 
 // ✅ Leaderboard
+// ✅ Leaderboard with manual point calculation [Updated by Ranaj Parida - 19-April-2025]
 app.get("/api/teams", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT name AS team_name,
-             COUNT(DISTINCT match_id) AS matches_played,
-             SUM(wins) AS wins,
-             SUM(losses) AS losses,
-             SUM(points) AS points,
-             ROUND((SUM(total_runs)::decimal / NULLIF(SUM(total_overs), 0)) - 
-                   (SUM(total_runs_conceded)::decimal / NULLIF(SUM(total_overs_bowled), 0)), 2) AS nrr
+      SELECT 
+        name AS team_name,
+        COUNT(DISTINCT match_id) AS matches_played,
+        SUM(wins) AS wins,
+        SUM(losses) AS losses,
+        COUNT(DISTINCT match_id) - SUM(wins) - SUM(losses) AS draws,
+        -- ✅ Manual point logic for T20/ODI (win=2, draw=1)
+        (CASE 
+          WHEN SUM(wins) IS NOT NULL AND (COUNT(DISTINCT match_id) - SUM(wins) - SUM(losses)) IS NOT NULL 
+          THEN (SUM(wins) * 2 + (COUNT(DISTINCT match_id) - SUM(wins) - SUM(losses)) * 1)
+          ELSE 0
+        END) AS points,
+        ROUND(
+          (SUM(total_runs)::decimal / NULLIF(SUM(total_overs), 0)) - 
+          (SUM(total_runs_conceded)::decimal / NULLIF(SUM(total_overs_bowled), 0)), 
+          2
+        ) AS nrr
       FROM teams
       GROUP BY name
-      ORDER BY SUM(points) DESC
+      ORDER BY points DESC
     `);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch leaderboard" });
   }
 });
+
 
 // ✅ Point Table
 app.get("/api/points", async (req, res) => {
