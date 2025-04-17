@@ -210,4 +210,39 @@ router.get("/test-match-history", async (req, res) => {
   }
 });
 
+// ✅ [Added by Ranaj Parida | 20-April-2025] API to return accurate Test rankings
+router.get("/rankings/test", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        name AS team_name,
+        COUNT(*) AS matches,
+        SUM(wins) AS wins,
+        SUM(losses) AS losses,
+        COUNT(*) - SUM(wins) - SUM(losses) AS draws,
+        -- ✅ ICC Test point logic: Win=12, Loss=6, Draw=4
+        (SUM(wins)*12 + SUM(losses)*6 + (COUNT(*) - SUM(wins) - SUM(losses))*4) AS points,
+        ROUND(
+          (SUM(wins)*12 + SUM(losses)*6 + (COUNT(*) - SUM(wins) - SUM(losses))*4)::decimal / COUNT(*),
+          2
+        ) AS rating
+      FROM teams
+      WHERE name IN (
+        SELECT DISTINCT name
+        FROM teams t
+        JOIN match_history m ON t.match_id = m.id
+        WHERE m.match_type = 'Test'
+      )
+      GROUP BY name
+      ORDER BY rating DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("❌ Failed to fetch test rankings:", err.message);
+    res.status(500).json({ error: "Test ranking error" });
+  }
+});
+
+
 module.exports = router;
+
