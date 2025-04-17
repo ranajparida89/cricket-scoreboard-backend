@@ -237,24 +237,32 @@ app.get("/api/teams", async (req, res) => {
 
 
 // ✅ Point Table
+// ✅ Point Table with Manual Point Logic [Ranaj Parida - 19-April-2025]
 app.get("/api/points", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT name AS team,
-             COUNT(*) AS total_matches,
-             SUM(wins) AS wins,
-             SUM(losses) AS losses,
-             SUM(matches_played) - SUM(wins) - SUM(losses) AS draws,
-             SUM(points) AS points
+      SELECT 
+        name AS team,
+        COUNT(*) AS total_matches,
+        SUM(wins) AS wins,
+        SUM(losses) AS losses,
+        COUNT(*) - SUM(wins) - SUM(losses) AS draws,
+        -- ✅ Manual point logic: Win=2, Draw=1
+        (CASE 
+          WHEN SUM(wins) IS NOT NULL AND (COUNT(*) - SUM(wins) - SUM(losses)) IS NOT NULL 
+          THEN (SUM(wins) * 2 + (COUNT(*) - SUM(wins) - SUM(losses)) * 1)
+          ELSE 0
+        END) AS points
       FROM teams
       GROUP BY name
-      ORDER BY SUM(points) DESC
+      ORDER BY points DESC
     `);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch point table" });
   }
 });
+
 
 // ✅ Match History
 app.get("/api/match-history", async (req, res) => {
