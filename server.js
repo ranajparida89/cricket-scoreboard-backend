@@ -264,6 +264,36 @@ app.get("/api/points", async (req, res) => {
 });
 
 
+// ✅ Test Match Ranking - Manual Calculation (Win=12, Loss=6, Draw=4) [Ranaj Parida - 19-April-2025]
+app.get("/api/rankings/test", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        t.name AS team_name,
+        COUNT(DISTINCT t.match_id) AS matches,
+        SUM(t.wins) AS wins,
+        SUM(t.losses) AS losses,
+        COUNT(DISTINCT t.match_id) - SUM(t.wins) - SUM(t.losses) AS draws,
+        (SUM(t.wins) * 12 + SUM(t.losses) * 6 + 
+         (COUNT(DISTINCT t.match_id) - SUM(t.wins) - SUM(t.losses)) * 4) AS points,
+        ROUND(
+          (SUM(t.wins) * 12 + SUM(t.losses) * 6 + 
+          (COUNT(DISTINCT t.match_id) - SUM(t.wins) - SUM(t.losses)) * 4)::decimal 
+          / NULLIF(COUNT(DISTINCT t.match_id), 0),
+          2
+        ) AS rating
+      FROM teams t
+      JOIN matches m ON t.match_id = m.id
+      WHERE m.match_type = 'Test'
+      GROUP BY t.name
+      ORDER BY rating DESC;
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch Test match rankings" });
+  }
+});
+
 // ✅ Match History
 app.get("/api/match-history", async (req, res) => {
   try {
@@ -291,6 +321,7 @@ app.get("/api/match-history", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch match history" });
   }
 });
+
 
 // ✅ Start the backend server
 server.listen(5000, () => {
