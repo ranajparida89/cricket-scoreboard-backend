@@ -25,17 +25,20 @@ const allowedOrigins = [
   "https://www.crickedge.in"
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  methods: ["GET", "POST"],
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    methods: "*", // ✅ Allow all HTTP methods (GET, POST, PUT, DELETE, OPTIONS etc.)
+    credentials: true,
+  })
+);
+
 
 // ✅ Allow JSON requests
 app.use(express.json());
