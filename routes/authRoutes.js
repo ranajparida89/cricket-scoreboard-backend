@@ -36,7 +36,13 @@ router.post("/signup", async (req, res) => {
     );
 
     const otp = generateOtp();
-    await pool.query("INSERT INTO email_otps (email, otp) VALUES ($1, $2)", [email, otp]);
+const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
+
+            await pool.query(
+                "INSERT INTO email_otps (email, otp, expires_at) VALUES ($1, $2, $3)",
+                    [email, otp, expiresAt]
+                );
+
 
     await transporter.sendMail({
       to: email,
