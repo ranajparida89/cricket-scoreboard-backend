@@ -12,6 +12,8 @@ const jwt = require("jsonwebtoken");
 const pool = require("./db");
 const testMatchRoutes = require("./routes/testMatchRoutes");
 const rankingRoutes = require("./routes/rankingRoutes");
+const authRoutes = require("./routes/authRoutes"); // ✅ [NEW] Auth route
+
 
 const app = express();
 const server = http.createServer(app);
@@ -41,6 +43,8 @@ app.use(express.json());
 // ✅ Mount routes
 app.use("/api", testMatchRoutes);
 app.use("/api", rankingRoutes);
+app.use("/api", authRoutes); // ✅ [NEW] Mount Auth API routes
+
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
 const io = socketIo(server, {
