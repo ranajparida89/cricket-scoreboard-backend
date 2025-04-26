@@ -131,6 +131,43 @@ router.put("/update-player", async (req, res) => {
   }
 });
 
+// fetching player performance data in playerperformace page -- Ranaj Parida 26-04-2025
+// ✅ GET Player Performances for Player Stats Page
+router.get("/player-stats", async (req, res) => {
+  try {
+    const { playerName, teamName, matchType } = req.query;
+
+    let baseQuery = `SELECT pp.*, p.player_name 
+                     FROM player_performance pp 
+                     JOIN players p ON pp.player_id = p.id 
+                     WHERE 1=1`;
+    const queryParams = [];
+
+    if (playerName) {
+      queryParams.push(`%${playerName}%`);
+      baseQuery += ` AND p.player_name ILIKE $${queryParams.length}`;
+    }
+
+    if (teamName) {
+      queryParams.push(`%${teamName}%`);
+      baseQuery += ` AND pp.team_name ILIKE $${queryParams.length}`;
+    }
+
+    if (matchType && matchType !== "All") {
+      queryParams.push(matchType);
+      baseQuery += ` AND pp.match_type = $${queryParams.length}`;
+    }
+
+    baseQuery += ` ORDER BY pp.created_at DESC`;
+
+    const result = await pool.query(baseQuery, queryParams);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("❌ Error fetching player stats:", err);
+    res.status(500).json({ message: "❌ Server error while fetching player stats." });
+  }
+});
 
   module.exports = router;
 
