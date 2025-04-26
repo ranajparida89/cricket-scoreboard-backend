@@ -14,6 +14,8 @@ const testMatchRoutes = require("./routes/testMatchRoutes");
 const rankingRoutes = require("./routes/rankingRoutes");
 const authRoutes = require("./routes/authRoutes"); // ✅ [NEW] Auth route
 const playerRoutes = require("./routes/playerRoutes"); // Added for Players
+const performanceRoutes = require("./routes/performanceRoutes"); // ✅ New performance
+
 
 
 
@@ -50,6 +52,8 @@ app.use("/api", testMatchRoutes);
 app.use("/api", rankingRoutes);
 app.use("/api", authRoutes); // ✅ [NEW] Mount Auth API routes
 app.use("/api", playerRoutes); // [NEW] Mount for Players routes 23-04-2025 Ranaj Parida
+app.use("/api", performanceRoutes); // ✅ Mount the new route  for performacestats
+
 
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
