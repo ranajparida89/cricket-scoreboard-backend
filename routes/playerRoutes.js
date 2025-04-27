@@ -196,21 +196,26 @@ router.get("/player-stats", async (req, res) => {
     const { playerName, teamName, matchType } = req.query;
 
     let baseQuery = `
-  SELECT 
-    pp.*, 
-    p.player_name,
-    MAX(pp.run_scored) OVER (PARTITION BY pp.player_id, pp.match_type, p.player_name) AS highest_score,
+ SELECT 
+  pp.*, 
+  p.player_name,
+  MAX(
     CASE
       WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
       ELSE pp.run_scored::text
-    END AS formatted_run_scored
-  FROM 
-    player_performance pp
-  JOIN 
-    players p 
-  ON 
-    pp.player_id = p.id
-  WHERE 1=1
+    END
+  ) OVER (PARTITION BY pp.player_id, pp.match_type, p.player_name) AS highest_score,
+  CASE
+    WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
+    ELSE pp.run_scored::text
+  END AS formatted_run_scored
+FROM 
+  player_performance pp
+JOIN 
+  players p 
+ON 
+  pp.player_id = p.id
+WHERE 1=1
 `;
     const queryParams = [];
 
