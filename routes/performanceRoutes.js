@@ -3,7 +3,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
-// ✅ Add Advanced Player Performance API
+// ✅ Add Advanced Player Performance API (Updated - Duplicate Check Removed)
 router.post("/player-performance", async (req, res) => {
   const {
     player_id,
@@ -23,7 +23,7 @@ router.post("/player-performance", async (req, res) => {
       return res.status(400).json({ message: "⚠️ Missing required fields." });
     }
 
-    // ✅ Check Player Exists
+    // ✅ Check if Player Exists
     const playerCheck = await pool.query(
       `SELECT * FROM players WHERE id = $1`,
       [player_id]
@@ -32,16 +32,9 @@ router.post("/player-performance", async (req, res) => {
       return res.status(404).json({ message: "❌ Player not found." });
     }
 
-    // ✅ Optional: Prevent Duplicate Insert (Same player, same match_type, same against_team)
-    const duplicateCheck = await pool.query(
-      `SELECT * FROM player_performance WHERE player_id = $1 AND match_type = $2 AND against_team = $3`,
-      [player_id, match_type, against_team]
-    );
-    if (duplicateCheck.rows.length > 0) {
-      return res.status(409).json({ message: "⚠️ Performance already recorded for this player in same match." });
-    }
+    // ✅ ✅ ✅ (Duplicate check removed here)
 
-    // ✅ Insert into player_performance
+    // ✅ Insert New Player Performance Entry
     const insertResult = await pool.query(
       `INSERT INTO player_performance
       (player_id, team_name, match_type, against_team, run_scored, wickets_taken, runs_given, fifties, hundreds)
@@ -62,7 +55,7 @@ router.post("/player-performance", async (req, res) => {
 
     res.status(201).json({
       message: "✅ Player performance saved successfully.",
-      data: insertResult.rows[0] // returning inserted performance
+      data: insertResult.rows[0] // Returning inserted performance
     });
 
   } catch (err) {
