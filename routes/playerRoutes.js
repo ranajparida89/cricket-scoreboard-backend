@@ -201,10 +201,10 @@ router.get("/player-stats", async (req, res) => {
   p.player_name,
   MAX(
     CASE
-      WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
-      ELSE pp.run_scored::text
+      WHEN LOWER(pp.dismissed) = 'not out' THEN pp.run_scored
+      ELSE pp.run_scored
     END
-  ) OVER (PARTITION BY pp.player_id, pp.match_type, p.player_name) AS highest_score,
+  ) OVER (PARTITION BY pp.player_id, pp.match_type) AS highest_score,
   CASE
     WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
     ELSE pp.run_scored::text
@@ -215,7 +215,7 @@ JOIN
   players p 
 ON 
   pp.player_id = p.id
-WHERE 1=1
+WHERE 1=1 
 `;
     const queryParams = [];
 
