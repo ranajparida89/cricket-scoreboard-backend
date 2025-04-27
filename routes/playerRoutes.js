@@ -55,6 +55,64 @@ router.get("/players", async (req, res) => {
   }
 });
 
+// ✅ POST Add Advanced Player Performance API (⬅️ ⬅️ ADD YOUR NEW CODE HERE)
+router.post("/player-performance", async (req, res) => {
+  const {
+    player_id,
+    team_name,
+    match_type,
+    against_team,
+    run_scored,
+    wickets_taken,
+    runs_given,
+    fifties,
+    hundreds,
+    dismissed_status // ✅ New field you added
+  } = req.body;
+
+  try {
+    if (!player_id || !team_name || !match_type || !against_team) {
+      return res.status(400).json({ message: "⚠️ Missing required fields." });
+    }
+
+    const playerCheck = await pool.query(
+      `SELECT * FROM players WHERE id = $1`,
+      [player_id]
+    );
+    if (playerCheck.rows.length === 0) {
+      return res.status(404).json({ message: "❌ Player not found." });
+    }
+
+    const insertResult = await pool.query(
+      `INSERT INTO player_performance
+      (player_id, team_name, match_type, against_team, run_scored, wickets_taken, runs_given, fifties, hundreds, dismissed_status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *`,
+      [
+        player_id,
+        team_name,
+        match_type,
+        against_team,
+        run_scored,
+        wickets_taken,
+        runs_given,
+        fifties,
+        hundreds,
+        dismissed_status
+      ]
+    );
+
+    res.status(201).json({
+      message: "✅ Player performance saved successfully.",
+      data: insertResult.rows[0]
+    });
+
+  } catch (err) {
+    console.error("❌ Server error while saving performance:", err);
+    res.status(500).json({ message: "❌ Server error occurred." });
+  }
+});
+
 // ✅ PUT: Update Player by ID
 router.put('/players/:id', async (req, res) => {
   const { id } = req.params;
