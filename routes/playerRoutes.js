@@ -67,7 +67,7 @@ router.post("/player-performance", async (req, res) => {
     runs_given,
     fifties,
     hundreds,
-    dismissed_status // ✅ New field you added
+    dismissed // ✅ New field you added
   } = req.body;
 
   try {
@@ -85,7 +85,7 @@ router.post("/player-performance", async (req, res) => {
 
     const insertResult = await pool.query(
       `INSERT INTO player_performance
-      (player_id, team_name, match_type, against_team, run_scored, wickets_taken, runs_given, fifties, hundreds, dismissed_status)
+      (player_id, team_name, match_type, against_team, run_scored, wickets_taken, runs_given, fifties, hundreds, dismissed)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *`,
       [
@@ -98,7 +98,7 @@ router.post("/player-performance", async (req, res) => {
         runs_given,
         fifties,
         hundreds,
-        dismissed_status
+        dismissed
       ]
     );
 
