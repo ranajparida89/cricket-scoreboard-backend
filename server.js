@@ -15,6 +15,7 @@ const rankingRoutes = require("./routes/rankingRoutes");
 const authRoutes = require("./routes/authRoutes"); // ✅ [NEW] Auth route
 const playerRoutes = require("./routes/playerRoutes"); // Added for Players
 const performanceRoutes = require("./routes/performanceRoutes"); // ✅ New performance
+const upcomingMatchRoutes = require("./routes/upcomingMatchRoutes"); // upcomimg matches
 
 
 
@@ -53,6 +54,7 @@ app.use("/api", rankingRoutes);
 app.use("/api", authRoutes); // ✅ [NEW] Mount Auth API routes
 app.use("/api", playerRoutes); // [NEW] Mount for Players routes 23-04-2025 Ranaj Parida
 app.use("/api", performanceRoutes); // ✅ Mount the new route  for performacestats
+app.use("/api", upcomingMatchRoutes); // Mount the new route for up-coming matches
 
 
 
