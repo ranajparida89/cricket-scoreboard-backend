@@ -30,15 +30,31 @@ function validateUpcomingMatch(match) {
   return null;
 }
 
-// ✅ Normalize team names
+// ✅ Normalize team names (with more countries)
 function normalizeTeamName(name) {
   const n = name.trim().toLowerCase();
-  if (n === "ind" || n === "india") return "India";
-  if (n === "aus" || n === "australia") return "Australia";
-  if (n === "pak" || n === "pakistan") return "Pakistan";
-  if (n === "eng" || n === "england") return "England";
-  // ... add more as needed
-  return name.trim(); // fallback as entered
+
+  // 🏏 Common International Teams
+  if (["ind", "india"].includes(n)) return "India";
+  if (["aus", "australia"].includes(n)) return "Australia";
+  if (["pak", "pakistan"].includes(n)) return "Pakistan";
+  if (["eng", "england"].includes(n)) return "England";
+  if (["sa", "rsa", "south africa"].includes(n)) return "South Africa";
+  if (["sl", "sri lanka"].includes(n)) return "Sri Lanka";
+  if (["nz", "new zealand"].includes(n)) return "New Zealand";
+  if (["ban", "bangladesh"].includes(n)) return "Bangladesh";
+  if (["afg", "afghanistan"].includes(n)) return "Afghanistan";
+  if (["wi", "west indies"].includes(n)) return "West Indies";
+  if (["zim", "zimbabwe"].includes(n)) return "Zimbabwe";
+  if (["ire", "ireland"].includes(n)) return "Ireland";
+  if (["ned", "netherlands"].includes(n)) return "Netherlands";
+  if (["nam", "namibia"].includes(n)) return "Namibia";
+  if (["sco", "scotland"].includes(n)) return "Scotland";
+  if (["uae"].includes(n)) return "UAE";
+  if (["usa"].includes(n)) return "USA";
+
+  // 🛠️ Default fallback (custom or unknown)
+  return name.trim();
 }
 
 // ✅ POST: Add upcoming match
@@ -63,8 +79,8 @@ router.post("/upcoming-match", async (req, res) => {
     const result = await pool.query(
       `INSERT INTO upcoming_match_details
        (match_name, match_type, team_1, team_2, location, match_date, match_time,
-        series_name, match_status, day_night, created_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+        series_name, match_status, day_night, created_by, updated_by, team_playing)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12)
        RETURNING *`,
       [
         match.match_name.trim(),
@@ -77,7 +93,8 @@ router.post("/upcoming-match", async (req, res) => {
         match.series_name?.trim() || null,
         match.match_status,
         match.day_night,
-        match.created_by
+        match.created_by,
+        team_playing
       ]
     );
 
@@ -89,8 +106,8 @@ router.post("/upcoming-match", async (req, res) => {
   }
 });
 
-// ✅ GET: Fetch all upcoming matches (to display in sidebar)
-router.get("/upcoming-match", async (req, res) => {
+// ✅ GET: Fetch all upcoming matches (used in UpcomingMatches.js frontend)
+router.get("/upcoming-matches", async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT * FROM upcoming_match_details ORDER BY match_date ASC, match_time ASC`
