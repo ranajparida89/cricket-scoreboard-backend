@@ -102,9 +102,14 @@ router.post("/upcoming-match", async (req, res) => {
     res.status(201).json({ message: "Match scheduled successfully", data: result.rows[0] });
 
   } catch (err) {
-    console.error("Insert Upcoming Match Error:", err.message);
+    console.error("❌ Insert Upcoming Match Error:", {
+      message: err.message,
+      stack: err.stack,
+      requestBody: req.body,  // <-- shows what was sent
+    });
+  
     res.status(500).json({ error: "Something went wrong while scheduling match" });
-  }
+  }  
 });
 
 // ✅ GET: Fetch all upcoming matches (used in UpcomingMatches.js frontend)
