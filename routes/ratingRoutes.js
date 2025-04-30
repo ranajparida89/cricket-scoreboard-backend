@@ -1,23 +1,78 @@
-// ✅ Step 5: Create route to serve player rankings
-// File: cricket-scoreboard-backend/routes/ratingRoutes.js
-// 02-May-2025 | Ranaj Parida
+// ✅ ratingRoutes.js (Cleaned & Merged)
+// Author: Ranaj Parida | Date: 02-May-2025
+// Purpose: Calculate and serve player rankings
 
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { calculateRatings, getPlayerRankings } = require("./ratingController");
+
+// ✅ GET: Calculate player ratings (batting, bowling, all-rounder)
+router.get("/calculate", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM player_performance");
+    const data = result.rows;
+
+    const ratingsMap = new Map();
+
+    for (const p of data) {
+      const key = `${p.player_id}-${p.match_type}`;
+      if (!ratingsMap.has(key)) {
+        ratingsMap.set(key, {
+          player_id: p.player_id,
+          match_type: p.match_type,
+          total_runs: 0,
+          total_wickets: 0,
+          total_fifties: 0,
+          total_hundreds: 0,
+          matches: 0,
+        });
+      }
+
+      const entry = ratingsMap.get(key);
+      entry.total_runs += parseInt(p.run_scored || 0);
+      entry.total_wickets += parseInt(p.wickets_taken || 0);
+      entry.total_fifties += parseInt(p.fifties || 0);
+      entry.total_hundreds += parseInt(p.hundreds || 0);
+      entry.matches += 1;
+    }
+
+    for (const [, entry] of ratingsMap) {
+      const {
+        player_id,
+        match_type,
+        total_runs,
+        total_wickets,
+        total_fifties,
+        total_hundreds,
+      } = entry;
+
+      const battingRating =
+        total_runs * 1.0 + total_fifties * 10 + total_hundreds * 25;
+      const bowlingRating = total_wickets * 20;
+      const allRounderRating = Math.round((battingRating + bowlingRating) / 2);
+
+      await pool.query(
+        `INSERT INTO player_ratings (player_id, match_type, batting_rating, bowling_rating, allrounder_rating)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (player_id, match_type)
+         DO UPDATE SET 
+           batting_rating = EXCLUDED.batting_rating,
+           bowling_rating = EXCLUDED.bowling_rating,
+           allrounder_rating = EXCLUDED.allrounder_rating;`,
+        [player_id, match_type, battingRating, bowlingRating, allRounderRating]
+      );
+    }
+
+    res.status(200).json({ message: "✅ Ratings calculated and updated." });
+  } catch (err) {
+    console.error("❌ Error calculating ratings:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 
-// Calculate and insert ratings
-router.get("/calculate", calculateRatings);
-
-// NEW: Fetch player rankings by type and format
-router.get("/players", getPlayerRankings);
-
-router.get("/players", getPlayerRankings);
-
-
-// ✅ GET /api/rankings/players?type=batting&match_type=ODI
+// ✅ GET: Fetch player rankings by type and match format
+// Example: /api/ratings/players?type=batting&match_type=ODI
 router.get("/players", async (req, res) => {
   try {
     const { type, match_type } = req.query;
@@ -26,7 +81,6 @@ router.get("/players", async (req, res) => {
       return res.status(400).json({ error: "Missing query parameters" });
     }
 
-    // Choose the rating column
     let column;
     switch (type.toLowerCase()) {
       case "batting":
