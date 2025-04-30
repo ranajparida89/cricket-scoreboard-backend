@@ -67,11 +67,7 @@ router.post("/upcoming-match", async (req, res) => {
     const validationError = validateUpcomingMatch(match);
     if (validationError) {
       return res.status(400).json({ error: validationError }); 
-    } } catch (error) {
-      console.error("❌ Failed to schedule upcoming match:", error.message);
-      res.status(500).json({ error: "Failed to schedule match" });
-    }
-        
+    }     
   
     // 🧼 Normalize team names
     const team1 = normalizeTeamName(match.team_1);
