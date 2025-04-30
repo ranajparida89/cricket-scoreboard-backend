@@ -113,17 +113,18 @@ router.get("/players", async (req, res) => {
       skillFilter = "AND LOWER(p.skill_type) = 'bowler'";
     } else if (type === 'allrounder' || type === 'all-rounder') {
       skillFilter = "AND LOWER(p.skill_type) = 'all rounder'";
-    }    
+    }
     
     const result = await pool.query(
       `SELECT r.player_id, p.player_name, p.team_name, r.${column} AS rating
        FROM player_ratings r
        JOIN players p ON r.player_id = p.id
-      WHERE LOWER(r.match_type) = LOWER($1) ${skillFilter}
-        ORDER BY r.${column} DESC
+       WHERE LOWER(r.match_type) = LOWER($1)
+       ${skillFilter}
        ORDER BY r.${column} DESC`,
-      [match_type]
+      [match_type.toLowerCase()]  // ✅ Ensure lowercase match_type passed
     );
+    
     
 
     res.status(200).json(result.rows);
