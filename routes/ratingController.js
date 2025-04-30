@@ -26,25 +26,38 @@ const calculateRatings = async (req, res) => {
         });
       }
 
-      const getPlayerRankings = async (req, res) => {
-        const { type, match_type } = req.query;
-      
-        try {
-          const result = await pool.query(`
-            SELECT pr.player_id, p.player_name, p.team_name, pr.${type}_rating AS rating
-            FROM player_ratings pr
-            JOIN players p ON pr.player_id = p.id
-            WHERE pr.match_type = $1
-            ORDER BY pr.${type}_rating DESC
-          `, [match_type]);
-      
-          res.json(result.rows);
-        } catch (err) {
-          console.error("❌ Failed to fetch rankings:", err);
-          res.status(500).json({ error: "Failed to fetch rankings" });
-        }
-      };
-      
+    // ✅ Fetch Player Rankings by Type (Batting, Bowling, All-Rounder) and Match Type
+const getPlayerRankings = async (req, res) => {
+    try {
+      const { type, match_type } = req.query;
+  
+      if (!type || !match_type) {
+        return res.status(400).json({ error: "Missing 'type' or 'match_type'" });
+      }
+  
+      // Decide which rating column to use
+      let ratingColumn = "";
+      if (type === "batting") ratingColumn = "batting_rating";
+      else if (type === "bowling") ratingColumn = "bowling_rating";
+      else if (type === "all-rounder") ratingColumn = "allrounder_rating";
+      else return res.status(400).json({ error: "Invalid rating type" });
+  
+      const query = `
+        SELECT pr.player_id, p.player_name, p.team_name, pr.${ratingColumn} AS rating
+        FROM player_ratings pr
+        JOIN players p ON p.id = pr.player_id
+        WHERE pr.match_type = $1
+        ORDER BY pr.${ratingColumn} DESC
+      `;
+      const result = await pool.query(query, [match_type.toUpperCase()]);
+  
+      res.status(200).json(result.rows);
+    } catch (err) {
+      console.error("❌ Error in getPlayerRankings:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  };
+  
 
       const entry = ratingsMap.get(key);
       entry.total_runs += parseInt(p.run_scored || 0);
@@ -98,4 +111,6 @@ const calculateRatings = async (req, res) => {
 };
 
 module.exports = { calculateRatings, getPlayerRankings };
+
+
 
