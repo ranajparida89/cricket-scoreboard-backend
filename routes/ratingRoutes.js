@@ -5,6 +5,13 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const { calculateRatings, getPlayerRankings } = require("../controllers/ratingController");
+
+// Calculate and insert ratings
+router.get("/calculate", calculateRatings);
+
+// NEW: Fetch player rankings by type and format
+router.get("/players", getPlayerRankings);
 
 // ✅ GET /api/rankings/players?type=batting&match_type=ODI
 router.get("/players", async (req, res) => {

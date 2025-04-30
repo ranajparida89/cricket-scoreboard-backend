@@ -26,6 +26,26 @@ const calculateRatings = async (req, res) => {
         });
       }
 
+      const getPlayerRankings = async (req, res) => {
+        const { type, match_type } = req.query;
+      
+        try {
+          const result = await pool.query(`
+            SELECT pr.player_id, p.player_name, p.team_name, pr.${type}_rating AS rating
+            FROM player_ratings pr
+            JOIN players p ON pr.player_id = p.id
+            WHERE pr.match_type = $1
+            ORDER BY pr.${type}_rating DESC
+          `, [match_type]);
+      
+          res.json(result.rows);
+        } catch (err) {
+          console.error("❌ Failed to fetch rankings:", err);
+          res.status(500).json({ error: "Failed to fetch rankings" });
+        }
+      };
+      
+
       const entry = ratingsMap.get(key);
       entry.total_runs += parseInt(p.run_scored || 0);
       entry.total_wickets += parseInt(p.wickets_taken || 0);
@@ -77,4 +97,5 @@ const calculateRatings = async (req, res) => {
   }
 };
 
-module.exports = { calculateRatings };
+module.exports = { calculateRatings, getPlayerRankings };
+
