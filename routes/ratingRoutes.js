@@ -106,14 +106,25 @@ router.get("/players", async (req, res) => {
         return res.status(400).json({ error: "Invalid rating type" });
     }
 
+    let skillFilter = '';
+    if (type === 'batting') {
+      skillFilter = "AND LOWER(p.skill_type) = 'batsman'";
+    } else if (type === 'bowling') {
+      skillFilter = "AND LOWER(p.skill_type) = 'bowler'";
+    } else if (type === 'allrounder' || type === 'all-rounder') {
+      skillFilter = "AND LOWER(p.skill_type) = 'all rounder'";
+    }
+    
     const result = await pool.query(
       `SELECT r.player_id, p.player_name, p.team_name, r.${column} AS rating
        FROM player_ratings r
        JOIN players p ON r.player_id = p.id
        WHERE LOWER(r.match_type) = LOWER($1)
+       ${skillFilter}
        ORDER BY r.${column} DESC`,
-      [match_type.toUpperCase()]
+      [match_type]
     );
+    
 
     res.status(200).json(result.rows);
   } catch (err) {
