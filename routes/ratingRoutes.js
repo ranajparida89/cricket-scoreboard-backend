@@ -113,7 +113,7 @@ router.get("/players", async (req, res) => {
       skillFilter = "AND LOWER(p.skill_type) = 'bowler'";
     } else if (type === 'allrounder' || type === 'all-rounder') {
       skillFilter = "AND LOWER(p.skill_type) = 'all rounder'";
-    }
+    }    
     
     const result = await pool.query(
       `SELECT r.player_id, p.player_name, p.team_name, r.${column} AS rating
