@@ -5,7 +5,8 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { calculateRatings, getPlayerRankings } = require("../controllers/ratingController");
+const { calculateRatings, getPlayerRankings } = require("./ratingController");
+
 
 // Calculate and insert ratings
 router.get("/calculate", calculateRatings);
