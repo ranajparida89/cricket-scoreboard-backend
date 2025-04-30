@@ -60,14 +60,19 @@ function normalizeTeamName(name) {
 // ✅ POST: Add upcoming match
 router.post("/upcoming-match", async (req, res) => {
   try {
+      console.log("📥 Incoming match data:", req.body); // ← ADD THIS
     const match = req.body;
 
     // 🔍 Validate
     const validationError = validateUpcomingMatch(match);
     if (validationError) {
-      return res.status(400).json({ error: validationError });
+      return res.status(400).json({ error: validationError }); 
+    } } catch (error) {
+      console.error("❌ Failed to schedule upcoming match:", error.message);
+      res.status(500).json({ error: "Failed to schedule match" });
     }
-
+        
+  
     // 🧼 Normalize team names
     const team1 = normalizeTeamName(match.team_1);
     const team2 = normalizeTeamName(match.team_2);
