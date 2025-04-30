@@ -110,7 +110,7 @@ router.get("/players", async (req, res) => {
       `SELECT r.player_id, p.player_name, p.team_name, r.${column} AS rating
        FROM player_ratings r
        JOIN players p ON r.player_id = p.id
-       WHERE r.match_type = $1
+       WHERE LOWER(r.match_type) = LOWER($1)
        ORDER BY r.${column} DESC`,
       [match_type.toUpperCase()]
     );
