@@ -14,6 +14,9 @@ router.get("/calculate", calculateRatings);
 // NEW: Fetch player rankings by type and format
 router.get("/players", getPlayerRankings);
 
+router.get("/players", getPlayerRankings);
+
+
 // ✅ GET /api/rankings/players?type=batting&match_type=ODI
 router.get("/players", async (req, res) => {
   try {
