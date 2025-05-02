@@ -196,22 +196,11 @@ router.get("/player-stats", async (req, res) => {
     const { playerName, teamName, matchType } = req.query;
 
     let baseQuery = `
- SELECT
-  pp.id,
-  pp.player_id,
-  pp.team_name,
-  pp.match_type,
-  pp.against_team,
-  pp.run_scored,
-  pp.balls_faced,     -- ✅ explicitly include
-  pp.wickets_taken,
-  pp.runs_given,
-  pp.fifties,
-  pp.hundreds,
-  pp.dismissed,       -- ✅ required for batting average
-  pp.created_at,      -- ✅ required for ordering
+ SELECT 
+  pp.*, 
   p.player_name,
-  ROUND(CASE WHEN pp.balls_faced > 0 THEN (pp.run_scored::decimal / pp.balls_faced) * 100 ELSE 0 END, 2) AS strike_rate,
+  pp.balls_faced,  -- ✅ NEW: Ball Faced column
+  ROUND(CASE WHEN pp.balls_faced > 0 THEN (pp.run_scored::decimal / pp.balls_faced) * 100 ELSE 0 END, 2) AS strike_rate, -- ✅ NEW: Strike Rate
   MAX(
     CASE
       WHEN LOWER(pp.dismissed) = 'not out' THEN pp.run_scored
@@ -222,9 +211,13 @@ router.get("/player-stats", async (req, res) => {
     WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
     ELSE pp.run_scored::text
   END AS formatted_run_scored
-FROM player_performance pp
-JOIN players p ON p.id = pp.player_id
-ORDER BY pp.created_at DESC;
+FROM 
+  player_performance pp
+JOIN 
+  players p 
+ON 
+  pp.player_id = p.id
+WHERE 1=1 
 `;
     const queryParams = [];
 
