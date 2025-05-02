@@ -199,6 +199,8 @@ router.get("/player-stats", async (req, res) => {
  SELECT 
   pp.*, 
   p.player_name,
+  pp.balls_faced,  -- ✅ NEW: Ball Faced column
+  ROUND(CASE WHEN pp.balls_faced > 0 THEN (pp.run_scored::decimal / pp.balls_faced) * 100 ELSE 0 END, 2) AS strike_rate, -- ✅ NEW: Strike Rate
   MAX(
     CASE
       WHEN LOWER(pp.dismissed) = 'not out' THEN pp.run_scored
