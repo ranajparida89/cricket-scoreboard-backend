@@ -11,6 +11,7 @@ router.post("/player-performance", async (req, res) => {
     match_type,
     against_team,
     run_scored,
+    ball_faced, // ✅ Enhancement: Ball Faced column
     wickets_taken,
     runs_given,
     fifties,
@@ -34,11 +35,11 @@ router.post("/player-performance", async (req, res) => {
 
     // ✅ ✅ ✅ (Duplicate check removed here)
 
-    // ✅ Insert New Player Performance Entry
+    // ✅ Insert New Player Performance Entry (enhanced with ball_faced)
     const insertResult = await pool.query(
       `INSERT INTO player_performance
-      (player_id, team_name, match_type, against_team, run_scored, wickets_taken, runs_given, fifties, hundreds)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      (player_id, team_name, match_type, against_team, run_scored, ball_faced, wickets_taken, runs_given, fifties, hundreds)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *`,
       [
         player_id,
@@ -46,6 +47,7 @@ router.post("/player-performance", async (req, res) => {
         match_type,
         against_team,
         run_scored,
+        ball_faced, // ✅ Ball Faced inserted here
         wickets_taken,
         runs_given,
         fifties,
