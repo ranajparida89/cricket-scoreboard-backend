@@ -3,7 +3,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
-// ✅ Add Advanced Player Performance API (Updated - Duplicate Check Removed)
+// ✅ Add Advanced Player Performance API (Updated with Ball Faced column)
 router.post("/player-performance", async (req, res) => {
   const {
     player_id,
@@ -11,7 +11,7 @@ router.post("/player-performance", async (req, res) => {
     match_type,
     against_team,
     run_scored,
-    ball_faced, // ✅ Enhancement: Ball Faced column
+    ball_faced,       // ⬅️ NEW FIELD added 02-May-2025
     wickets_taken,
     runs_given,
     fifties,
@@ -33,9 +33,7 @@ router.post("/player-performance", async (req, res) => {
       return res.status(404).json({ message: "❌ Player not found." });
     }
 
-    // ✅ ✅ ✅ (Duplicate check removed here)
-
-    // ✅ Insert New Player Performance Entry (enhanced with ball_faced)
+    // ✅ Insert New Player Performance Entry (including ball_faced)
     const insertResult = await pool.query(
       `INSERT INTO player_performance
       (player_id, team_name, match_type, against_team, run_scored, ball_faced, wickets_taken, runs_given, fifties, hundreds)
@@ -47,7 +45,7 @@ router.post("/player-performance", async (req, res) => {
         match_type,
         against_team,
         run_scored,
-        ball_faced, // ✅ Ball Faced inserted here
+        ball_faced,    // ⬅️ Pass ball_faced value to DB
         wickets_taken,
         runs_given,
         fifties,
