@@ -63,12 +63,14 @@ router.post("/player-performance", async (req, res) => {
     match_type,
     against_team,
     run_scored,
+    balls_faced,  // ✅ ADD THIS LINE
     wickets_taken,
     runs_given,
     fifties,
     hundreds,
-    dismissed // ✅ New field you added
+    dismissed
   } = req.body;
+  
 
   try {
     if (!player_id || !team_name || !match_type || !against_team) {
@@ -85,8 +87,8 @@ router.post("/player-performance", async (req, res) => {
 
     const insertResult = await pool.query(
       `INSERT INTO player_performance
-      (player_id, team_name, match_type, against_team, run_scored, wickets_taken, runs_given, fifties, hundreds, dismissed)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      (player_id, team_name, match_type, against_team, run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds, dismissed)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *`,
       [
         player_id,
@@ -94,13 +96,14 @@ router.post("/player-performance", async (req, res) => {
         match_type,
         against_team,
         run_scored,
+        balls_faced,  // ✅ ADD THIS PARAMETER
         wickets_taken,
         runs_given,
         fifties,
         hundreds,
         dismissed
       ]
-    );
+    );    
 
     res.status(201).json({
       message: "✅ Player performance saved successfully.",
