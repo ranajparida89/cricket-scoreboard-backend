@@ -10,7 +10,7 @@ const pool = require("../db");
 router.get("/calculate", async (req, res) => {
     try {
       console.log("🟢 Starting player rating calculation");
-  
+      await calculateRatings({ query: {} }, { status: () => ({ json: () => {} }) }); // ✅ added test trigger
       const result = await pool.query("SELECT * FROM player_performance");
       const data = result.rows;
   

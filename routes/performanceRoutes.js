@@ -1,7 +1,8 @@
-// ✅ src/routes/playerRoutes.js
+// ✅ src/routes/PerformanceRoutes.js
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const { calculateRatings } = require("./ratingController"); // added now 
 
 // ✅ Add Advanced Player Performance API (Updated with Ball Faced column)
 router.post("/player-performance", async (req, res) => {
@@ -52,6 +53,11 @@ router.post("/player-performance", async (req, res) => {
         hundreds
       ]
     );
+
+    await calculateRatings(         // add now 
+      { query: {} }, 
+      { status: () => ({ json: () => {} }) }
+  );
 
     res.status(201).json({
       message: "✅ Player performance saved successfully.",
