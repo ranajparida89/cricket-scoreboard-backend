@@ -5,6 +5,8 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const { calculateRatings } = require("./ratingController"); // added new
+
 
 // ✅ GET: Calculate player ratings (batting, bowling, all-rounder)
 router.get("/calculate", async (req, res) => {
