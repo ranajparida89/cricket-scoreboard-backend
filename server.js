@@ -17,6 +17,7 @@ const playerRoutes = require("./routes/playerRoutes"); // Added for Players
 const performanceRoutes = require("./routes/performanceRoutes"); // ✅ New performance
 const upcomingMatchRoutes = require("./routes/upcomingMatchRoutes"); // upcomimg matches
 const ratingRoutes = require("./routes/ratingRoutes"); // player ratings routes
+const { startRatingScheduler } = require('./routes/ratingScheduler'); // scheduler 
 
 
 
@@ -24,6 +25,7 @@ const ratingRoutes = require("./routes/ratingRoutes"); // player ratings routes
 
 const app = express();
 const server = http.createServer(app);
+startRatingScheduler();
 
 // ✅ Enable CORS for Vercel + Custom Domains (Updated by Ranaj Parida | 15-April-2025)
 const allowedOrigins = [
