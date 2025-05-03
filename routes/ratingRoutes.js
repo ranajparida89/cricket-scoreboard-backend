@@ -108,8 +108,8 @@ router.get("/players", async (req, res) => {
 
     let skillFilter = '';
     if (type === 'batting') {
-      skillFilter = "AND LOWER(p.skill_type) = 'batsman'";
-    } else if (type === 'bowling') {
+      skillFilter = "AND (LOWER(p.skill_type) = 'batsman' OR LOWER(p.skill_type) = 'wicketkeeper/batsman')";
+    }else if (type === 'bowling') {
       skillFilter = "AND LOWER(p.skill_type) = 'bowler'";
     } else if (type === 'allrounder' || type === 'all-rounder') {
       skillFilter = "AND LOWER(p.skill_type) = 'all rounder'";
