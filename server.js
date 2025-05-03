@@ -58,8 +58,7 @@ app.use("/api", playerRoutes); // [NEW] Mount for Players routes 23-04-2025 Rana
 app.use("/api", performanceRoutes); // ✅ Mount the new route  for performacestats
 app.use("/api", upcomingMatchRoutes); // Mount the new route for up-coming matches
 app.use("/api/ratings", ratingRoutes); // player_rating
-app.use("/api/rankings", rankingRoutes); // add new  team rankings → correct module!
-
+app.use("/api/rankings", ratingRoutes);
 
 
 

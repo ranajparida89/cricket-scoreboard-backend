@@ -1,5 +1,5 @@
 // ✅ ratingController.js
-// Created by GPT | 02-May-2025 | Ranaj Parida
+//| 02-May-2025 | Ranaj Parida
 
 const pool = require("../db"); // database connection
 
@@ -15,25 +15,16 @@ const calculateRatings = async (req, res) => {
     for (const p of data) {
       const key = `${p.player_id}-${p.match_type}`;
       if (!ratingsMap.has(key)) {
-          ratingsMap.set(key, {
-              player_id: p.player_id,
-              match_type: p.match_type,
-              total_runs: 0,
-              total_wickets: 0,
-              total_fifties: 0,
-              total_hundreds: 0,
-              matches: 0,
-          });
+        ratingsMap.set(key, {
+          player_id: p.player_id,
+          match_type: p.match_type,
+          total_runs: 0,
+          total_wickets: 0,
+          total_fifties: 0,
+          total_hundreds: 0,
+          matches: 0,
+        });
       }
-  
-      const entry = ratingsMap.get(key);
-      entry.total_runs += parseInt(p.run_scored || 0);
-      entry.total_wickets += parseInt(p.wickets_taken || 0);
-      entry.total_fifties += parseInt(p.fifties || 0);
-      entry.total_hundreds += parseInt(p.hundreds || 0);
-      entry.matches += 1;
-  }
-  
 
     // ✅ Fetch Player Rankings by Type (Batting, Bowling, All-Rounder) and Match Type
 const getPlayerRankings = async (req, res) => {
@@ -67,6 +58,15 @@ const getPlayerRankings = async (req, res) => {
     }
   };
   
+
+      const entry = ratingsMap.get(key);
+      entry.total_runs += parseInt(p.run_scored || 0);
+      entry.total_wickets += parseInt(p.wickets_taken || 0);
+      entry.total_fifties += parseInt(p.fifties || 0);
+      entry.total_hundreds += parseInt(p.hundreds || 0);
+      entry.matches += 1;
+    }
+
     // Step 2: Loop and calculate rating per player/match_type
     for (const [, entry] of ratingsMap) {
       const {
@@ -76,7 +76,7 @@ const getPlayerRankings = async (req, res) => {
         total_wickets,
         total_fifties,
         total_hundreds,
-       // matches,
+        matches,
       } = entry;
 
       // Intelligent weights (can vary per match type later)
@@ -110,7 +110,7 @@ const getPlayerRankings = async (req, res) => {
   }
 };
 
-module.exports = { calculateRatings };
+module.exports = { calculateRatings, getPlayerRankings };
 
 
 
