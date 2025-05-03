@@ -110,7 +110,7 @@ const getPlayerRankings = async (req, res) => {
   }
 };
 
-module.exports = { calculateRatings, getPlayerRankings };
+module.exports = { calculateRatings };
 
 
 
