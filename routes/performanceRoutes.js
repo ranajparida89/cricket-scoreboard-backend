@@ -68,4 +68,33 @@ router.post("/player-performance", async (req, res) => {
   }
 });
 
+// ✅ GET all player performance records (for Player Performance Stats Table)
+router.get("/player-performance", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        pp.id,
+        pp.match_name,              -- ✅ Include match name for UI
+        p.player_name,
+        pp.team_name,
+        pp.match_type,
+        pp.against_team,
+        pp.run_scored,
+        pp.balls_faced,
+        pp.wickets_taken,
+        pp.runs_given,
+        pp.fifties,
+        pp.hundreds
+      FROM player_performance pp
+      JOIN players p ON p.id = pp.player_id
+      ORDER BY pp.id DESC
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("❌ Error fetching performance stats:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;
