@@ -58,6 +58,7 @@ router.get("/players", async (req, res) => {
 // ✅ POST Add Advanced Player Performance API (⬅️ ⬅️ ADD YOUR NEW CODE HERE)
 router.post("/player-performance", async (req, res) => {
   const {
+    match_name,       // ✅ Add this line at the top
     player_id,
     team_name,
     match_type,
@@ -70,8 +71,6 @@ router.post("/player-performance", async (req, res) => {
     hundreds,
     dismissed
   } = req.body;
-  
-
   try {
     if (!player_id || !team_name || !match_type || !against_team) {
       return res.status(400).json({ message: "⚠️ Missing required fields." });
@@ -86,23 +85,24 @@ router.post("/player-performance", async (req, res) => {
     }
 
     const insertResult = await pool.query(
-      `INSERT INTO player_performance
-      (player_id, team_name, match_type, against_team, run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds, dismissed)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO player_performance 
+(match_name, player_id, team_name, match_type, against_team, run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds, dismissed)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *`,
       [
+        match_name,       // ✅ Add this as $1
         player_id,
         team_name,
         match_type,
         against_team,
         run_scored,
-        balls_faced,  // ✅ ADD THIS PARAMETER
+        balls_faced,
         wickets_taken,
         runs_given,
         fifties,
         hundreds,
         dismissed
-      ]
+      ]      
     );    
 
     res.status(201).json({
