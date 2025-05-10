@@ -249,6 +249,39 @@ WHERE 1=1
     res.status(500).json({ message: "❌ Server error while fetching player stats." });
   }
 });
+// New Logic for adding Total Match count
+// ✅ NEW API for Player Stats Summary Table (with Match Count per Player)
+// 📅 Added by Ranaj Parida on 11-May-2025
+router.get("/player-stats", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        pp.id,
+        p.player_name,
+        p.team_name,
+        pp.match_type,
+        pp.match_name,
+        pp.against_team,
+        pp.run_scored,
+        pp.balls_faced,
+        pp.wickets_taken,
+        pp.runs_given,
+        pp.fifties,
+        pp.hundreds,
+        pp.dismissed AS dismissed_status,
+        COUNT(*) OVER (PARTITION BY pp.player_id) AS total_matches,                     -- ✅ Count across all match types
+        COUNT(*) OVER (PARTITION BY pp.player_id, pp.match_type) AS match_count        -- ✅ Count per match type (when filtered)
+      FROM player_performance pp
+      JOIN players p ON p.id = pp.player_id 
+      ORDER BY pp.player_id;
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("❌ Error fetching player stats summary:", err);
+    res.status(500).json({ error: "Server error occurred while fetching stats." });
+  }
+});
 
   module.exports = router;
 
