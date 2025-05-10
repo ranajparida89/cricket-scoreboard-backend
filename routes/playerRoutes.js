@@ -252,7 +252,8 @@ WHERE 1=1
 // New Logic for adding Total Match count
 // ✅ NEW API for Player Stats Summary Table (with Match Count per Player)
 // 📅 Added by Ranaj Parida on 11-May-2025
-router.get("/player-stats", async (req, res) => {
+// ✅ NEW: Player Stats Summary API with Match Counts
+router.get("/player-stats-summary", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT 
@@ -270,10 +271,10 @@ router.get("/player-stats", async (req, res) => {
         pp.hundreds,
         pp.dismissed AS dismissed_status,
         COUNT(*) OVER (PARTITION BY pp.player_id) AS total_matches,                     -- ✅ Count across all match types
-        COUNT(*) OVER (PARTITION BY pp.player_id, pp.match_type) AS match_count        -- ✅ Count per match type (when filtered)
+        COUNT(*) OVER (PARTITION BY pp.player_id, pp.match_type) AS match_count         -- ✅ Count per match type (filtered)
       FROM player_performance pp
-      JOIN players p ON p.id = pp.player_id 
-      ORDER BY pp.player_id;
+      JOIN players p ON p.id = pp.player_id
+      ORDER BY pp.player_id, pp.id;
     `);
 
     res.json(result.rows);
