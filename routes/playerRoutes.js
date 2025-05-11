@@ -270,8 +270,31 @@ router.get("/player-stats-summary", async (req, res) => {
         pp.fifties,
         pp.hundreds,
         pp.dismissed AS dismissed_status,
-        COUNT(*) OVER (PARTITION BY pp.player_id) AS total_matches,                     -- ✅ Count across all match types
-        COUNT(*) OVER (PARTITION BY pp.player_id, pp.match_type) AS match_count         -- ✅ Count per match type (filtered)
+
+        -- ✅ Strike Rate Calculation
+        ROUND(CASE 
+          WHEN pp.balls_faced > 0 THEN (pp.run_scored::decimal / pp.balls_faced) * 100 
+          ELSE 0 
+        END, 2) AS strike_rate,
+
+        -- ✅ Highest Score (with max logic)
+        MAX(
+          CASE 
+            WHEN LOWER(pp.dismissed) = 'not out' THEN pp.run_scored 
+            ELSE pp.run_scored 
+          END
+        ) OVER (PARTITION BY pp.player_id, pp.match_type) AS highest_score,
+
+        -- ✅ Formatted Score
+        CASE 
+          WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
+          ELSE pp.run_scored::text
+        END AS formatted_run_scored,
+
+        -- ✅ Match counts
+        COUNT(*) OVER (PARTITION BY pp.player_id) AS total_matches,
+        COUNT(*) OVER (PARTITION BY pp.player_id, pp.match_type) AS match_count
+
       FROM player_performance pp
       JOIN players p ON p.id = pp.player_id
       ORDER BY pp.player_id, pp.id;
