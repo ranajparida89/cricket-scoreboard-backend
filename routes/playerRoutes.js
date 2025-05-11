@@ -325,8 +325,8 @@ router.get("/player-matches/:playerName", async (req, res) => {
       ELSE pp.run_scored::text
     END AS formatted_run_scored,
     pp.created_at AS match_date,
-    TO_CHAR(pp.created_at, 'FMDay') AS match_day,
-    TO_CHAR(pp.created_at, 'HH12:MI AM') AS match_time
+TRIM(TO_CHAR(pp.created_at, 'FMDay')) AS match_day,
+TRIM(TO_CHAR(pp.created_at, 'HH12:MI AM')) AS match_time
   FROM player_performance pp
   JOIN players p ON p.id = pp.player_id
   WHERE LOWER(p.player_name) = LOWER($1)
