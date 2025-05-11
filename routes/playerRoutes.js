@@ -314,24 +314,24 @@ router.get("/player-matches/:playerName", async (req, res) => {
   const { playerName } = req.params;
 
   try {
-    const result = await pool.query(`
-      SELECT 
-        pp.*,
-        p.player_name,
-        p.team_name,
-        ROUND(CASE WHEN pp.balls_faced > 0 THEN (pp.run_scored::decimal / pp.balls_faced) * 100 ELSE 0 END, 2) AS strike_rate,
-        CASE
-          WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
-          ELSE pp.run_scored::text
-        END AS formatted_run_scored,
-        pp.created_at AS match_date,
-        TO_CHAR(pp.created_at, 'Day') AS match_day,
-        TO_CHAR(pp.created_at, 'HH12:MI AM') AS match_time
-      FROM player_performance pp
-      JOIN players p ON p.id = pp.player_id
-      WHERE LOWER(p.player_name) = LOWER($1)
-      ORDER BY pp.created_at DESC
-    `, [playerName]);
+   const result = await pool.query(`
+  SELECT 
+    pp.*,
+    p.player_name,
+    p.team_name,
+    ROUND(CASE WHEN pp.balls_faced > 0 THEN (pp.run_scored::decimal / pp.balls_faced) * 100 ELSE 0 END, 2) AS strike_rate,
+    CASE
+      WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
+      ELSE pp.run_scored::text
+    END AS formatted_run_scored,
+    pp.created_at AS match_date,
+    TO_CHAR(pp.created_at, 'FMDay') AS match_day,
+    TO_CHAR(pp.created_at, 'HH12:MI AM') AS match_time
+  FROM player_performance pp
+  JOIN players p ON p.id = pp.player_id
+  WHERE LOWER(p.player_name) = LOWER($1)
+  ORDER BY pp.created_at DESC
+`, [playerName]);
 
     res.json(result.rows);
   } catch (err) {
