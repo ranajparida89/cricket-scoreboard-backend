@@ -320,14 +320,15 @@ router.get("/player-matches/:playerName", async (req, res) => {
   p.player_name,
   p.team_name,
   pp.against_team,
+  pp.dismissed, -- Explicitly select dismissed
   ROUND(CASE WHEN pp.balls_faced > 0 THEN (pp.run_scored::decimal / pp.balls_faced) * 100 ELSE 0 END, 2) AS strike_rate,
   CASE
     WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
     ELSE pp.run_scored::text
   END AS formatted_run_scored,
-  TO_CHAR(pp.created_at, 'YYYY-MM-DD') AS match_display_date,  -- ✅ new alias
-  TRIM(TO_CHAR(pp.created_at, 'FMDay')) AS match_display_day,  -- ✅ new alias
-  TRIM(TO_CHAR(pp.created_at, 'HH12:MI AM')) AS match_display_time  -- ✅ new alias
+  TO_CHAR(pp.created_at, 'YYYY-MM-DD') AS match_display_date,
+  TRIM(TO_CHAR(pp.created_at, 'FMDay')) AS match_display_day,
+  TRIM(TO_CHAR(pp.created_at, 'HH12:MI AM')) AS match_display_time
 FROM player_performance pp
 JOIN players p ON p.id = pp.player_id
 WHERE LOWER(p.player_name) = LOWER($1)
