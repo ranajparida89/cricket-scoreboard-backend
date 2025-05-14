@@ -20,6 +20,7 @@ const ratingRoutes = require("./routes/ratingRoutes"); // player ratings routes
 const { startRatingScheduler } = require('./routes/ratingScheduler'); // scheduler 
 const matchStoryRoutes = require("./routes/matchStoryRoutes"); // for matchStory 14th MAY 2025 Ranaj Parida
 const playerInfoRoutes = require("./routes/playerInfoRoutes"); // for H2H comparison 15th MAY 2025 Ranaj Parida
+const h2hRoutes = require("./routes/h2hRoutes"); // for H2H comparison 15th MAY 2025 Ranaj Parida
 
 
 
@@ -65,6 +66,7 @@ app.use("/api/ratings", ratingRoutes); // player_rating
 app.use("/api/rankings", ratingRoutes);
 app.use("/api/match-stories", matchStoryRoutes); // for matchstory 14th MAY 2025 Ranaj Parida
 app.use("/api/players", playerInfoRoutes); // for H2H comaprison 15th MAY 2025 Ranaj Parida
+app.use("/api/h2h", h2hRoutes); // for H2H comaprison 15th MAY 2025 Ranaj Parida
 
 
 
