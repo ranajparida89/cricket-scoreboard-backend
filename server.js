@@ -18,6 +18,7 @@ const performanceRoutes = require("./routes/performanceRoutes"); // ✅ New perf
 const upcomingMatchRoutes = require("./routes/upcomingMatchRoutes"); // upcomimg matches
 const ratingRoutes = require("./routes/ratingRoutes"); // player ratings routes
 const { startRatingScheduler } = require('./routes/ratingScheduler'); // scheduler 
+const matchStoryRoutes = require("./routes/matchStoryRoutes"); // for matchStory 14th MAY 2025 Ranaj Parida
 
 
 
@@ -61,6 +62,8 @@ app.use("/api", performanceRoutes); // ✅ Mount the new route  for performacest
 app.use("/api", upcomingMatchRoutes); // Mount the new route for up-coming matches
 app.use("/api/ratings", ratingRoutes); // player_rating
 app.use("/api/rankings", ratingRoutes);
+app.use("/api/match-stories", matchStoryRoutes); // for matchstory 14th MAY 2025 Ranaj Parida
+
 
 
 
