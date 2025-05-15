@@ -1,4 +1,4 @@
-// routes/h2hRoutes.js (✅ Updated on 15-May-2025 by Ranaj Parida | Team + Player H2H Advanced Version)
+// routes/h2hRoutes.js (✅ Updated on 16-May-2025 by Ranaj Parida | with debug logs + match_name filter fixes)
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
@@ -15,7 +15,7 @@ router.get("/summary", async (req, res) => {
     // ✅ Step 1: Fetch all matches played between team1 and team2 in given match_type
     const matchResult = await pool.query(
       `SELECT id, match_name, winner FROM match_history
-       WHERE match_type = $1
+       WHERE LOWER(TRIM(match_type)) = LOWER($1)
        AND ((LOWER(TRIM(team1)) = LOWER($2) AND LOWER(TRIM(team2)) = LOWER($3))
          OR  (LOWER(TRIM(team1)) = LOWER($3) AND LOWER(TRIM(team2)) = LOWER($2)))`,
       [type, team1, team2]
@@ -24,6 +24,12 @@ router.get("/summary", async (req, res) => {
     const matches = matchResult.rows;
     const matchIds = matches.map(m => m.id);
     const matchNames = matches.map(m => m.match_name);
+
+    // ✅ Debug Step 1: Log match names being passed to player query
+    console.log("✅ Match Names for H2H:", matchNames);
+
+    // ✅ Debug Step 3: Log match records
+    console.log("✅ Total matches found between", team1, "and", team2, ":", matchIds.length);
 
     if (matchIds.length === 0) {
       return res.json({
@@ -45,39 +51,45 @@ router.get("/summary", async (req, res) => {
       else if (w.includes(team2.toLowerCase())) team2Wins++;
     });
 
-    // ✅ Step 3: Top Scorer from player_performance
+    // ✅ Step 2: Top Scorer (with robust team filter)
     const scorerQuery = await pool.query(
       `SELECT p.player_name, SUM(pp.run_scored) AS total_runs
        FROM player_performance pp
        JOIN players p ON pp.player_id = p.id
-       WHERE pp.match_name = ANY($1) AND pp.match_type = $2
-         AND (LOWER(pp.team_name) = LOWER($3) OR LOWER(pp.team_name) = LOWER($4))
+       WHERE pp.match_name = ANY($1)
+         AND LOWER(TRIM(pp.match_type)) = LOWER($2)
+         AND (LOWER(TRIM(pp.team_name)) = LOWER($3) OR LOWER(TRIM(pp.team_name)) = LOWER($4))
        GROUP BY p.player_name
        ORDER BY total_runs DESC
        LIMIT 1`,
       [matchNames, type, team1, team2]
     );
 
-    const topScorer = scorerQuery.rows[0];
+    const topScorer = scorerQuery.rows[0] || null;
 
-    // ✅ Step 4: Top Bowler using wickets_taken + tie-breaker: min runs_given
+    // ✅ Step 2: Top Bowler (with tie breaker: least runs_given)
     const bowlerQuery = await pool.query(
       `SELECT p.player_name,
               SUM(pp.wickets_taken) AS total_wickets,
               SUM(pp.runs_given) AS total_runs_given
        FROM player_performance pp
        JOIN players p ON pp.player_id = p.id
-       WHERE pp.match_name = ANY($1) AND pp.match_type = $2
-         AND (LOWER(pp.team_name) = LOWER($3) OR LOWER(pp.team_name) = LOWER($4))
+       WHERE pp.match_name = ANY($1)
+         AND LOWER(TRIM(pp.match_type)) = LOWER($2)
+         AND (LOWER(TRIM(pp.team_name)) = LOWER($3) OR LOWER(TRIM(pp.team_name)) = LOWER($4))
        GROUP BY p.player_name
        ORDER BY total_wickets DESC, total_runs_given ASC
        LIMIT 1`,
       [matchNames, type, team1, team2]
     );
 
-    const topBowler = bowlerQuery.rows[0];
+    const topBowler = bowlerQuery.rows[0] || null;
 
-    // ✅ Step 5: Return all metrics
+    // ✅ Debug Step 3: Log top player outputs
+    console.log("🏏 Top Scorer:", topScorer);
+    console.log("🔥 Top Bowler:", topBowler);
+
+    // ✅ Step 3: Final response
     res.json({
       total_matches: matchIds.length,
       [team1]: team1Wins,
