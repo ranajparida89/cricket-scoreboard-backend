@@ -12,21 +12,22 @@ router.get("/summary", async (req, res) => {
   }
 
   try {
-    // ✅ Step 1: Get all match IDs where team1 and team2 played against each other
+    // ✅ Step 1: Get all matches between the two teams
     const matchQuery = await pool.query(`
-      SELECT id, winner
+      SELECT id, match_name, match_type, winner
       FROM match_history
       WHERE match_type = $1
         AND (
-          (LOWER(TRIM(team1)) = LOWER(TRIM($2)) AND LOWER(TRIM(team2)) = LOWER(TRIM($3))) OR
-          (LOWER(TRIM(team1)) = LOWER(TRIM($3)) AND LOWER(TRIM(team2)) = LOWER(TRIM($2)))
+          (LOWER(TRIM(team1)) = LOWER($2) AND LOWER(TRIM(team2)) = LOWER($3)) OR
+          (LOWER(TRIM(team1)) = LOWER($3) AND LOWER(TRIM(team2)) = LOWER($2))
         )
     `, [type, team1, team2]);
 
     const matches = matchQuery.rows;
     const matchIds = matches.map(m => m.id);
+    const matchNames = matches.map(m => m.match_name);
 
-    // ✅ If no matches found, return zeroed response
+    // ✅ If no matches found
     if (matchIds.length === 0) {
       return res.json({
         total_matches: 0,
@@ -38,7 +39,7 @@ router.get("/summary", async (req, res) => {
       });
     }
 
-    // ✅ Step 2: Count wins & draws (check if team name is included in winner string)
+    // ✅ Step 2: Count wins/draws
     let team1Wins = 0, team2Wins = 0, draws = 0;
     matches.forEach(m => {
       const w = m.winner?.toLowerCase();
@@ -47,33 +48,33 @@ router.get("/summary", async (req, res) => {
       else if (w.includes(team2.toLowerCase())) team2Wins++;
     });
 
-    // ✅ Step 3: Get Top Scorer among all players in those matches
+    // ✅ Step 3: Top Scorer from player_performance
     const scorerQuery = await pool.query(`
-      SELECT p.player_name, SUM(pp.runs) AS total_runs
+      SELECT p.player_name, SUM(pp.run_scored) AS total_runs
       FROM player_performance pp
       JOIN players p ON pp.player_id = p.id
-      WHERE match_id = ANY($1)
+      WHERE pp.match_name = ANY($1) AND pp.match_type = $2
       GROUP BY p.player_name
       ORDER BY total_runs DESC
       LIMIT 1
-    `, [matchIds]);
+    `, [matchNames, type]);
 
     const topScorer = scorerQuery.rows[0] || null;
 
-    // ✅ Step 4: Get Top Bowler among all players in those matches
+    // ✅ Step 4: Top Bowler (corrected column: wickets_taken)
     const bowlerQuery = await pool.query(`
-      SELECT p.player_name, SUM(pp.wickets) AS total_wickets
+      SELECT p.player_name, SUM(pp.wickets_taken) AS total_wickets
       FROM player_performance pp
       JOIN players p ON pp.player_id = p.id
-      WHERE match_id = ANY($1)
+      WHERE pp.match_name = ANY($1) AND pp.match_type = $2
       GROUP BY p.player_name
       ORDER BY total_wickets DESC
       LIMIT 1
-    `, [matchIds]);
+    `, [matchNames, type]);
 
     const topBowler = bowlerQuery.rows[0] || null;
 
-    // ✅ Step 5: Return structured H2H data
+    // ✅ Step 5: Response
     res.json({
       total_matches: matchIds.length,
       [team1]: team1Wins,
@@ -89,7 +90,7 @@ router.get("/summary", async (req, res) => {
   }
 });
 
-// ✅ GET /api/h2h/teams - Unique team names from match_history table Added on 15 May 2025 Ranaj Parida
+// ✅ GET /api/h2h/teams - Unique team names from match_history table
 router.get("/teams", async (req, res) => {
   try {
     const result = await pool.query(`
