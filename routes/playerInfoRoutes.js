@@ -48,14 +48,14 @@ router.get("/compare", async (req, res) => {
       const playerName = row.player_name;
 
       const statsQuery = await pool.query(`
-        SELECT 
-          SUM(runs) AS total_runs,
-          SUM(CASE WHEN runs >= 100 THEN 1 ELSE 0 END) AS centuries,
-          SUM(CASE WHEN runs >= 50 AND runs < 100 THEN 1 ELSE 0 END) AS fifties,
-          ROUND(AVG(runs::numeric), 2) AS batting_avg,
-          MAX(runs) AS highest_score,
-          SUM(wickets) AS total_wickets,
-          ROUND(AVG(wickets::numeric), 2) AS bowling_avg
+       SELECT 
+        SUM(run_scored) AS total_runs,
+        SUM(CASE WHEN run_scored >= 100 THEN 1 ELSE 0 END) AS centuries,
+        SUM(CASE WHEN run_scored >= 50 AND run_scored < 100 THEN 1 ELSE 0 END) AS fifties,
+        ROUND(AVG(run_scored::numeric), 2) AS batting_avg,
+        MAX(run_scored) AS highest_score,
+        SUM(wickets_taken) AS total_wickets,
+        ROUND(AVG(wickets_taken::numeric), 2) AS bowling_avg
         FROM player_performance
         WHERE player_id = $1
       `, [playerId]);
