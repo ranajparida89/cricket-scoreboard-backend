@@ -105,8 +105,8 @@ router.get("/summary", async (req, res) => {
       [team1]: team1Wins,
       [team2]: team2Wins,
       draws,
-      top_scorer: topScorer ? `${topScorer.player_name} (${topScorer.total_runs} runs)` : null,
-      top_bowler: topBowler ? `${topBowler.player_name} (${topBowler.total_wickets} wickets)` : null
+      win_percentage_team1: Math.round((team1Wins / matchIds.length) * 100),
+      win_percentage_team2: Math.round((team2Wins / matchIds.length) * 100)
     });
 
   } catch (error) {
