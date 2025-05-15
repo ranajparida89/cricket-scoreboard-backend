@@ -18,8 +18,8 @@ router.get("/summary", async (req, res) => {
       FROM match_history
       WHERE match_type = $1
         AND (
-          (LOWER(team1) = LOWER($2) AND LOWER(team2) = LOWER($3)) OR
-          (LOWER(team1) = LOWER($3) AND LOWER(team2) = LOWER($2))
+          (LOWER(TRIM(team1)) = LOWER(TRIM($2)) AND LOWER(TRIM(team2)) = LOWER(TRIM($3))) OR
+          (LOWER(TRIM(team1)) = LOWER(TRIM($3)) AND LOWER(TRIM(team2)) = LOWER(TRIM($2)))
         )
     `, [type, team1, team2]);
 
@@ -38,13 +38,13 @@ router.get("/summary", async (req, res) => {
       });
     }
 
-    // ✅ Step 2: Count wins & draws
+    // ✅ Step 2: Count wins & draws (check if team name is included in winner string)
     let team1Wins = 0, team2Wins = 0, draws = 0;
     matches.forEach(m => {
       const w = m.winner?.toLowerCase();
-      if (!w || w === "draw") draws++;
-      else if (w === team1.toLowerCase()) team1Wins++;
-      else if (w === team2.toLowerCase()) team2Wins++;
+      if (!w || w === "draw" || w.includes("draw")) draws++;
+      else if (w.includes(team1.toLowerCase())) team1Wins++;
+      else if (w.includes(team2.toLowerCase())) team2Wins++;
     });
 
     // ✅ Step 3: Get Top Scorer among all players in those matches
