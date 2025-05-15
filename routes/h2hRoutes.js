@@ -1,8 +1,9 @@
+// routes/h2hRoutes.js
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
-// ✅ GET H2H Summary by team1, team2, matchType (ODI/T20/TEST)
+// ✅ GET /api/h2h/summary - Head-to-Head Summary between two teams
 router.get("/summary", async (req, res) => {
   const { team1, team2, type } = req.query;
 
@@ -11,7 +12,7 @@ router.get("/summary", async (req, res) => {
   }
 
   try {
-    // ✅ Step 1: Get all matches between team1 & team2 by type
+    // ✅ Step 1: Get all match IDs where team1 and team2 played against each other
     const matchQuery = await pool.query(`
       SELECT id, winner
       FROM match_history
@@ -25,6 +26,7 @@ router.get("/summary", async (req, res) => {
     const matches = matchQuery.rows;
     const matchIds = matches.map(m => m.id);
 
+    // ✅ If no matches found, return zeroed response
     if (matchIds.length === 0) {
       return res.json({
         total_matches: 0,
@@ -45,7 +47,7 @@ router.get("/summary", async (req, res) => {
       else if (w === team2.toLowerCase()) team2Wins++;
     });
 
-    // ✅ Step 3: Get Top Scorer
+    // ✅ Step 3: Get Top Scorer among all players in those matches
     const scorerQuery = await pool.query(`
       SELECT p.player_name, SUM(pp.runs) AS total_runs
       FROM player_performance pp
@@ -58,7 +60,7 @@ router.get("/summary", async (req, res) => {
 
     const topScorer = scorerQuery.rows[0] || null;
 
-    // ✅ Step 4: Get Top Bowler
+    // ✅ Step 4: Get Top Bowler among all players in those matches
     const bowlerQuery = await pool.query(`
       SELECT p.player_name, SUM(pp.wickets) AS total_wickets
       FROM player_performance pp
@@ -71,7 +73,7 @@ router.get("/summary", async (req, res) => {
 
     const topBowler = bowlerQuery.rows[0] || null;
 
-    // ✅ Step 5: Return results
+    // ✅ Step 5: Return structured H2H data
     res.json({
       total_matches: matchIds.length,
       [team1]: team1Wins,
@@ -82,8 +84,31 @@ router.get("/summary", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error fetching H2H summary:", error);
+    console.error("❌ Error in /api/h2h/summary:", error);
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ✅ GET /api/h2h/teams - Unique team names from match_history table Added on 15 May 2025 Ranaj Parida
+router.get("/teams", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT DISTINCT team FROM (
+        SELECT LOWER(TRIM(team1)) AS team FROM match_history
+        UNION
+        SELECT LOWER(TRIM(team2)) AS team FROM match_history
+      ) AS all_teams
+      ORDER BY team
+    `);
+
+    const teamList = result.rows.map(row =>
+      row.team.charAt(0).toUpperCase() + row.team.slice(1)
+    );
+
+    res.json(teamList);
+  } catch (error) {
+    console.error("❌ Error in /api/h2h/teams:", error);
+    res.status(500).json({ error: "Failed to fetch team names" });
   }
 });
 
