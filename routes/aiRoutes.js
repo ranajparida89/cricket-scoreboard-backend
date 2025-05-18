@@ -1,7 +1,8 @@
-// routes/aiRoutes.js (✅ CrickEdge Smart Analyzer - Full NLP + SQL Matching + Suggestions)
+// routes/aiRoutes.js (✅ CrickEdge Smart Analyzer - Dynamic SQL Mapping + NLP Fallback)
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const queryMappings = require("./QuerySQLMappings"); // ✅ Ensure correct path
 
 // ✅ Synonym maps to translate natural queries to SQL intent
 const synonyms = [
@@ -40,6 +41,35 @@ router.post("/query", async (req, res) => {
     return res.status(400).json({ result: "❗ Please enter a valid question." });
 
   const raw = question.trim();
+
+  // 1️⃣ Direct SQL mapping for dropdown queries
+  if (queryMappings[raw] && queryMappings[raw].sql) {
+    try {
+      const result = await pool.query(queryMappings[raw].sql);
+      if (!result.rows.length) {
+        return res.json({ result: "<p>No data found.</p>" });
+      }
+      // If a custom formatter is provided in mapping, use it
+      if (queryMappings[raw].format) {
+        return res.json({ result: queryMappings[raw].format(result.rows) });
+      }
+      // Otherwise, default output as table or JSON
+      const keys = Object.keys(result.rows[0]);
+      const table =
+        "<table class='result-table'><thead><tr>" +
+        keys.map(k => `<th>${k}</th>`).join("") +
+        "</tr></thead><tbody>" +
+        result.rows.map(row =>
+          `<tr>${keys.map(k => `<td>${row[k]}</td>`).join("")}</tr>`
+        ).join("") +
+        "</tbody></table>";
+      return res.json({ result: table });
+    } catch (err) {
+      return res.status(500).json({ result: "Server error while running query." });
+    }
+  }
+
+  // 2️⃣ NLP fallback for custom or general queries
   const q = normalizeQuestion(raw);
 
   try {
