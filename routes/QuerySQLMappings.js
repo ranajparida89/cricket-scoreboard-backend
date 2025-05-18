@@ -22,7 +22,7 @@ const queryMappings = {
   },
 
   // 🏏 Total Runs
-  "Top scorer for India in ODIs": {
+  "Top scorer for India in ODI": {
   sql: `
     WITH run_totals AS (
       SELECT p.player_name, SUM(pp.run_scored) AS total_runs
