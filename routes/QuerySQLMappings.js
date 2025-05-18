@@ -23,8 +23,22 @@ const queryMappings = {
 
   // 🏏 Total Runs
   "Top scorer for India in ODIs": {
-    sql: `SELECT p.player_name, SUM(pp.run_scored) AS total_runs FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.team_name ILIKE 'India' AND pp.match_type = 'ODI' GROUP BY p.player_name ORDER BY total_runs DESC LIMIT 1;`
-  },
+  sql: `
+    WITH run_totals AS (
+      SELECT p.player_name, SUM(pp.run_scored) AS total_runs
+      FROM player_performance pp
+      JOIN players p ON pp.player_id = p.id
+      WHERE (pp.team_name ILIKE 'India' OR pp.team_name ILIKE 'IND%' OR pp.team_name ILIKE '%India%')
+        AND (pp.match_type ILIKE 'ODI' OR pp.match_type ILIKE '%ODI%')
+      GROUP BY p.player_name
+      HAVING SUM(pp.run_scored) > 0
+    )
+    SELECT player_name, total_runs
+    FROM run_totals
+    WHERE total_runs = (SELECT MAX(total_runs) FROM run_totals);
+  `
+}
+,
   "Top scorer for Australia in T20s": {
     sql: `SELECT p.player_name, SUM(pp.run_scored) AS total_runs FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.team_name ILIKE 'Australia' AND pp.match_type = 'T20' GROUP BY p.player_name ORDER BY total_runs DESC LIMIT 1;`
   },
