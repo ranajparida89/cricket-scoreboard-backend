@@ -1,4 +1,4 @@
-// routes/aiRoutes.js (✅ CrickEdge Smart Analyzer - Dynamic SQL Mapping + NLP Fallback)
+// routes/aiRoutes.js (✅ CrickEdge Smart Analyzer - Dynamic SQL Mapping + Descriptive Output + NLP Fallback)
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
@@ -26,7 +26,36 @@ const suggestions = [
   "Top bowler for India in Test"
 ];
 
-// ✅ Normalizer
+// ✅ Formatter function for descriptive answers
+function describeResult(question, rows) {
+  if (!rows || !rows.length) return "No result found.";
+  const row = rows[0];
+
+  // Handle some popular query templates for descriptive output
+  if (/top scorer/i.test(question) && row.player_name && row.total_runs) {
+    return `<b>${row.player_name}</b> is the Top Scorer with <b>${row.total_runs}</b> runs.`;
+  }
+  if (/most centuries|century/i.test(question) && row.player_name && row.total_centuries) {
+    return `<b>${row.player_name}</b> has scored <b>${row.total_centuries}</b> centuries.`;
+  }
+  if (/top wicket|most wickets/i.test(question) && row.player_name && row.total_wickets) {
+    return `<b>${row.player_name}</b> is the Top Wicket Taker with <b>${row.total_wickets}</b> wickets.`;
+  }
+  if (/winner|won/i.test(question) && row.winner) {
+    return `<b>${row.winner}</b> won the tournament.`;
+  }
+  // Custom: handle more as needed!
+  // Default: pretty-print all fields in a readable way
+  return (
+    "<ul>" +
+    Object.entries(row)
+      .map(([key, val]) => `<li><b>${key.replace(/_/g, " ")}:</b> ${val}</li>`)
+      .join("") +
+    "</ul>"
+  );
+}
+
+// ✅ Normalizer for NLP fallback
 function normalizeQuestion(q) {
   for (const rule of synonyms) {
     if (rule.pattern.test(q)) return rule.rewrite + q.replace(rule.pattern, "").trim();
@@ -49,21 +78,8 @@ router.post("/query", async (req, res) => {
       if (!result.rows.length) {
         return res.json({ result: "<p>No data found.</p>" });
       }
-      // If a custom formatter is provided in mapping, use it
-      if (queryMappings[raw].format) {
-        return res.json({ result: queryMappings[raw].format(result.rows) });
-      }
-      // Otherwise, default output as table or JSON
-      const keys = Object.keys(result.rows[0]);
-      const table =
-        "<table class='result-table'><thead><tr>" +
-        keys.map(k => `<th>${k}</th>`).join("") +
-        "</tr></thead><tbody>" +
-        result.rows.map(row =>
-          `<tr>${keys.map(k => `<td>${row[k]}</td>`).join("")}</tr>`
-        ).join("") +
-        "</tbody></table>";
-      return res.json({ result: table });
+      // Use new describeResult for engaging answer
+      return res.json({ result: describeResult(raw, result.rows) });
     } catch (err) {
       return res.status(500).json({ result: "Server error while running query." });
     }
@@ -73,7 +89,7 @@ router.post("/query", async (req, res) => {
   const q = normalizeQuestion(raw);
 
   try {
-    // 🏏 Most Centuries
+    // 🏏 Most Centuries (NLP Fallback)
     if (q.includes("most centuries") && q.includes("for")) {
       const team = q.split("for")[1].trim();
       const sql = `SELECT p.player_name, SUM(pp.hundreds) AS total_centuries FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.team_name ILIKE $1 GROUP BY p.player_name ORDER BY total_centuries DESC LIMIT 1`;
@@ -82,11 +98,11 @@ router.post("/query", async (req, res) => {
         return res.json({ result: `<p>No centuries found for <em>${team}</em>.</p>` });
       const r = result.rows[0];
       return res.json({
-        result: `<h3>🏏 Most Centuries</h3><p><strong>${r.player_name}</strong> scored <strong>${r.total_centuries}</strong> centuries for <em>${team}</em>.</p>`
+        result: `<b>${r.player_name}</b> has scored <b>${r.total_centuries}</b> centuries for <em>${team}</em>.`
       });
     }
 
-    // 🎯 Top Wicket Taker
+    // 🎯 Top Wicket Taker (NLP Fallback)
     if (q.includes("top wicket") || q.includes("most wickets")) {
       const match = q.match(/for ([a-zA-Z ]+)(?: in ([a-zA-Z]+))?/);
       if (match) {
@@ -98,12 +114,12 @@ router.post("/query", async (req, res) => {
           return res.json({ result: `<p>No data for ${team}${format ? " in " + format : ""}</p>` });
         const r = result.rows[0];
         return res.json({
-          result: `<h3>🎯 Top Wicket Taker</h3><p><strong>${r.player_name}</strong> took <strong>${r.total_wickets}</strong> wickets for <em>${team}</em>${format ? ` in <strong>${format}</strong>` : ""}.</p>`
+          result: `<b>${r.player_name}</b> is the Top Wicket Taker for <em>${team}</em>${format ? ` in <b>${format}</b>` : ""} with <b>${r.total_wickets}</b> wickets.`
         });
       }
     }
 
-    // 🏆 Top Scorer
+    // 🏆 Top Scorer (NLP Fallback)
     if (q.includes("top scorer") || q.includes("most runs")) {
       const match = q.match(/for ([a-zA-Z ]+)(?: in ([a-zA-Z]+))?/);
       if (match) {
@@ -115,12 +131,12 @@ router.post("/query", async (req, res) => {
           return res.json({ result: `<p>No scorer data found for ${team}.</p>` });
         const r = result.rows[0];
         return res.json({
-          result: `<h3>🏆 Top Scorer</h3><p><strong>${r.player_name}</strong> scored <strong>${r.total_runs}</strong> runs for <em>${team}</em>${format ? ` in <strong>${format}</strong>` : ""}.</p>`
+          result: `<b>${r.player_name}</b> is the Top Scorer for <em>${team}</em>${format ? ` in <b>${format}</b>` : ""} with <b>${r.total_runs}</b> runs.`
         });
       }
     }
 
-    // 🏆 Tournament Winner
+    // 🏆 Tournament Winner (NLP Fallback)
     if (q.includes("winner") && (q.includes("world cup") || q.includes("asia cup"))) {
       const year = q.match(/\d{4}/)?.[0];
       const cup = q.includes("asia") ? "Asia Cup" : "World Cup";
@@ -129,11 +145,11 @@ router.post("/query", async (req, res) => {
       if (result.rows.length === 0)
         return res.json({ result: `No result found for ${cup} ${year || ""}` });
       return res.json({
-        result: `<h3>🏆 ${cup} Winner</h3><p><strong>${result.rows[0].winner}</strong> won the ${cup}${year ? ` in ${year}` : ""}.</p>`
+        result: `<b>${result.rows[0].winner}</b> won the ${cup}${year ? ` in ${year}` : ""}.`
       });
     }
 
-    // 📊 Highest Rating
+    // 📊 Highest Rating (NLP Fallback)
     if (q.includes("rated")) {
       const type = q.match(/batting|bowling|allrounder/)?.[0];
       const format = q.match(/in ([a-zA-Z]+)/)?.[1]?.toUpperCase();
@@ -144,7 +160,7 @@ router.post("/query", async (req, res) => {
         if (result.rows.length === 0)
           return res.json({ result: `<p>No rating data found.</p>` });
         return res.json({
-          result: `<h3>📈 Highest ${type} Rating</h3><p><strong>${result.rows[0].player_name}</strong> rated <strong>${result.rows[0][column]}</strong> in ${format}.</p>`
+          result: `<b>${result.rows[0].player_name}</b> is the highest rated ${type} in <b>${format}</b> with a rating of <b>${result.rows[0][column]}</b>.`
         });
       }
     }
