@@ -596,6 +596,41 @@ FROM match_history WHERE match_type = 'ODI' AND (team1 = 'Pakistan' OR team2 = '
     ) ranked
     WHERE team_name ILIKE 'India';
   `
+  
+},
+// 🇮🇳 Top scorer for India in ODI (handle ties)
+"Top scorer for India in ODIs": {
+  sql: `
+    WITH run_totals AS (
+      SELECT p.player_name, SUM(pp.run_scored) AS total_runs
+      FROM player_performance pp
+      JOIN players p ON pp.player_id = p.id
+      WHERE (pp.team_name ILIKE 'India' OR pp.team_name ILIKE 'IND%' OR pp.team_name ILIKE '%India%')
+        AND (pp.match_type ILIKE 'ODI' OR pp.match_type ILIKE '%ODI%')
+      GROUP BY p.player_name
+      HAVING SUM(pp.run_scored) > 0
+    )
+    SELECT player_name, total_runs
+    FROM run_totals
+    WHERE total_runs = (SELECT MAX(total_runs) FROM run_totals);
+  `
+},
+
+// 🇦🇺 Top wicket taker for Australia (handle ties)
+"Top wicket taker for Australia": {
+  sql: `
+    WITH wicket_totals AS (
+      SELECT p.player_name, SUM(pp.wickets_taken) AS total_wickets
+      FROM player_performance pp
+      JOIN players p ON pp.player_id = p.id
+      WHERE (pp.team_name ILIKE 'Australia' OR pp.team_name ILIKE 'AUS%' OR pp.team_name ILIKE '%Australia%')
+      GROUP BY p.player_name
+      HAVING SUM(pp.wickets_taken) > 0
+    )
+    SELECT player_name, total_wickets
+    FROM wicket_totals
+    WHERE total_wickets = (SELECT MAX(total_wickets) FROM wicket_totals);
+  `
 },
 
 
