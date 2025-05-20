@@ -105,31 +105,6 @@ router.post("/test-match", async (req, res) => {
       ]);
     }
 
-    // ✅ 4. Insert into match_history for Test match
-    const matchRes = await pool.query("SELECT match_name FROM matches WHERE id = $1", [match_id]);
-    const matchNameFinal = matchRes.rows[0]?.match_name || "TEST MATCH";
-
-    await pool.query(`
-      INSERT INTO match_history (
-        match_name, match_type, team1, runs1, overs1, wickets1,
-        team2, runs2, overs2, wickets2, winner,
-        runs1_2, overs1_2, wickets1_2,
-        runs2_2, overs2_2, wickets2_2, match_time
-      )
-      VALUES (
-        $1, $2, $3, $4, $5, $6,
-        $7, $8, $9, $10, $11,
-        $12, $13, $14, $15, $16, $17, $18
-      )
-    `, [
-      matchNameFinal, "Test",
-      team1, totalRuns1, totalOvers1.toFixed(1), totalWickets1,
-      team2, totalRuns2, totalOvers2.toFixed(1), totalWickets2, winner,
-      runs1_2, overs1_2, wickets1_2,
-      runs2_2, overs2_2, wickets2_2,
-      new Date()
-    ]);
-
     // ✅ 5. Insert into teams table (safe and idempotent with ON CONFLICT)
     const teamsToInsert = [
       {
