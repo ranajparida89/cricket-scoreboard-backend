@@ -104,53 +104,6 @@ router.post("/test-match", async (req, res) => {
         total_overs_used, match_name?.toUpperCase()
       ]);
     }
-
-    // ✅ 5. Insert into teams table (safe and idempotent with ON CONFLICT)
-    const teamsToInsert = [
-      {
-        team: team1,
-        runs: totalRuns1,
-        overs: totalOvers1.toFixed(1),
-        runsConceded: totalRuns2,
-        oversBowled: totalOvers2.toFixed(1),
-        wins: winner === team1 ? 1 : 0,
-        losses: winner === team2 ? 1 : 0,
-        points: winner === "Draw" ? 1 : 2
-      },
-      {
-        team: team2,
-        runs: totalRuns2,
-        overs: totalOvers2.toFixed(1),
-        runsConceded: totalRuns1,
-        oversBowled: totalOvers1.toFixed(1),
-        wins: winner === team2 ? 1 : 0,
-        losses: winner === team1 ? 1 : 0,
-        points: winner === "Draw" ? 1 : 2
-      }
-    ];
-
-    for (const t of teamsToInsert) {
-      const insertResult = await pool.query(`
-        INSERT INTO teams (
-          match_id, name, matches_played, wins, losses, points,
-          total_runs, total_overs, total_runs_conceded, total_overs_bowled
-        )
-        VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT (match_id, name) DO NOTHING
-      `, [
-        match_id,
-        t.team,
-        t.wins,
-        t.losses,
-        t.points,
-        t.runs,
-        t.overs,
-        t.runsConceded,
-        t.oversBowled
-      ]);
-      console.log(`✅ Team record ensured for ${t.team} in match ${match_id}`);
-    }
-
     const message = winner === "Draw"
       ? "🤝 The match ended in a draw!"
       : `✅ ${winner} won the test match!`;
