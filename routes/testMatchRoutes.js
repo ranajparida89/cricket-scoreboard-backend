@@ -139,31 +139,32 @@ router.get("/test-match-history", async (req, res) => {
 });
 
 // ✅ [Added by Ranaj Parida | 20-April-2025] API to return accurate Test rankings
+// ✅ GET: Accurate Test rankings from test_match_results table
 router.get("/rankings/test", async (req, res) => {
   try {
     const result = await pool.query(`
-                    SELECT
-          team AS team_name,
-          COUNT(*) AS matches,
-          SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) AS wins,
-          SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) AS losses,
-          SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) AS draws,
+      SELECT
+        team AS team_name,
+        COUNT(*) AS matches,
+        SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) AS losses,
+        SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) AS draws,
+        (SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) * 12 +
+         SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) * 6 +
+         SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) * 4) AS points,
+        ROUND(
           (SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) * 12 +
-          SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) * 6 +
-          SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) * 4) AS points,
-          ROUND(
-            (SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) * 12 +
-            SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) * 6 +
-            SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) * 4)::decimal / COUNT(*),
-            2
-          ) AS rating
-        FROM (
-          SELECT team1 AS team, winner FROM match_history WHERE match_type = 'Test'
-          UNION ALL
-          SELECT team2 AS team, winner FROM match_history WHERE match_type = 'Test'
-        ) AS all_teams
-        GROUP BY team
-        ORDER BY points DESC
+           SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) * 6 +
+           SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) * 4)::decimal / COUNT(*),
+          2
+        ) AS rating
+      FROM (
+        SELECT team1 AS team, winner FROM test_match_results
+        UNION ALL
+        SELECT team2 AS team, winner FROM test_match_results
+      ) AS all_teams
+      GROUP BY team
+      ORDER BY points DESC
     `);
     res.json(result.rows);
   } catch (err) {
