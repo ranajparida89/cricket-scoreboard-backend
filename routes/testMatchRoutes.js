@@ -173,6 +173,44 @@ router.get("/rankings/test", async (req, res) => {
   }
 });
 
+// routes/testMatchRoutes.js or routes/leaderboardRoutes.js
+// Added this below API for test match leaderboard.
+router.get("/leaderboard/test", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      WITH TEST_MATCH_LEADERBOARD AS (
+        SELECT
+          team AS team_name,
+          COUNT(*) AS matches,
+          SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) AS wins,
+          SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) AS losses,
+          SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) AS draws,
+          (SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) * 12 +
+           SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) * 6 +
+           SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) * 4) AS points
+        FROM (
+          SELECT team1 AS team, winner FROM test_match_results
+          UNION ALL
+          SELECT team2 AS team, winner FROM test_match_results
+        ) AS all_teams
+        GROUP BY team
+      )
+      SELECT
+        DENSE_RANK() OVER(ORDER BY points DESC) AS rank,
+        team_name,
+        matches,
+        wins,
+        losses,
+        draws,
+        points
+      FROM TEST_MATCH_LEADERBOARD
+      ORDER BY rank ASC;
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load Test Match Leaderboard" });
+  }
+});
 
 module.exports = router;
 
