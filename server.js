@@ -22,8 +22,15 @@ const matchStoryRoutes = require("./routes/matchStoryRoutes"); // for matchStory
 const playerInfoRoutes = require("./routes/playerInfoRoutes"); // for H2H comparison 15th MAY 2025 Ranaj Parida
 const h2hRoutes = require("./routes/h2hRoutes"); // for H2H comparison 15th MAY 2025 Ranaj Parida
 const aiRoutes = require("./routes/aiRoutes"); // AI enable QA
-
-
+const dashboardFavoritesRoutes = require("./routes/dashboardFavoritesRoutes"); // dashboard
+const dashboardPostsRoutes = require("./routes/dashboardPostsRoutes"); // dashboardpost
+const dashboardAchievementsRoutes = require("./routes/dashboardAchievementsRoutes"); // achievement
+const dashboardActivityRoutes = require("./routes/dashboardActivityRoutes"); // user activity
+const dashboardMyPostsRoutes = require("./routes/dashboardMyPostsRoutes"); // user post
+const dashboardProfileStatsRoutes = require("./routes/dashboardProfileStatsRoutes");
+const dashboardWidgetsRoutes = require("./routes/dashboardWidgetsRoutes");
+const dashboardSettingsRoutes = require("./routes/dashboardSettingsRoutes"); // user setting 
+const dashboardNotificationsRoutes = require("./routes/dashboardNotificationsRoutes");
 
 
 const app = express();
@@ -68,7 +75,15 @@ app.use("/api/match-stories", matchStoryRoutes); // for matchstory 14th MAY 2025
 app.use("/api/players", playerInfoRoutes); // for H2H comaprison 15th MAY 2025 Ranaj Parida
 app.use("/api/h2h", h2hRoutes); // for H2H comaprison 15th MAY 2025 Ranaj Parida
 app.use("/api/analyzer", aiRoutes); // AI enabled QA
-
+app.use("/api/dashboard/favorites", dashboardFavoritesRoutes); // For Dashboard
+app.use("/api/dashboard/posts", dashboardPostsRoutes); // dashboardpost
+app.use("/api/dashboard/achievements", dashboardAchievementsRoutes); // achievment
+app.use("/api/dashboard/activity", dashboardActivityRoutes); // user activity
+app.use("/api/dashboard/myposts", dashboardMyPostsRoutes); // user post
+app.use("/api/dashboard/profile", dashboardProfileStatsRoutes);
+app.use("/api/dashboard/widgets", dashboardWidgetsRoutes);
+app.use("/api/dashboard/settings", dashboardSettingsRoutes); // user settings
+app.use("/api/dashboard/notifications", dashboardNotificationsRoutes);
 
 
 

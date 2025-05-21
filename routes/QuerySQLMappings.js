@@ -137,7 +137,17 @@ const queryMappings = {
     sql: `SELECT p.player_name, SUM(pp.fifties) AS total_fifties FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.match_type = 'ODI' GROUP BY p.player_name ORDER BY total_fifties DESC LIMIT 1;`
   },
   "Best strike rate in T20 cricket": {
-    sql: `SELECT p.player_name, MAX(pp.strike_rate) AS best_strike_rate FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.match_type = 'T20' GROUP BY p.player_name ORDER BY best_strike_rate DESC LIMIT 1;`
+    sql: `SELECT
+  p.player_name,
+  ROUND(MAX((pp.run_scored::decimal / NULLIF(pp.balls_faced, 0)) * 100), 2) AS best_strike_rate
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.id
+WHERE pp.match_type = 'T20'
+  AND pp.balls_faced > 0
+GROUP BY p.player_name
+ORDER BY best_strike_rate DESC
+LIMIT 1;
+`
   },
   "Fastest fifty in ODI history?": {
     sql: `SELECT p.player_name, MIN(pp.balls_faced) AS balls FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.fifties > 0 AND pp.match_type = 'ODI' GROUP BY p.player_name ORDER BY balls ASC LIMIT 1;`
@@ -157,7 +167,8 @@ const queryMappings = {
     sql: `SELECT p.player_name, MIN(p.age) AS youngest_age FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.hundreds > 0 AND pp.match_type = 'ODI' GROUP BY p.player_name ORDER BY youngest_age ASC LIMIT 1;`
   },
   "Highest total score in a Test match?": {
-    sql: `SELECT match_name, GREATEST(runs1 + COALESCE(runs1_2,0), runs2 + COALESCE(runs2_2,0)) AS total_score FROM match_history WHERE match_type = 'TEST' ORDER BY total_score DESC LIMIT 1;`
+    sql: `SELECT GREATEST(runs1 + COALESCE(runs1_2,0), runs2 + COALESCE(runs2_2,0)) AS total_score FROM 
+test_match_results WHERE match_type = 'Test' ORDER BY total_score DESC LIMIT 1;`
   },
   "Highest partnership ever in international cricket?": {
     sql: `SELECT p1.player_name AS batsman1, p2.player_name AS batsman2, MAX(pp.partnership) AS max_partnership FROM player_performance pp JOIN players p1 ON pp.player_id = p1.id JOIN players p2 ON pp.partner_id = p2.id GROUP BY batsman1, batsman2 ORDER BY max_partnership DESC LIMIT 1;`
@@ -166,7 +177,12 @@ const queryMappings = {
     sql: `SELECT p.player_name, SUM(pp.dismissals) AS total_dismissals FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.match_type = 'ODI' GROUP BY p.player_name ORDER BY total_dismissals DESC LIMIT 1;`
   },
   "Which player has most ducks in career?": {
-    sql: `SELECT p.player_name, SUM(pp.ducks) AS total_ducks FROM player_performance pp JOIN players p ON pp.player_id = p.id GROUP BY p.player_name ORDER BY total_ducks DESC LIMIT 1;`
+    sql: `select p.player_name,count(*) ducks
+--dense_rank() over(order by pp.run_scored desc) top_scorer
+from player_performance pp,players p 
+where pp.player_id = p.id and pp.run_scored = 0
+GROUP BY p.player_name
+ORDER BY ducks desc`
   },
 
   // 💡 Player + Format + Team combos
@@ -183,7 +199,13 @@ const queryMappings = {
     sql: `SELECT pr.batting_rating FROM player_ratings pr JOIN players p ON pr.player_id = p.id WHERE p.player_name ILIKE 'Steve Smith' AND pr.match_type = 'TEST' ORDER BY pr.batting_rating DESC LIMIT 1;`
   },
   "Batting average of Babar Azam in ODI?": {
-    sql: `SELECT AVG(pp.batting_avg) AS avg_batting FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE p.player_name ILIKE 'Babar Azam' AND pp.match_type = 'ODI';`
+    sql: `SELECT p.player_name,
+  ROUND(SUM(pp.run_scored)::numeric / NULLIF(SUM(CASE WHEN LOWER(pp.dismissed) <> 'not out' THEN 1 ELSE 0 END), 0), 2) AS batting_average
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.id
+WHERE p.player_name = 'Babar Azam'
+  AND pp.match_type = 'ODI'
+  group by p.player_name;`
   },
 
   // 🧠 ICC Stats (Advanced)
@@ -205,10 +227,32 @@ const queryMappings = {
     sql: `SELECT winner FROM match_history WHERE match_type = 'ODI' ORDER BY match_time DESC LIMIT 1;`
   },
   "Top scorer in last T20 match?": {
-    sql: `SELECT p.player_name, pp.run_scored FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.match_type = 'T20' AND pp.match_id = (SELECT id FROM match_history WHERE match_type = 'T20' ORDER BY match_time DESC LIMIT 1) ORDER BY pp.run_scored DESC LIMIT 1;`
+    sql: `select player_name,run_scored
+from
+(
+select p.player_name,pp.run_scored, 
+dense_rank() over(order by pp.run_scored desc) top_scorer
+from player_performance pp,players p 
+where pp.player_id = p.id and pp.match_type = 'T20'
+) where top_scorer = 1;`
   },
   "Top wicket taker in last Test match?": {
-    sql: `SELECT p.player_name, pp.wickets_taken FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.match_type = 'TEST' AND pp.match_id = (SELECT id FROM match_history WHERE match_type = 'TEST' ORDER BY match_time DESC LIMIT 1) ORDER BY pp.wickets_taken DESC LIMIT 1;`
+    sql: `
+select player_name,wickets_taken
+from
+(
+select player_name,wickets_taken,
+	   dense_rank() over(order by wickets_taken desc) top_bowler
+from
+(
+SELECT
+  p.player_name,
+  pp.wickets_taken
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.id
+WHERE pp.match_type = 'Test' and p.skill_type in('All Rounder','Bowler')
+  )
+  ) where top_bowler = 1`
   },
 
   // 📅 Date-specific
@@ -221,13 +265,43 @@ const queryMappings = {
 
   // 💥 Strike Rate + Avg
   "Player with highest strike rate in T20s?": {
-    sql: `SELECT p.player_name, MAX(pp.strike_rate) AS best_strike_rate FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.match_type = 'T20' GROUP BY p.player_name ORDER BY best_strike_rate DESC LIMIT 1;`
+    sql: `SELECT
+  p.player_name,
+  ROUND((SUM(pp.run_scored)::decimal / NULLIF(SUM(pp.balls_faced), 0)) * 100, 2) AS career_strike_rate
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.id
+WHERE pp.match_type = 'T20'
+GROUP BY p.player_name
+HAVING SUM(pp.balls_faced) > 0
+ORDER BY career_strike_rate DESC
+LIMIT 1;`
   },
   "Best batting average in Test cricket": {
-    sql: `SELECT p.player_name, AVG(pp.batting_avg) AS best_avg FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.match_type = 'TEST' GROUP BY p.player_name ORDER BY best_avg DESC LIMIT 1;`
+    sql: `SELECT player_id,player_name FROM
+(
+select  player_id,player_name,DENSE_RANK() OVER(ORDER BY batting_average DESC) BEST_BATTING_AVG from
+(
+SELECT
+   p.player_name,pp.player_id,
+  ROUND(SUM(pp.run_scored)::numeric / NULLIF(SUM(CASE WHEN LOWER(pp.dismissed) <> 'not out' THEN 1 ELSE 0 END), 0), 2) AS batting_average
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.id where pp.match_type = 'Test' 
+GROUP BY p.player_name,pp.player_id
+ORDER BY batting_average DESC
+) where batting_average IS NOT NULL
+) WHERE BEST_BATTING_AVG = 1`
   },
   "Lowest bowling average in ODI": {
-    sql: `SELECT p.player_name, AVG(pp.bowling_avg) AS best_bowl_avg FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.match_type = 'ODI' GROUP BY p.player_name ORDER BY best_bowl_avg ASC LIMIT 1;`
+    sql: `SELECT
+  p.player_name,
+  ROUND(AVG(wickets_taken::numeric), 2) AS bowling_average
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.id
+WHERE pp.match_type = 'ODI'
+  AND pp.wickets_taken > 0
+GROUP BY p.player_name
+ORDER BY bowling_average ASC
+LIMIT 1;`
   },
 
   // ⏳ Career Records
@@ -235,7 +309,15 @@ const queryMappings = {
     sql: `SELECT p.player_name, (MAX(m.match_time)::date - MIN(m.match_time)::date) AS career_span FROM player_performance pp JOIN players p ON pp.player_id = p.id JOIN match_history m ON pp.match_id = m.id GROUP BY p.player_name ORDER BY career_span DESC LIMIT 1;`
   },
   "Who has played most matches as captain?": {
-    sql: `SELECT p.player_name, COUNT(*) AS captain_matches FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.is_captain = true GROUP BY p.player_name ORDER BY captain_matches DESC LIMIT 1;`
+    sql: `SELECT
+  p.player_name,
+  COUNT(*) AS captain_matches
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.id
+WHERE p.is_captain = TRUE
+GROUP BY p.player_name
+ORDER BY captain_matches DESC
+LIMIT 1;`
   },
   "Player with most not outs in ODI": {
     sql: `SELECT p.player_name, SUM(pp.not_outs) AS total_not_outs FROM player_performance pp JOIN players p ON pp.player_id = p.id WHERE pp.match_type = 'ODI' GROUP BY p.player_name ORDER BY total_not_outs DESC LIMIT 1;`
@@ -556,14 +638,16 @@ FROM match_history WHERE match_type = 'ODI' AND (team1 = 'Pakistan' OR team2 = '
 },
 
 "India's position in ICC Test ranking?": {
-  sql: `SELECT team_name, position FROM (
-          SELECT name AS team_name,
-                 ROW_NUMBER() OVER (ORDER BY points DESC, nrr DESC) AS position
-          FROM teams t
-          JOIN matches m ON t.match_id = m.id
-          WHERE m.match_type = 'Test' AND match_id IS NOT NULL
-        ) ranked
-        WHERE team_name = 'India';`
+  sql: `select team_name,points, 
+		dense_rank() over(order by points desc) Rnk from
+		(
+			select team_name,sum(points) points
+			from ( select team1 as Team_name,points as points from test_match_results
+union 
+select team2 Team_name,points as points from test_match_results ) all_teams
+		group by team_name
+		) as ranked_team
+where team_name = 'India'`
 },
 // 🏆 ICC Team Stats & Rankings
 
