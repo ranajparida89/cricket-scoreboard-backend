@@ -1,4 +1,4 @@
-// ✅ routes/upcomingMatchRoutes.js
+/ ✅ routes/upcomingMatchRoutes.js
 // ✅ [Ranaj Parida | CrickEdge - Advanced Match Scheduler | 30-Apr-2025]
 
 const express = require("express");
@@ -10,7 +10,7 @@ function validateUpcomingMatch(match) {
   const requiredFields = [
     "match_name", "match_type", "team_1", "team_2",
     "location", "match_date", "match_time",
-    "match_status", "day_night", "created_by_id" // ✅ updated field
+    "match_status", "day_night", "created_by"
   ];
 
   for (const field of requiredFields) {
@@ -33,6 +33,8 @@ function validateUpcomingMatch(match) {
 // ✅ Normalize team names (with more countries)
 function normalizeTeamName(name) {
   const n = name.trim().toLowerCase();
+
+  // 🏏 Common International Teams
   if (["ind", "india"].includes(n)) return "India";
   if (["aus", "australia"].includes(n)) return "Australia";
   if (["pak", "pakistan"].includes(n)) return "Pakistan";
@@ -50,30 +52,35 @@ function normalizeTeamName(name) {
   if (["sco", "scotland"].includes(n)) return "Scotland";
   if (["uae"].includes(n)) return "UAE";
   if (["usa"].includes(n)) return "USA";
+
+  // 🛠️ Default fallback (custom or unknown)
   return name.trim();
 }
 
 // ✅ POST: Add upcoming match
 router.post("/upcoming-match", async (req, res) => {
   try {
-    console.log("📥 Incoming match data:", req.body);
+      console.log("📥 Incoming match data:", req.body); // ← ADD THIS
     const match = req.body;
 
     // 🔍 Validate
     const validationError = validateUpcomingMatch(match);
     if (validationError) {
-      return res.status(400).json({ error: validationError });
-    }
-
+      return res.status(400).json({ error: validationError }); 
+    }     
+  
+    // 🧼 Normalize team names
     const team1 = normalizeTeamName(match.team_1);
     const team2 = normalizeTeamName(match.team_2);
+
+    // 📦 Derive Team Playing string
     const team_playing = `${team1} vs ${team2}`;
 
-    // 🔹 Insert with created_by_id for trigger logic (auto-update created_by in DB)
+    // 📥 Insert into DB
     const result = await pool.query(
       `INSERT INTO upcoming_match_details
        (match_name, match_type, team_1, team_2, location, match_date, match_time,
-        series_name, match_status, day_night, created_by_id, created_by, updated_by, team_playing)
+        series_name, match_status, day_night, created_by,created_by_id,updated_by, team_playing)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13)
        RETURNING *`,
       [
@@ -87,8 +94,8 @@ router.post("/upcoming-match", async (req, res) => {
         match.series_name?.trim() || null,
         match.match_status,
         match.day_night,
-        match.created_by_id,  // ✅ user_id (for trigger)
-        match.created_by || 'placeholder@system.com', // ✅ fallback email if not provided
+        match.created_by,
+        match.created_by_id,
         team_playing
       ]
     );
@@ -99,13 +106,14 @@ router.post("/upcoming-match", async (req, res) => {
     console.error("❌ Insert Upcoming Match Error:", {
       message: err.message,
       stack: err.stack,
-      requestBody: req.body,
+      requestBody: req.body,  // <-- shows what was sent
     });
+  
     res.status(500).json({ error: "Something went wrong while scheduling match" });
-  }
+  }  
 });
 
-// ✅ GET: Fetch all upcoming matches
+// ✅ GET: Fetch all upcoming matches (used in UpcomingMatches.js frontend)
 router.get("/upcoming-matches", async (req, res) => {
   try {
     const result = await pool.query(
