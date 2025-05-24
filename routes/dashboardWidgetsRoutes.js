@@ -27,6 +27,7 @@ router.get("/", async (req, res) => {
            match_status, 
            team_playing
          FROM upcoming_match_details
+         WHERE created_by = $1
          ORDER BY match_date ASC -- show the nearest future match
          LIMIT 1`,
         [userId]
