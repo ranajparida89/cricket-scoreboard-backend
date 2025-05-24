@@ -9,31 +9,32 @@ router.get("/", async (req, res) => {
     const { userId } = req.query;
     if (!userId) return res.status(400).json({ error: "Missing userId" });
 
-    // Example widgets: Next upcoming match, your latest prediction, accuracy, total posts
-    // You can expand this logic as needed
-    const [{ rows: [nextMatch] }, { rows: [lastPrediction] }, { rows: [accuracy] }, { rows: [postCount] }] = await Promise.all([
+    const [
+      { rows: [nextMatch] },
+      { rows: [lastPrediction] },
+      { rows: [accuracy] },
+      { rows: [postCount] }
+    ] = await Promise.all([
+      // 🔹 Updated query to fetch the latest upcoming match created by the specific user
       pool.query(
         `SELECT 
-  um.match_name, 
-  um.match_date, 
-  t1.name AS team1_name, 
-  t2.name AS team2_name
-FROM upcoming_matches um
-JOIN teams t1 ON um.team1_id = t1.id
-JOIN teams t2 ON um.team2_id = t2.id
-WHERE (
-    um.team1_id = ANY (SELECT ref_id FROM user_favorites WHERE user_id = $1 AND type = 'team')
-    OR um.team2_id = ANY (SELECT ref_id FROM user_favorites WHERE user_id = $1 AND type = 'team')
-  )
-  AND um.match_date > NOW()
-ORDER BY um.match_date ASC 
-LIMIT 1
-`, [userId]
-      ),
-      pool.query(
-        `SELECT prediction, is_correct, created_at FROM user_predictions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+          match_name, match_type, location, match_time, match_date, match_status, team_playing
+         FROM upcoming_match_details
+         WHERE created_by = $1
+         ORDER BY created_at DESC
+         LIMIT 1`,
         [userId]
       ),
+      // 🔹 Last prediction remains unchanged
+      pool.query(
+        `SELECT prediction, is_correct, created_at 
+         FROM user_predictions 
+         WHERE user_id = $1 
+         ORDER BY created_at DESC 
+         LIMIT 1`,
+        [userId]
+      ),
+      // 🔹 Prediction accuracy remains unchanged
       pool.query(
         `SELECT 
             CASE WHEN COUNT(*) = 0 THEN 0 
@@ -41,8 +42,11 @@ LIMIT 1
          FROM user_predictions WHERE user_id = $1`,
         [userId]
       ),
+      // 🔹 Total posts count remains unchanged
       pool.query(
-        `SELECT COUNT(*)::int AS total_posts FROM match_history WHERE user_id = $1`,
+        `SELECT COUNT(*)::int AS total_posts 
+         FROM match_history 
+         WHERE user_id = $1`,
         [userId]
       ),
     ]);
@@ -54,6 +58,7 @@ LIMIT 1
       totalPosts: postCount?.total_posts || 0
     });
   } catch (err) {
+    console.error("Error in /api/dashboard/widgets:", err);
     res.status(500).json({ error: "Failed to load widgets" });
   }
 });
