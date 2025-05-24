@@ -1,16 +1,24 @@
 // ✅ routes/upcomingMatchRoutes.js
-// ✅ [Ranaj Parida | CrickEdge - Advanced Match Scheduler | 30-Apr-2025]
-
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+
+// ✅ Middleware to ensure user is logged in and attach req.user
+// (assuming JWT or session-based authentication sets req.user)
+function requireAuth(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: "Unauthorized. Please log in." });
+  }
+  next();
+}
 
 // ✅ Validate required fields before DB insert
 function validateUpcomingMatch(match) {
   const requiredFields = [
     "match_name", "match_type", "team_1", "team_2",
     "location", "match_date", "match_time",
-    "match_status", "day_night", "created_by"
+    "match_status", "day_night"
+    // Note: removed "created_by" from validation list
   ];
 
   for (const field of requiredFields) {
@@ -30,11 +38,9 @@ function validateUpcomingMatch(match) {
   return null;
 }
 
-// ✅ Normalize team names (with more countries)
+// ✅ Normalize team names
 function normalizeTeamName(name) {
   const n = name.trim().toLowerCase();
-
-  // 🏏 Common International Teams
   if (["ind", "india"].includes(n)) return "India";
   if (["aus", "australia"].includes(n)) return "Australia";
   if (["pak", "pakistan"].includes(n)) return "Pakistan";
@@ -52,31 +58,27 @@ function normalizeTeamName(name) {
   if (["sco", "scotland"].includes(n)) return "Scotland";
   if (["uae"].includes(n)) return "UAE";
   if (["usa"].includes(n)) return "USA";
-
-  // 🛠️ Default fallback (custom or unknown)
   return name.trim();
 }
 
 // ✅ POST: Add upcoming match
-router.post("/upcoming-match", async (req, res) => {
+router.post("/upcoming-match", requireAuth, async (req, res) => {
   try {
-      console.log("📥 Incoming match data:", req.body); // ← ADD THIS
+    console.log("📥 Incoming match data:", req.body);
     const match = req.body;
 
-    // 🔍 Validate
     const validationError = validateUpcomingMatch(match);
     if (validationError) {
-      return res.status(400).json({ error: validationError }); 
-    }     
-  
-    // 🧼 Normalize team names
+      return res.status(400).json({ error: validationError });
+    }
+
     const team1 = normalizeTeamName(match.team_1);
     const team2 = normalizeTeamName(match.team_2);
-
-    // 📦 Derive Team Playing string
     const team_playing = `${team1} vs ${team2}`;
 
-    // 📥 Insert into DB
+    // ✅ Use logged-in user's email from req.user
+    const createdBy = req.user.email;  // Ensure auth middleware sets req.user.email
+
     const result = await pool.query(
       `INSERT INTO upcoming_match_details
        (match_name, match_type, team_1, team_2, location, match_date, match_time,
@@ -94,7 +96,7 @@ router.post("/upcoming-match", async (req, res) => {
         match.series_name?.trim() || null,
         match.match_status,
         match.day_night,
-        match.created_by,
+        createdBy,
         team_playing
       ]
     );
@@ -105,14 +107,13 @@ router.post("/upcoming-match", async (req, res) => {
     console.error("❌ Insert Upcoming Match Error:", {
       message: err.message,
       stack: err.stack,
-      requestBody: req.body,  // <-- shows what was sent
+      requestBody: req.body,
     });
-  
     res.status(500).json({ error: "Something went wrong while scheduling match" });
-  }  
+  }
 });
 
-// ✅ GET: Fetch all upcoming matches (used in UpcomingMatches.js frontend)
+// ✅ GET: Fetch all upcoming matches
 router.get("/upcoming-matches", async (req, res) => {
   try {
     const result = await pool.query(
