@@ -77,29 +77,29 @@ router.post("/upcoming-match", async (req, res) => {
     const team_playing = `${team1} vs ${team2}`;
 
     // 📥 Insert into DB
-    const result = await pool.query(
-      `INSERT INTO upcoming_match_details
-       (match_name, match_type, team_1, team_2, location, match_date, match_time,
-        series_name, match_status, day_night, created_by, updated_by, team_playing)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12)
-       RETURNING *`,
-      [
-  match.match_name.trim(),            // $1
-  match.match_type,                   // $2
-  team1,                              // $3
-  team2,                              // $4
-  match.location.trim(),              // $5
-  match.match_date,                   // $6
-  match.match_time,                   // $7
-  match.series_name?.trim() || null,  // $8
-  match.match_status,                 // $9
-  match.day_night,                    // $10
-  match.updated_by,                   // $11 <-- USER EMAIL GOES HERE (created_by)
-  null,                               // $12 <-- updated_by is NULL for now
-  team_playing                        // $13
-]
+   const result = await pool.query(
+  `INSERT INTO upcoming_match_details
+    (match_name, match_type, team_1, team_2, location, match_date, match_time,
+     series_name, match_status, day_night, created_by, updated_by, team_playing)
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+   RETURNING *`,
+  [
+    match.match_name.trim(),            // $1
+    match.match_type,                   // $2
+    team1,                              // $3
+    team2,                              // $4
+    match.location.trim(),              // $5
+    match.match_date,                   // $6
+    match.match_time,                   // $7
+    match.series_name?.trim() || null,  // $8
+    match.match_status,                 // $9
+    match.day_night,                    // $10
+    match.created_by,                   // $11 <-- USER EMAIL GOES HERE
+    null,                               // $12 <-- updated_by is NULL for now
+    team_playing                        // $13
+  ]
+);
 
-    );
 
     res.status(201).json({ message: "Match scheduled successfully", data: result.rows[0] });
 
