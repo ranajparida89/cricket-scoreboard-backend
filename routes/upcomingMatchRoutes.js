@@ -84,7 +84,7 @@ router.post("/upcoming-match", async (req, res) => {
       VALUES
         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *`,
-          [
+        console.log('INSERT ARRAY:', [
         match.match_name.trim(),   // $1
         match.match_type,          // $2
         team1,                     // $3
@@ -99,7 +99,7 @@ router.post("/upcoming-match", async (req, res) => {
         match.updated_by,          // $12  <-- updated_by
         team_playing               // $13  <-- team_playing
       ]
-    );
+    ));
 
     res.status(201).json({ message: "Match scheduled successfully", data: result.rows[0] });
 
