@@ -81,7 +81,7 @@ router.post("/upcoming-match", async (req, res) => {
       `INSERT INTO upcoming_match_details
        (match_name, match_type, team_1, team_2, location, match_date, match_time,
         series_name, match_status, day_night, created_by, updated_by, team_playing)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12,$13)
        RETURNING *`,
       [
         match.match_name.trim(),
@@ -95,6 +95,7 @@ router.post("/upcoming-match", async (req, res) => {
         match.match_status,
         match.day_night,
         match.created_by,
+        match.updated_by,  
         team_playing
       ]
     );
