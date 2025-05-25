@@ -95,6 +95,7 @@ router.post("/upcoming-match", async (req, res) => {
         match.match_status,
         match.day_night,
         match.created_by,
+        match.updated_by,
         team_playing
       ]
     );
