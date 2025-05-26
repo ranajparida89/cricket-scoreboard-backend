@@ -116,7 +116,7 @@ router.post("/upcoming-match", async (req, res) => {
 router.get("/upcoming-matches", async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM upcoming_match_details ORDER BY match_date ASC, match_time ASC`
+      `SELECT * FROM upcoming_match_details ORDER BY match_date DESC, match_time DESC`
     );
     res.status(200).json(result.rows);
   } catch (err) {
