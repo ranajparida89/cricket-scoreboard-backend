@@ -31,6 +31,7 @@ const dashboardProfileStatsRoutes = require("./routes/dashboardProfileStatsRoute
 const dashboardWidgetsRoutes = require("./routes/dashboardWidgetsRoutes");
 const dashboardSettingsRoutes = require("./routes/dashboardSettingsRoutes"); // user setting 
 const dashboardNotificationsRoutes = require("./routes/dashboardNotificationsRoutes");
+const userDashboardRoutes = require('./routes/userDashboardRoutes');
 
 
 const app = express();
@@ -84,6 +85,7 @@ app.use("/api/dashboard/profile", dashboardProfileStatsRoutes);
 app.use("/api/dashboard/widgets", dashboardWidgetsRoutes);
 app.use("/api/dashboard/settings", dashboardSettingsRoutes); // user settings
 app.use("/api/dashboard/notifications", dashboardNotificationsRoutes);
+app.use('/api', userDashboardRoutes);
 
 
 
