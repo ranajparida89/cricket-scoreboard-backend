@@ -119,14 +119,15 @@ router.get('/user-dashboard-stats', async (req, res) => {
     }
 
     // --- Return the dashboard stats ---
-    return res.json({
-      matches_played: parseInt(stats.matches_played, 10) || 0,
-      matches_won,
-      matches_lost,
-      matches_draw: draws,
-      total_runs: parseInt(stats.total_runs, 10) || 0,
-      total_wickets: parseInt(stats.total_wickets, 10) || 0,
-    });
+   console.log("Returning stats for user:", userId, "=>", {
+  matches_played: parseInt(stats.matches_played, 10) || 0,
+  matches_won,
+  matches_lost,
+  matches_draw: draws,
+  total_runs: parseInt(stats.total_runs, 10) || 0,
+  total_wickets: parseInt(stats.total_wickets, 10) || 0,
+});
+
 
   } catch (err) {
     console.error("❌ User dashboard stats error:", err);
