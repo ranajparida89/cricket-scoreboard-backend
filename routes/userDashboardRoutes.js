@@ -1,5 +1,5 @@
 // ✅ routes/userDashboardRoutes.js
-// ✅ Ranaj Parida | 27-May-2025 | User Dashboard Stats API
+// ✅ Ranaj Parida | 27-May-2025 | User Dashboard Stats API | UPDATED 28-May-2025 for Query Param Safety
 
 const express = require('express');
 const router = express.Router();
@@ -24,21 +24,18 @@ router.get('/user-dashboard-stats', async (req, res) => {
       return res.status(400).json({ error: "Invalid match_type" });
     }
 
-    // --- Find all player_ids for the user ---
+    // --- Find the player_id for the user ---
     const playerRes = await pool.query(
-      'SELECT id FROM players WHERE id = $1',
+      'SELECT id, team_name FROM players WHERE id = $1',
       [userId]
     );
     if (playerRes.rowCount === 0) {
       return res.status(404).json({ error: "User/player not found" });
     }
     const playerId = playerRes.rows[0].id;
+    const userTeam = playerRes.rows[0].team_name;
 
-    // --- Prepare SQL conditions ---
-    const matchTypeCond = matchType !== 'All' ? `AND match_type = $3` : '';
-    const params = matchType !== 'All' ? [playerId, userId, matchType] : [playerId, userId];
-
-    // --- Query for stats from player_performance ---
+    // --- Prepare SQL for player_performance ---
     let statsQuery = `
       SELECT
         COUNT(*) AS matches_played,
@@ -48,41 +45,50 @@ router.get('/user-dashboard-stats', async (req, res) => {
         SUM(wickets_taken) AS total_wickets
       FROM player_performance
       WHERE player_id = $1
-        ${matchTypeCond}
     `;
+    let statsParams = [playerId];
+
+    if (matchType !== 'All') {
+      statsQuery += ' AND match_type = $2';
+      statsParams.push(matchType);
+    }
 
     // --- Run main stats query ---
-    const statsRes = await pool.query(
-      statsQuery,
-      matchType !== 'All' ? [playerId, matchType] : [playerId]
-    );
+    const statsRes = await pool.query(statsQuery, statsParams);
     const stats = statsRes.rows[0];
 
     // --- Count draws: needs to check in match_history/test_match_results where winner IS NULL or ''
     let draws = 0;
+
+    // --- For ODI/T20 in match_history
     if (matchType === 'All' || matchType === 'ODI' || matchType === 'T20') {
-      const drawQuery = `
+      let drawQuery = `
         SELECT COUNT(*) FROM match_history
-        WHERE (team1 = (SELECT team_name FROM players WHERE id = $1) OR team2 = (SELECT team_name FROM players WHERE id = $1))
+        WHERE (team1 = $1 OR team2 = $1)
           AND (winner IS NULL OR winner = '')
-          ${matchType !== 'All' ? 'AND match_type = $2' : ''}
       `;
-      const drawRes = await pool.query(
-        drawQuery,
-        matchType !== 'All' ? [playerId, matchType] : [playerId]
-      );
+      let drawParams = [userTeam];
+      if (matchType !== 'All') {
+        drawQuery += ' AND match_type = $2';
+        drawParams.push(matchType);
+      }
+      const drawRes = await pool.query(drawQuery, drawParams);
       draws += parseInt(drawRes.rows[0].count, 10) || 0;
     }
+
+    // --- For Test in test_match_results
     if (matchType === 'All' || matchType === 'Test') {
-      const drawQuery = `
+      let drawTestQuery = `
         SELECT COUNT(*) FROM test_match_results
-        WHERE (team1 = (SELECT team_name FROM players WHERE id = $1) OR team2 = (SELECT team_name FROM players WHERE id = $1))
+        WHERE (team1 = $1 OR team2 = $1)
           AND (winner IS NULL OR winner = '')
-          ${matchType === 'Test' ? 'AND match_type = $2' : ''}
       `;
-      const drawRes = await pool.query(
-        matchType === 'Test' ? [playerId, matchType] : [playerId]
-      );
+      let drawTestParams = [userTeam];
+      if (matchType === 'Test') {
+        drawTestQuery += ' AND match_type = $2';
+        drawTestParams.push(matchType);
+      }
+      const drawRes = await pool.query(drawTestQuery, drawTestParams);
       draws += parseInt(drawRes.rows[0].count, 10) || 0;
     }
 
