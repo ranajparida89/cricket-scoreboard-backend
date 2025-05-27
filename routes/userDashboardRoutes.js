@@ -1,5 +1,4 @@
 // ✅ routes/userDashboardRoutes.js
-// ✅ Updated 29-May-2025: Stats by user_id → all players owned by user
 
 const express = require('express');
 const router = express.Router();
@@ -119,15 +118,18 @@ router.get('/user-dashboard-stats', async (req, res) => {
     }
 
     // --- Return the dashboard stats ---
-   console.log("Returning stats for user:", userId, "=>", {
-  matches_played: parseInt(stats.matches_played, 10) || 0,
-  matches_won,
-  matches_lost,
-  matches_draw: draws,
-  total_runs: parseInt(stats.total_runs, 10) || 0,
-  total_wickets: parseInt(stats.total_wickets, 10) || 0,
-});
+    const result = {
+      matches_played: parseInt(stats.matches_played, 10) || 0,
+      matches_won,
+      matches_lost,
+      matches_draw: draws,
+      total_runs: parseInt(stats.total_runs, 10) || 0,
+      total_wickets: parseInt(stats.total_wickets, 10) || 0,
+    };
 
+    console.log("Returning stats for user:", userId, "=>", result);
+
+    return res.json(result); // <-- This is CRUCIAL
 
   } catch (err) {
     console.error("❌ User dashboard stats error:", err);
