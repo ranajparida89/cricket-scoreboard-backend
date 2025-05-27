@@ -1,5 +1,5 @@
 // ✅ routes/userDashboardRoutes.js
-// ✅ Ranaj Parida | 27-May-2025 | User Dashboard Stats API | UPDATED 28-May-2025 for Query Param Safety
+// ✅ Updated 29-May-2025: Stats by user_id → all players owned by user
 
 const express = require('express');
 const router = express.Router();
@@ -24,29 +24,35 @@ router.get('/user-dashboard-stats', async (req, res) => {
       return res.status(400).json({ error: "Invalid match_type" });
     }
 
-    // --- Find the player_id for the user ---
+    // --- Find all player_ids for this user ---
     const playerRes = await pool.query(
-      'SELECT id, team_name FROM players WHERE id = $1',
+      'SELECT id, team_name FROM players WHERE user_id = $1',
       [userId]
     );
     if (playerRes.rowCount === 0) {
-      return res.status(404).json({ error: "User/player not found" });
+      return res.json({
+        matches_played: 0,
+        matches_won: 0,
+        matches_lost: 0,
+        matches_draw: 0,
+        total_runs: 0,
+        total_wickets: 0,
+      });
     }
-    const playerId = playerRes.rows[0].id;
-    const userTeam = playerRes.rows[0].team_name;
 
-    // --- Prepare SQL for player_performance ---
+    const playerIds = playerRes.rows.map(r => r.id);
+    const userTeams = [...new Set(playerRes.rows.map(r => r.team_name))]; // unique list
+
+    // --- Prepare dynamic SQL for player_performance ---
     let statsQuery = `
       SELECT
         COUNT(*) AS matches_played,
-        SUM(CASE WHEN dismissed = 'Not Out' THEN 1 ELSE 0 END) AS matches_won, -- Placeholder, adjust as needed!
-        SUM(CASE WHEN dismissed = 'Out' THEN 1 ELSE 0 END) AS matches_lost, -- Placeholder, adjust as needed!
         SUM(run_scored) AS total_runs,
         SUM(wickets_taken) AS total_wickets
       FROM player_performance
-      WHERE player_id = $1
+      WHERE player_id = ANY($1)
     `;
-    let statsParams = [playerId];
+    let statsParams = [playerIds];
 
     if (matchType !== 'All') {
       statsQuery += ' AND match_type = $2';
@@ -57,17 +63,38 @@ router.get('/user-dashboard-stats', async (req, res) => {
     const statsRes = await pool.query(statsQuery, statsParams);
     const stats = statsRes.rows[0];
 
-    // --- Count draws: needs to check in match_history/test_match_results where winner IS NULL or ''
-    let draws = 0;
+    // --- Calculate matches_won, matches_lost: using match_history results ---
+    // 1. Get all matches where user's teams played and which team won
+    let winLossQuery = `
+      SELECT winner, team1, team2, match_type
+      FROM match_history
+      WHERE (team1 = ANY($1) OR team2 = ANY($1))
+    `;
+    let winLossParams = [userTeams];
+    if (matchType !== 'All') {
+      winLossQuery += ' AND match_type = $2';
+      winLossParams.push(matchType);
+    }
+    const winLossRes = await pool.query(winLossQuery, winLossParams);
 
-    // --- For ODI/T20 in match_history
+    // 2. Count wins, losses
+    let matches_won = 0, matches_lost = 0;
+    for (const row of winLossRes.rows) {
+      if (!row.winner) continue;
+      if (userTeams.includes(row.winner)) matches_won++;
+      else if (row.team1 && row.team2 && (userTeams.includes(row.team1) || userTeams.includes(row.team2))) matches_lost++;
+    }
+
+    // --- Draws: where winner is NULL/empty ---
+    let draws = 0;
+    // ODI/T20 draws
     if (matchType === 'All' || matchType === 'ODI' || matchType === 'T20') {
       let drawQuery = `
         SELECT COUNT(*) FROM match_history
-        WHERE (team1 = $1 OR team2 = $1)
+        WHERE (team1 = ANY($1) OR team2 = ANY($1))
           AND (winner IS NULL OR winner = '')
       `;
-      let drawParams = [userTeam];
+      let drawParams = [userTeams];
       if (matchType !== 'All') {
         drawQuery += ' AND match_type = $2';
         drawParams.push(matchType);
@@ -75,15 +102,14 @@ router.get('/user-dashboard-stats', async (req, res) => {
       const drawRes = await pool.query(drawQuery, drawParams);
       draws += parseInt(drawRes.rows[0].count, 10) || 0;
     }
-
-    // --- For Test in test_match_results
+    // Test draws
     if (matchType === 'All' || matchType === 'Test') {
       let drawTestQuery = `
         SELECT COUNT(*) FROM test_match_results
-        WHERE (team1 = $1 OR team2 = $1)
+        WHERE (team1 = ANY($1) OR team2 = ANY($1))
           AND (winner IS NULL OR winner = '')
       `;
-      let drawTestParams = [userTeam];
+      let drawTestParams = [userTeams];
       if (matchType === 'Test') {
         drawTestQuery += ' AND match_type = $2';
         drawTestParams.push(matchType);
@@ -93,19 +119,10 @@ router.get('/user-dashboard-stats', async (req, res) => {
     }
 
     // --- Return the dashboard stats ---
-    console.log("DASHBOARD_STATS:", {
-  matches_played: parseInt(stats.matches_played, 10) || 0,
-  matches_won: parseInt(stats.matches_won, 10) || 0,
-  matches_lost: parseInt(stats.matches_lost, 10) || 0,
-  matches_draw: draws,
-  total_runs: parseInt(stats.total_runs, 10) || 0,
-  total_wickets: parseInt(stats.total_wickets, 10) || 0,
-});
-
     return res.json({
       matches_played: parseInt(stats.matches_played, 10) || 0,
-      matches_won: parseInt(stats.matches_won, 10) || 0,
-      matches_lost: parseInt(stats.matches_lost, 10) || 0,
+      matches_won,
+      matches_lost,
       matches_draw: draws,
       total_runs: parseInt(stats.total_runs, 10) || 0,
       total_wickets: parseInt(stats.total_wickets, 10) || 0,
