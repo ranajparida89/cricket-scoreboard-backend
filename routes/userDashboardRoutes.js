@@ -93,6 +93,15 @@ router.get('/user-dashboard-stats', async (req, res) => {
     }
 
     // --- Return the dashboard stats ---
+    console.log("DASHBOARD_STATS:", {
+  matches_played: parseInt(stats.matches_played, 10) || 0,
+  matches_won: parseInt(stats.matches_won, 10) || 0,
+  matches_lost: parseInt(stats.matches_lost, 10) || 0,
+  matches_draw: draws,
+  total_runs: parseInt(stats.total_runs, 10) || 0,
+  total_wickets: parseInt(stats.total_wickets, 10) || 0,
+});
+
     return res.json({
       matches_played: parseInt(stats.matches_played, 10) || 0,
       matches_won: parseInt(stats.matches_won, 10) || 0,
