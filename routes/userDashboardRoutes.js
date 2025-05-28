@@ -8,7 +8,7 @@ const pool = require('../db'); // Your DB connection
  * GET /api/user-dashboard-stats
  * Query params: user_id (required), match_type (ODI/T20/Test/All, default All)
  */
-router.get('/api/my-dashboard', async (req, res) => {
+router.get('/user-dashboard-stats', async (req, res) => {
   try {
     const userId = parseInt(req.query.user_id, 10);
     const matchType = req.query.match_type ? req.query.match_type : 'All';
