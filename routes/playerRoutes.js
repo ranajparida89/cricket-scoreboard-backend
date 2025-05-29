@@ -1,7 +1,8 @@
-// ✅ POST /api/add-player
-const router = require("express").Router(); // ✅ You missed this line!
+// ✅ routes/playerRoutes.js (or your relevant filename)
+const router = require("express").Router();
 const pool = require("../db");
 
+// 🟢 Add Player (now supports user_id)
 router.post("/add-player", async (req, res) => {
     const {
       lineup_type,
@@ -11,32 +12,40 @@ router.post("/add-player", async (req, res) => {
       bowling_type,
       batting_style,
       is_captain,
-      is_vice_captain
+      is_vice_captain,
+      user_id // 🟢 Added: user_id from frontend!
     } = req.body;
-  
+
     try {
       // Basic validations
       if (!player_name || !team_name || !lineup_type || !skill_type) {
         return res.status(400).json({ error: "Required fields missing" });
       }
-      // 🔒 Restrict to 15 players in same team + format
+
+      // 🟢 Validate user_id presence
+      if (!user_id) {
+        return res.status(400).json({ error: "User not found. Please login again." });
+      }
+
+      // 🔒 Restrict to 15 players in same team + format (per user)
       const checkCount = await pool.query(
-        `SELECT COUNT(*) FROM players WHERE team_name = $1 AND lineup_type = $2`,
-        [team_name, lineup_type]
+        `SELECT COUNT(*) FROM players WHERE team_name = $1 AND lineup_type = $2 AND user_id = $3`,
+        [team_name, lineup_type, user_id]
       );
-  
+
       if (parseInt(checkCount.rows[0].count) >= 15) {
         return res.status(400).json({ error: "Cannot add more than 15 players to this squad." });
       }
-  
+
+      // 🟢 Insert with user_id
       const result = await pool.query(
         `INSERT INTO players 
-          (lineup_type, player_name, team_name, skill_type, bowling_type, batting_style, is_captain, is_vice_captain)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          (lineup_type, player_name, team_name, skill_type, bowling_type, batting_style, is_captain, is_vice_captain, user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
-        [lineup_type, player_name, team_name, skill_type, bowling_type, batting_style, is_captain, is_vice_captain]
+        [lineup_type, player_name, team_name, skill_type, bowling_type, batting_style, is_captain, is_vice_captain, user_id]
       );
-  
+
       res.json({ message: "Player added successfully", player: result.rows[0] });
     } catch (err) {
       console.error("Add Player Error:", err.message);
@@ -44,10 +53,22 @@ router.post("/add-player", async (req, res) => {
     }
   });
 
-  // ✅ GET all players for SquadLineup view
+// ✅ GET all players for SquadLineup view
 router.get("/players", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM players ORDER BY id DESC");
+    // Optionally filter by user_id if passed as query param
+    const { user_id } = req.query;
+    let query = "SELECT * FROM players";
+    let params = [];
+
+    // 🟢 Add user_id filter if present (optional)
+    if (user_id) {
+      query += " WHERE user_id = $1";
+      params.push(user_id);
+    }
+
+    query += " ORDER BY id DESC";
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
     console.error("Fetch Players Error:", err.message);
@@ -55,16 +76,16 @@ router.get("/players", async (req, res) => {
   }
 });
 
-// ✅ POST Add Advanced Player Performance API (⬅️ ⬅️ ADD YOUR NEW CODE HERE)
+// ✅ POST Add Advanced Player Performance API (unchanged)
 router.post("/player-performance", async (req, res) => {
   const {
-    match_name,       // ✅ Add this line at the top
+    match_name,
     player_id,
     team_name,
     match_type,
     against_team,
     run_scored,
-    balls_faced,  // ✅ ADD THIS LINE
+    balls_faced,
     wickets_taken,
     runs_given,
     fifties,
@@ -90,7 +111,7 @@ router.post("/player-performance", async (req, res) => {
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *`,
       [
-        match_name,       // ✅ Add this as $1
+        match_name,
         player_id,
         team_name,
         match_type,
@@ -152,7 +173,6 @@ router.put('/players/:id', async (req, res) => {
 });
 
 // ✅ STEP 1: Backend API for Deleting a Player Ranaj Parida 24-04-2025
-// ✅ File: playerRoutes.js
 router.delete("/delete-player/:id", async (req, res) => {
   const playerId = req.params.id;
   try {
@@ -163,9 +183,6 @@ router.delete("/delete-player/:id", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-// ✅ STEP 2: Frontend - SquadLineup.js additions
-// ✅ Add this above return in SquadLineup component
 
 // ✅ PUT /api/update-player
 router.put("/update-player", async (req, res) => {
@@ -249,10 +266,8 @@ WHERE 1=1
     res.status(500).json({ message: "❌ Server error while fetching player stats." });
   }
 });
-// New Logic for adding Total Match count
+
 // ✅ NEW API for Player Stats Summary Table (with Match Count per Player)
-// 📅 Added by Ranaj Parida on 11-May-2025
-// ✅ NEW: Player Stats Summary API with Match Counts
 router.get("/player-stats-summary", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -307,8 +322,6 @@ router.get("/player-stats-summary", async (req, res) => {
   }
 });
 
-// For new requirement 11 MAY 2025 20:55 PM
-
 // ✅ NEW: Get detailed match-wise stats for a player (for floating popup view)
 router.get("/player-matches/:playerName", async (req, res) => {
   const { playerName } = req.params;
@@ -344,8 +357,3 @@ ORDER BY pp.created_at DESC;
 
 // Keep this at the very end
 module.exports = router;
-
-
-  module.exports = router;
-
-  
