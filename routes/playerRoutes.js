@@ -3,8 +3,8 @@ const router = require("express").Router();
 const pool = require("../db");
 
 // 🟢 Add Player (now supports user_id)
-console.log("Received add-player req.body:", req.body);
 router.post("/add-player", async (req, res) => {
+  console.log("Received add-player req.body:", req.body);
     const {
       lineup_type,
       player_name,
