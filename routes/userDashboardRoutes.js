@@ -41,8 +41,8 @@ router.get('/user-dashboard-stats', async (req, res) => {
     let statsQuery = `
       SELECT
         COUNT(*) AS matches_played,
-        SUM(run_scored) AS total_runs,
-        SUM(wickets_taken) AS total_wickets
+        COALESCE(SUM(run_scored), 0) AS total_runs,
+        COALESCE(SUM(wickets_taken), 0) AS total_wickets
       FROM player_performance
       WHERE player_id = ANY($1)
     `;
@@ -87,14 +87,17 @@ router.get('/user-dashboard-stats', async (req, res) => {
     let matches_played = matchRes.rowCount;
     let matches_won = 0, matches_lost = 0, matches_draw = 0;
     for (const row of matchRes.rows) {
-      if (!row.winner || row.winner === '') matches_draw++;
+      if (!row.winner || row.winner.trim() === '') matches_draw++;
       else if (userTeams.includes(row.winner)) matches_won++;
-      else matches_lost++;
+      else if (
+        userTeams.includes(row.team1) ||
+        userTeams.includes(row.team2)
+      ) matches_lost++;
     }
 
     // 5. Return the dashboard stats
     const result = {
-      matches_played: parseInt(stats.matches_played, 10) || 0,
+      matches_played: matches_played || 0, // Use match count, not player_performance count!
       matches_won,
       matches_lost,
       matches_draw,
