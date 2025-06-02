@@ -35,7 +35,8 @@ router.get('/user-dashboard-stats', async (req, res) => {
     }
 
     const playerIds = playerRes.rows.map(r => r.id);
-    const userTeams = [...new Set(playerRes.rows.map(r => r.team_name))];
+    // Ensure team names are lower-cased for robust comparison
+    const userTeams = [...new Set(playerRes.rows.map(r => r.team_name.trim().toLowerCase()))];
 
     // 2. Calculate total runs/wickets (player_performance)
     let statsQuery = `
@@ -65,20 +66,20 @@ router.get('/user-dashboard-stats', async (req, res) => {
         SELECT id, winner, team1, team2, match_type FROM test_match_results
         WHERE (team1 = ANY($1) OR team2 = ANY($1))
       `;
-      matchParams = [userTeams];
+      matchParams = [playerRes.rows.map(r => r.team_name)];
     } else if (matchType === 'Test') {
       matchQuery = `
         SELECT id, winner, team1, team2, match_type FROM test_match_results
         WHERE (team1 = ANY($1) OR team2 = ANY($1)) AND match_type = $2
       `;
-      matchParams = [userTeams, matchType];
+      matchParams = [playerRes.rows.map(r => r.team_name), matchType];
     } else {
       // ODI or T20
       matchQuery = `
         SELECT id, winner, team1, team2, match_type FROM match_history
         WHERE (team1 = ANY($1) OR team2 = ANY($1)) AND match_type = $2
       `;
-      matchParams = [userTeams, matchType];
+      matchParams = [playerRes.rows.map(r => r.team_name), matchType];
     }
 
     const matchRes = await pool.query(matchQuery, matchParams);
@@ -86,13 +87,29 @@ router.get('/user-dashboard-stats', async (req, res) => {
     // 4. Count played/won/lost/draw from unified matches
     let matches_played = matchRes.rowCount;
     let matches_won = 0, matches_lost = 0, matches_draw = 0;
+
     for (const row of matchRes.rows) {
-      if (!row.winner || row.winner.trim() === '') matches_draw++;
-      else if (userTeams.includes(row.winner)) matches_won++;
-      else if (
-        userTeams.includes(row.team1) ||
-        userTeams.includes(row.team2)
-      ) matches_lost++;
+      // Defensive: normalize possible nulls and extra spaces
+      const winnerStr = row.winner ? row.winner.trim().toLowerCase() : '';
+      const team1Str = row.team1 ? row.team1.trim().toLowerCase() : '';
+      const team2Str = row.team2 ? row.team2.trim().toLowerCase() : '';
+
+      if (!winnerStr) {
+        matches_draw++;
+      } else {
+        // Check for win: winner string contains any of the user's team names
+        const winForUser = userTeams.some(team =>
+          winnerStr.includes(team)
+        );
+        if (winForUser) {
+          matches_won++;
+        } else if (
+          userTeams.includes(team1Str) ||
+          userTeams.includes(team2Str)
+        ) {
+          matches_lost++;
+        }
+      }
     }
 
     // 5. Return the dashboard stats
