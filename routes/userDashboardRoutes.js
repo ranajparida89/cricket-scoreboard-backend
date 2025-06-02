@@ -64,58 +64,30 @@ router.get('/user-dashboard-stats', async (req, res) => {
 
     // --- Calculate matches_won, matches_lost: using match_history results ---
     // 1. Get all matches where user's teams played and which team won
-    let winLossQuery = `
-      SELECT winner, team1, team2, match_type
-      FROM match_history
-      WHERE (team1 = ANY($1) OR team2 = ANY($1))
-    `;
-    let winLossParams = [userTeams];
-    if (matchType !== 'All') {
-      winLossQuery += ' AND match_type = $2';
-      winLossParams.push(matchType);
-    }
-    const winLossRes = await pool.query(winLossQuery, winLossParams);
+    // --- Unify ALL match records (ODI/T20/Test) where user's teams played ---
+let matchQuery = `
+  SELECT id, winner, team1, team2, match_type FROM match_history
+  WHERE (team1 = ANY($1) OR team2 = ANY($1))
+  ${matchType !== 'All' ? 'AND match_type = $2' : ''}
+  UNION ALL
+  SELECT id, winner, team1, team2, match_type FROM test_match_results
+  WHERE (team1 = ANY($1) OR team2 = ANY($1))
+  ${matchType === 'Test' ? 'AND match_type = $2' : matchType !== 'All' ? 'AND 1=0' : ''}
+`;
+let matchParams = [userTeams];
+if (matchType !== 'All') matchParams.push(matchType);
 
-    // 2. Count wins, losses
-    let matches_won = 0, matches_lost = 0;
-    for (const row of winLossRes.rows) {
-      if (!row.winner) continue;
-      if (userTeams.includes(row.winner)) matches_won++;
-      else if (row.team1 && row.team2 && (userTeams.includes(row.team1) || userTeams.includes(row.team2))) matches_lost++;
-    }
+const matchRes = await pool.query(matchQuery, matchParams);
 
-    // --- Draws: where winner is NULL/empty ---
-    let draws = 0;
-    // ODI/T20 draws
-    if (matchType === 'All' || matchType === 'ODI' || matchType === 'T20') {
-      let drawQuery = `
-        SELECT COUNT(*) FROM match_history
-        WHERE (team1 = ANY($1) OR team2 = ANY($1))
-          AND (winner IS NULL OR winner = '')
-      `;
-      let drawParams = [userTeams];
-      if (matchType !== 'All') {
-        drawQuery += ' AND match_type = $2';
-        drawParams.push(matchType);
-      }
-      const drawRes = await pool.query(drawQuery, drawParams);
-      draws += parseInt(drawRes.rows[0].count, 10) || 0;
-    }
-    // Test draws
-    if (matchType === 'All' || matchType === 'Test') {
-      let drawTestQuery = `
-        SELECT COUNT(*) FROM test_match_results
-        WHERE (team1 = ANY($1) OR team2 = ANY($1))
-          AND (winner IS NULL OR winner = '')
-      `;
-      let drawTestParams = [userTeams];
-      if (matchType === 'Test') {
-        drawTestQuery += ' AND match_type = $2';
-        drawTestParams.push(matchType);
-      }
-      const drawRes = await pool.query(drawTestQuery, drawTestParams);
-      draws += parseInt(drawRes.rows[0].count, 10) || 0;
-    }
+// --- Now count played/won/lost/draw from unified matches ---
+const matches_played = matchRes.rowCount;
+let matches_won = 0, matches_lost = 0, matches_draw = 0;
+for (const row of matchRes.rows) {
+  if (!row.winner || row.winner === '') matches_draw++;
+  else if (userTeams.includes(row.winner)) matches_won++;
+  else matches_lost++;
+}
+
 
     // --- Return the dashboard stats ---
     const result = {
