@@ -76,10 +76,11 @@ router.get("/team-rankings", async (req, res) => {
     `, [user_id]);
 
     res.json(result.rows);
-  } catch (err) {
-    console.error("❌ Error fetching team rankings:", err.message);
-    res.status(500).json({ error: "Failed to fetch team rankings" });
-  }
+ } catch (err) {
+  console.error("❌Error fetching team rankings:", err.message, err.stack); // Log stack for better debug
+  res.status(500).json({ error: "Failed to fetch team rankings", details: err.message });
+}
 });
 
 module.exports = router;
+
