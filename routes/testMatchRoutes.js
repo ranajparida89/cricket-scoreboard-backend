@@ -120,9 +120,10 @@ router.post("/test-match", async (req, res) => {
     res.json({ message });
 
   } catch (err) {
-    console.error("❌ Test Match Submission Error:", err.message);
-    res.status(500).json({ error: "Server error while submitting test match." });
-  }
+  console.error("❌ Test Match Submission Error:", err.message, err.stack); // Log stack for better debug
+  res.status(500).json({ error: "Server error while submitting test match.", details: err.message });
+}
+
 });
 
 /**
