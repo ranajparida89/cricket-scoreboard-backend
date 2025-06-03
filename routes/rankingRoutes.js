@@ -1,24 +1,15 @@
 // ✅ routes/rankingRoutes.js
-// ✅ [Ranaj Parida - 27 May 2025] User-specific team rankings for all match types
+// ✅ [Ranaj Parida - 27 May 2025] Aggregates Test stats from test_match_results using correct columns
 
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
-/**
- * GET /api/team-rankings?user_id=...
- * Returns user-only team rankings for ODI, T20, and Test
- */
 router.get("/team-rankings", async (req, res) => {
   try {
-    const user_id = req.query.user_id;
-    if (!user_id) return res.status(400).json({ error: "Missing user_id in query params." });
-
-    // -- ODI/T20 RANKINGS: Aggregate only current user's teams/matches
-    // -- Test RANKINGS: Aggregate only test matches posted by current user
-
+    // Ranaj Parida 27 May 2025: Test chart from test_match_results with correct columns!
     const result = await pool.query(`
-      -- ODI/T20 from user's teams/matches
+      -- ODI/T20 from regular tables
       SELECT 
         t.name AS team_name,
         SUM(t.matches_played) AS matches,
@@ -32,12 +23,11 @@ router.get("/team-rankings", async (req, res) => {
       FROM teams t
       JOIN matches m ON m.id = t.match_id
       WHERE m.match_type IN ('ODI', 'T20')
-        AND t.user_id = $1        -- ✅ Only this user's teams!
       GROUP BY m.match_type, t.name
 
       UNION ALL
 
-      -- Test stats from test_match_results, only current user!
+      -- Test stats from test_match_results, correct columns
       SELECT 
         team AS team_name,
         COUNT(*) AS matches,
@@ -59,7 +49,6 @@ router.get("/team-rankings", async (req, res) => {
           runs2 + runs2_2 AS runs_conceded,
           overs2 + overs2_2 AS overs_bowled
         FROM test_match_results
-        WHERE user_id = $1      -- ✅ Only this user's matches!
         UNION ALL
         -- team2 as main team, team1 as opponent
         SELECT
@@ -70,17 +59,15 @@ router.get("/team-rankings", async (req, res) => {
           runs1 + runs1_2 AS runs_conceded,
           overs1 + overs1_2 AS overs_bowled
         FROM test_match_results
-        WHERE user_id = $1      -- ✅ Only this user's matches!
       ) AS exploded
       GROUP BY team
-    `, [user_id]);
+    `);
 
     res.json(result.rows);
- } catch (err) {
-  console.error("❌Error fetching team rankings:", err.message, err.stack); // Log stack for better debug
-  res.status(500).json({ error: "Failed to fetch team rankings", details: err.message });
-}
+  } catch (err) {
+    console.error("❌ Error fetching team rankings:", err.message);
+    res.status(500).json({ error: "Failed to fetch team rankings" });
+  }
 });
 
 module.exports = router;
-
