@@ -38,10 +38,10 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
     const playerIds = playerRes.rows.map(r => r.id);
     const userTeams = [...new Set(playerRes.rows.map(r => r.team_name.trim().toLowerCase()))];
 
-    // Only matches CREATED BY THIS USER
+    // Only matches CREATED BY THIS USER (user_id is the creator)
     let matchQuery = `
       SELECT id, winner, team1, team2, match_type FROM match_history
-      WHERE created_by = $1
+      WHERE user_id = $1
     `;
     let matchParams = [userId];
 
@@ -71,7 +71,7 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
       }
     }
 
-    // Only user’s players' performance
+    // Only user's players' performance
     let statsQuery = `
       SELECT
         COALESCE(SUM(run_scored), 0) AS total_runs,
