@@ -4,7 +4,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 
-// User-Isolated Dashboard Stats (V2)
+// User-Isolated Dashboard Stats (V2) -- now matches your tested SQL logic!
 router.get('/user-dashboard-stats-v2', async (req, res) => {
   try {
     const userId = parseInt(req.query.user_id, 10);
@@ -18,12 +18,12 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
       return res.status(400).json({ error: "Invalid match_type" });
     }
 
-    // Only fetch players for this user
-    const playerRes = await pool.query(
-      'SELECT id, team_name FROM players WHERE user_id = $1',
+    // 1. Get all user's teams
+    const playerTeamsRes = await pool.query(
+      'SELECT DISTINCT team_name FROM players WHERE user_id = $1',
       [userId]
     );
-    if (playerRes.rowCount === 0) {
+    if (playerTeamsRes.rowCount === 0) {
       // New user: return empty stats
       return res.json({
         matches_played: 0,
@@ -34,44 +34,58 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
         total_wickets: 0,
       });
     }
+    const teamNames = playerTeamsRes.rows.map(r => r.team_name.trim());
 
-    const playerIds = playerRes.rows.map(r => r.id);
-    const userTeams = [...new Set(playerRes.rows.map(r => r.team_name.trim().toLowerCase()))];
-
-    // Only matches CREATED BY THIS USER (user_id is the creator)
-    let matchQuery = `
-      SELECT id, winner, team1, team2, match_type FROM match_history
-      WHERE user_id = $1
+    // Prepare the main match history query
+    let matchHistoryQuery = `
+      WITH user_teams AS (
+        SELECT DISTINCT team_name FROM players WHERE user_id = $1
+      )
+      SELECT 
+        COUNT(*) AS matches_played,
+        SUM(CASE 
+                WHEN LOWER(TRIM(winner)) IN (SELECT LOWER(TRIM(team_name)) FROM user_teams) THEN 1 
+                ELSE 0 
+            END) AS matches_won,
+        SUM(CASE 
+                WHEN winner IS NULL OR TRIM(winner) = '' THEN 1 
+                ELSE 0 
+            END) AS matches_draw,
+        SUM(CASE 
+                WHEN (winner IS NOT NULL AND TRIM(winner) <> '')
+                     AND (LOWER(TRIM(winner)) NOT IN (SELECT LOWER(TRIM(team_name)) FROM user_teams))
+                     AND (
+                         LOWER(TRIM(team1)) IN (SELECT LOWER(TRIM(team_name)) FROM user_teams)
+                         OR
+                         LOWER(TRIM(team2)) IN (SELECT LOWER(TRIM(team_name)) FROM user_teams)
+                     )
+                THEN 1 
+                ELSE 0 
+            END) AS matches_lost
+      FROM match_history
+      WHERE 
+        (LOWER(TRIM(team1)) IN (SELECT LOWER(TRIM(team_name)) FROM user_teams)
+        OR
+        LOWER(TRIM(team2)) IN (SELECT LOWER(TRIM(team_name)) FROM user_teams))
     `;
-    let matchParams = [userId];
+    let matchHistoryParams = [userId];
 
+    // Apply match_type filter if needed
     if (matchType !== 'All') {
-      matchQuery += ' AND match_type = $2';
-      matchParams.push(matchType);
+      matchHistoryQuery += ' AND match_type = $2';
+      matchHistoryParams.push(matchType);
     }
 
-    const matchRes = await pool.query(matchQuery, matchParams);
+    const matchStatsRes = await pool.query(matchHistoryQuery, matchHistoryParams);
+    const matchStats = matchStatsRes.rows[0];
 
-    let matches_played = matchRes.rowCount;
-    let matches_won = 0, matches_lost = 0, matches_draw = 0;
+    // 2. Get all user players (for run/wicket stats)
+    const playerIdsRes = await pool.query(
+      'SELECT id FROM players WHERE user_id = $1',
+      [userId]
+    );
+    const playerIds = playerIdsRes.rows.map(r => r.id);
 
-    for (const row of matchRes.rows) {
-      const winnerStr = row.winner ? row.winner.trim().toLowerCase() : '';
-      if (!winnerStr) {
-        matches_draw++;
-      } else {
-        const winForUser = userTeams.some(team =>
-          winnerStr.includes(team)
-        );
-        if (winForUser) {
-          matches_won++;
-        } else {
-          matches_lost++;
-        }
-      }
-    }
-
-    // Only user's players' performance
     let statsQuery = `
       SELECT
         COALESCE(SUM(run_scored), 0) AS total_runs,
@@ -87,12 +101,12 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
     const statsRes = await pool.query(statsQuery, statsParams);
     const stats = statsRes.rows[0];
 
-    // Respond with isolated stats
+    // Respond with combined stats
     res.json({
-      matches_played: matches_played || 0,
-      matches_won,
-      matches_lost,
-      matches_draw,
+      matches_played: parseInt(matchStats.matches_played, 10) || 0,
+      matches_won: parseInt(matchStats.matches_won, 10) || 0,
+      matches_lost: parseInt(matchStats.matches_lost, 10) || 0,
+      matches_draw: parseInt(matchStats.matches_draw, 10) || 0,
       total_runs: parseInt(stats.total_runs, 10) || 0,
       total_wickets: parseInt(stats.total_wickets, 10) || 0,
     });
