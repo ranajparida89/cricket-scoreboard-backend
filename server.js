@@ -87,6 +87,8 @@ app.use("/api/dashboard/settings", dashboardSettingsRoutes); // user settings
 app.use("/api/dashboard/notifications", dashboardNotificationsRoutes);
 app.use('/api', userDashboardRoutes);
 app.use('/api', userDashboardV2Routes);
+app.use("/api", require("./routes/userRecentMatchesV2Routes"));
+
 
 
 
