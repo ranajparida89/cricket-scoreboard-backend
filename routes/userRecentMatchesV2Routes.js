@@ -18,7 +18,7 @@ router.get("/user-recent-matches-v2", async (req, res) => {
     );
     if (teamRes.rowCount === 0) return res.json([]);
 
-    const userTeams = teamRes.rows.map(r => r.team_name.trim().toLowerCase());
+    const userTeams = teamRes.rows.map(r => r.team_name.trim());
 
     // Query: Fetch most recent matches (across match_history) where user’s team participated
     const matchRes = await pool.query(
@@ -30,19 +30,30 @@ router.get("/user-recent-matches-v2", async (req, res) => {
       ORDER BY match_time DESC
       LIMIT $2
       `,
-      [userTeams, limit]
+      [userTeams.map(t => t.toLowerCase()), limit]
     );
+
+    // Helper: returns true if winner text contains any of the user teams as a substring (case-insensitive)
+    const didUserTeamWin = (winnerText, teams) => {
+      if (!winnerText) return false;
+      const winnerLower = winnerText.toLowerCase();
+      return teams.some(team =>
+        winnerLower.includes(team.trim().toLowerCase())
+      );
+    };
 
     // Format the data (add opponent, is_win, etc.)
     const matches = matchRes.rows.map(row => {
-      const isTeam1 = userTeams.includes(row.team1.trim().toLowerCase());
+      const isTeam1 = userTeams.map(t => t.toLowerCase()).includes(row.team1.trim().toLowerCase());
       const opponent = isTeam1 ? row.team2 : row.team1;
-      const result =
-        !row.winner
-          ? "Draw"
-          : userTeams.includes(row.winner.trim().toLowerCase())
-            ? "Won"
-            : "Lost";
+
+      let result = "Lost";
+      if (!row.winner || row.winner.trim() === "") {
+        result = "Draw";
+      } else if (didUserTeamWin(row.winner, userTeams)) {
+        result = "Won";
+      }
+
       return {
         match_id: row.id,
         match_name: row.match_name,
