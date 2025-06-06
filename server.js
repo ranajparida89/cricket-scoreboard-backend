@@ -33,6 +33,7 @@ const dashboardSettingsRoutes = require("./routes/dashboardSettingsRoutes"); // 
 const dashboardNotificationsRoutes = require("./routes/dashboardNotificationsRoutes");
 const userDashboardRoutes = require('./routes/userDashboardRoutes');
 const userDashboardV2Routes = require('./routes/userDashboardV2Routes');
+const topPerformerRoutes = require('./routes/topPerformerRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -88,7 +89,7 @@ app.use("/api/dashboard/notifications", dashboardNotificationsRoutes);
 app.use('/api', userDashboardRoutes);
 app.use('/api', userDashboardV2Routes);
 app.use("/api", require("./routes/userRecentMatchesV2Routes"));
-
+app.use('/api', topPerformerRoutes);
 
 
 
