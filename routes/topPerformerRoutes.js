@@ -4,20 +4,27 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 
-// GET /api/top-performer?user_id=22&period=month&limit=5
+// GET /api/top-performer?user_id=22&period=month&limit=5&match_type=ODI
 router.get('/top-performer', async (req, res) => {
   try {
     const userId = parseInt(req.query.user_id, 10);
     const period = req.query.period || 'month';
     const limit = parseInt(req.query.limit, 10) || 5;
+    const matchType = req.query.match_type || 'All';
 
     if (!userId) return res.status(400).json({ error: 'Missing or invalid user_id' });
 
     let cte = '';
-    let whereClause = `p.user_id = $1 AND pp.match_id IS NOT NULL`;
+    let matchTypeClause = '';
     let params = [userId];
+    let paramIdx = 2;
 
-    // Use different CTEs for "month" and "matches"
+    if (matchType && matchType !== 'All') {
+      matchTypeClause = `AND pp.match_type = $${paramIdx}`;
+      params.push(matchType);
+      paramIdx++;
+    }
+
     if (period === 'matches') {
       cte = `
         WITH recent_performance AS (
@@ -25,9 +32,9 @@ router.get('/top-performer', async (req, res) => {
           FROM player_performance pp
           JOIN players p ON pp.player_id = p.id
           WHERE p.user_id = $1 AND pp.match_id IS NOT NULL
+            ${matchTypeClause}
         )
       `;
-      whereClause = `rp.rn <= $2`;
       params.push(limit);
     } else if (period === 'month') {
       cte = `
@@ -37,12 +44,11 @@ router.get('/top-performer', async (req, res) => {
           JOIN players p ON pp.player_id = p.id
           WHERE p.user_id = $1 AND pp.match_id IS NOT NULL
             AND pp.created_at >= NOW() - INTERVAL '30 days'
+            ${matchTypeClause}
         )
       `;
-      whereClause = '1=1'; // Use all recent_performance rows
     }
 
-    // Main Query
     const sql = `
       ${cte}
       SELECT
@@ -67,9 +73,9 @@ router.get('/top-performer', async (req, res) => {
             THEN ROUND(SUM(rp.run_scored)::numeric * 100 / SUM(rp.balls_faced), 2)
           ELSE NULL
         END AS strike_rate
-      FROM ${period === 'matches' ? 'recent_performance rp' : 'recent_performance rp'}
+      FROM recent_performance rp
       JOIN players p ON rp.player_id = p.id
-      ${period === 'matches' ? `WHERE ${whereClause}` : ''}
+      ${period === 'matches' ? `WHERE rp.rn <= $${params.length}` : ''}
       GROUP BY p.player_name
       ORDER BY total_runs DESC
       LIMIT 1;
