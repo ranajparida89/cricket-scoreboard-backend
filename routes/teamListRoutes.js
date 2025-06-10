@@ -12,7 +12,6 @@ router.get('/user-teams', async (req, res) => {
     const query = `
       SELECT DISTINCT name
       FROM teams
-      WHERE user_id = $1
       ORDER BY name
     `;
     const { rows } = await pool.query(query, [userId]);
