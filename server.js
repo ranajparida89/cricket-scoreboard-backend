@@ -35,6 +35,7 @@ const userDashboardRoutes = require('./routes/userDashboardRoutes');
 const userDashboardV2Routes = require('./routes/userDashboardV2Routes');
 const topPerformerRoutes = require('./routes/topPerformerRoutes');
 const winLossTrendRoutes = require('./routes/winLossTrendRoutes');
+const teamListRoutes = require('./routes/teamListRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -92,7 +93,7 @@ app.use('/api', userDashboardV2Routes);
 app.use("/api", require("./routes/userRecentMatchesV2Routes"));
 app.use('/api', topPerformerRoutes);
 app.use('/api/win-loss-trend', winLossTrendRoutes);
-
+app.use('/api', teamListRoutes);
 
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
