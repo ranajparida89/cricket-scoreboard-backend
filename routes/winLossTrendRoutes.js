@@ -1,27 +1,29 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../db'); // Adjust path if needed
+const pool = require('../db'); // Ensure this path matches your project structure
 
-// Debug route to test if this file is being loaded correctly
+// Debug route to confirm API health (keep or remove as needed)
 router.get('/test', (req, res) => {
   res.send('WinLossTrend TEST route is working!');
 });
 
-// Helper: ODI/T20 result parsing
+// Helper: Determine result for ODI/T20
 function parseOdiT20Result(winnerString, teamName, opponentName) {
   if (!winnerString) return 'No Result';
-  if (winnerString.toLowerCase().includes('draw') || winnerString.toLowerCase().includes('tie')) return 'Draw';
-  if (winnerString.toLowerCase().includes(teamName.toLowerCase())) return 'Win';
-  if (winnerString.toLowerCase().includes(opponentName.toLowerCase())) return 'Loss';
+  const winnerLower = winnerString.toLowerCase();
+  if (winnerLower.includes('draw') || winnerLower.includes('tie')) return 'Draw';
+  if (winnerLower.includes(teamName.toLowerCase())) return 'Win';
+  if (winnerLower.includes(opponentName.toLowerCase())) return 'Loss';
   return 'No Result';
 }
 
+// Main Win/Loss Trend Endpoint
 router.get('/', async (req, res) => {
   try {
     const teamName = req.query.team_name;
     if (!teamName) return res.status(400).json({ error: "team_name is required" });
 
-    // ODI & T20 matches
+    // Fetch last 10 ODI & T20 matches for the team
     const odiT20Query = `
       SELECT 
         id as match_id,
@@ -38,7 +40,7 @@ router.get('/', async (req, res) => {
     `;
     const { rows: odiT20Matches } = await pool.query(odiT20Query, [teamName]);
 
-    // Add result logic
+    // Map ODI/T20 results
     const odiT20Data = odiT20Matches.map(row => {
       const opponent = row.team1 === teamName ? row.team2 : row.team1;
       return {
@@ -51,7 +53,7 @@ router.get('/', async (req, res) => {
       };
     });
 
-    // Test matches
+    // Fetch last 10 Test matches for the team
     const testQuery = `
       SELECT 
         id as match_id,
@@ -68,7 +70,7 @@ router.get('/', async (req, res) => {
     `;
     const { rows: testMatches } = await pool.query(testQuery, [teamName]);
 
-    // Result logic for test matches
+    // Map Test match results
     const testData = testMatches.map(row => {
       const opponent = row.team1 === teamName ? row.team2 : row.team1;
       let result;
@@ -87,11 +89,12 @@ router.get('/', async (req, res) => {
       };
     });
 
-    // Combine, sort by match_date, get latest 10
+    // Combine both, sort by match_date descending, take the latest 10 matches overall
     let allMatches = [...odiT20Data, ...testData];
     allMatches.sort((a, b) => new Date(b.match_date) - new Date(a.match_date));
     allMatches = allMatches.slice(0, 10);
 
+    // Final JSON response
     res.json({
       team_name: teamName,
       data: allMatches
