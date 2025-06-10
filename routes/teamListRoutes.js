@@ -6,18 +6,15 @@ const pool = require('../db');
 
 router.get('/user-teams', async (req, res) => {
   try {
-   // const userId = req.query.user_id;
-   // if (!userId) return res.status(400).json({ error: "user_id is required" });
-
     const query = `
       SELECT DISTINCT name
       FROM teams
       ORDER BY name
     `;
-    const { rows } = await pool.query(query, [userId]);
+    const { rows } = await pool.query(query);
     res.json({ teams: rows.map(r => r.name) });
   } catch (err) {
-    console.error(err);
+    console.error("Error in /user-teams:", err); // <--- This will help you debug in logs!
     res.status(500).json({ error: "Internal server error" });
   }
 });
