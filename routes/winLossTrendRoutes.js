@@ -1,8 +1,11 @@
-// routes/winLossTrendRoutes.js
-
 const express = require('express');
 const router = express.Router();
 const pool = require('../db'); // Adjust path if needed
+
+// Debug route to test if this file is being loaded correctly
+router.get('/test', (req, res) => {
+  res.send('WinLossTrend TEST route is working!');
+});
 
 // Helper: ODI/T20 result parsing
 function parseOdiT20Result(winnerString, teamName, opponentName) {
