@@ -6,8 +6,8 @@ const pool = require('../db');
 
 router.get('/user-teams', async (req, res) => {
   try {
-    const userId = req.query.user_id;
-    if (!userId) return res.status(400).json({ error: "user_id is required" });
+   // const userId = req.query.user_id;
+   // if (!userId) return res.status(400).json({ error: "user_id is required" });
 
     const query = `
       SELECT DISTINCT name
