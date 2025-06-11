@@ -93,6 +93,16 @@ router.post("/player-performance", async (req, res) => {
     hundreds,
     dismissed
   } = req.body;
+
+   // --- ADD THIS: Fetch user_id for this player
+  const userIdResult = await pool.query(
+    `SELECT user_id FROM players WHERE id = $1`, [player_id]
+  );
+  const user_id = userIdResult.rows[0]?.user_id;
+  if (!user_id) {
+    return res.status(400).json({ message: "User ID not found for this player." });
+  }
+
   try {
     if (!player_id || !team_name || !match_type || !against_team) {
       return res.status(400).json({ message: "⚠️ Missing required fields." });
@@ -106,26 +116,27 @@ router.post("/player-performance", async (req, res) => {
       return res.status(404).json({ message: "❌ Player not found." });
     }
 
-    const insertResult = await pool.query(
-      `INSERT INTO player_performance 
-(match_name, player_id, team_name, match_type, against_team, run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds, dismissed)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-      RETURNING *`,
-      [
-        match_name,
-        player_id,
-        team_name,
-        match_type,
-        against_team,
-        run_scored,
-        balls_faced,
-        wickets_taken,
-        runs_given,
-        fifties,
-        hundreds,
-        dismissed
-      ]      
-    );    
+  const insertResult = await pool.query(
+  `INSERT INTO player_performance 
+  (match_name, player_id, team_name, match_type, against_team, run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds, dismissed, user_id)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+  RETURNING *`,
+  [
+    match_name,
+    player_id,
+    team_name,
+    match_type,
+    against_team,
+    run_scored,
+    balls_faced,
+    wickets_taken,
+    runs_given,
+    fifties,
+    hundreds,
+    dismissed,
+    user_id
+  ]
+);
 
     res.status(201).json({
       message: "✅ Player performance saved successfully.",
