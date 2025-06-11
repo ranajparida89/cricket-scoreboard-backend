@@ -18,7 +18,10 @@ router.get('/', async (req, res) => {
   try {
     const teamName = req.query.team_name;
     const matchType = req.query.match_type || "All";
+    const userId = req.query.user_id; // 👈 NEW LINE
+
     if (!teamName) return res.status(400).json({ error: "team_name is required" });
+    if (!userId) return res.status(400).json({ error: "user_id is required" }); // 👈 NEW VALIDATION
 
     let allMatches = [];
 
@@ -34,11 +37,11 @@ router.get('/', async (req, res) => {
           winner,
           match_time as match_date
         FROM match_history
-        WHERE team1 = $1 OR team2 = $1
+        WHERE (team1 = $1 OR team2 = $1) AND user_id = $2 -- 👈 FILTER BY user_id
         ORDER BY match_time DESC
         LIMIT 10
       `;
-      const { rows: odiT20Matches } = await pool.query(odiT20Query, [teamName]);
+      const { rows: odiT20Matches } = await pool.query(odiT20Query, [teamName, userId]);
       const odiT20Data = odiT20Matches.map(row => {
         const opponent = row.team1 === teamName ? row.team2 : row.team1;
         return {
@@ -51,7 +54,7 @@ router.get('/', async (req, res) => {
         };
       });
 
-      // Test (from test_match_results)
+      // Test (from test_match_results) - Add user_id filter **if you have user_id in that table**
       const testQuery = `
         SELECT 
           id as match_id,
@@ -62,11 +65,11 @@ router.get('/', async (req, res) => {
           winner,
           created_at as match_date
         FROM test_match_results
-        WHERE team1 = $1 OR team2 = $1
+        WHERE (team1 = $1 OR team2 = $1) AND user_id = $2 -- 👈 FILTER BY user_id (if present)
         ORDER BY created_at DESC
         LIMIT 10
       `;
-      const { rows: testMatches } = await pool.query(testQuery, [teamName]);
+      const { rows: testMatches } = await pool.query(testQuery, [teamName, userId]);
       const testData = testMatches.map(row => {
         const opponent = row.team1 === teamName ? row.team2 : row.team1;
         let result;
@@ -101,11 +104,11 @@ router.get('/', async (req, res) => {
           winner,
           created_at as match_date
         FROM test_match_results
-        WHERE (team1 = $1 OR team2 = $1) AND match_type = 'Test'
+        WHERE (team1 = $1 OR team2 = $1) AND match_type = 'Test' AND user_id = $2 -- 👈 FILTER BY user_id
         ORDER BY created_at DESC
         LIMIT 10
       `;
-      const { rows: testMatches } = await pool.query(testQuery, [teamName]);
+      const { rows: testMatches } = await pool.query(testQuery, [teamName, userId]);
       allMatches = testMatches.map(row => {
         const opponent = row.team1 === teamName ? row.team2 : row.team1;
         let result;
@@ -136,11 +139,11 @@ router.get('/', async (req, res) => {
           winner,
           match_time as match_date
         FROM match_history
-        WHERE (team1 = $1 OR team2 = $1) AND match_type = $2
+        WHERE (team1 = $1 OR team2 = $1) AND match_type = $2 AND user_id = $3 -- 👈 FILTER BY user_id
         ORDER BY match_time DESC
         LIMIT 10
       `;
-      const { rows: odiT20Matches } = await pool.query(odiT20Query, [teamName, matchType]);
+      const { rows: odiT20Matches } = await pool.query(odiT20Query, [teamName, matchType, userId]);
       allMatches = odiT20Matches.map(row => {
         const opponent = row.team1 === teamName ? row.team2 : row.team1;
         return {
