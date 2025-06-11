@@ -115,7 +115,7 @@ router.post("/player-performance", async (req, res) => {
     if (playerCheck.rows.length === 0) {
       return res.status(404).json({ message: "❌ Player not found." });
     }
-
+console.log("user_id for inserted player_performance:", user_id);
   const insertResult = await pool.query(
   `INSERT INTO player_performance 
   (match_name, player_id, team_name, match_type, against_team, run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds, dismissed, user_id)
