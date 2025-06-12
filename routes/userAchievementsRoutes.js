@@ -13,17 +13,16 @@ router.get('/', async (req, res) => {
     const matchType = req.query.match_type || 'All';
     if (!userId) return res.status(400).json({ error: "user_id is required" });
 
-    // Dynamic WHERE clause
+    // Dynamic WHERE clause for match_type
     const matchTypeFilter = matchType !== 'All' ? `AND pp.match_type = $2` : '';
     const params = matchType !== 'All' ? [userId, matchType] : [userId];
 
-    // 1. Highest Run Scorer (total runs)
+    // 1. Highest Run Scorer
     const runScorerQuery = `
       SELECT p.id AS player_id, p.player_name, SUM(pp.run_scored) AS total_runs
       FROM player_performance pp
       JOIN players p ON pp.player_id = p.id
-      JOIN teams t ON p.team_name = t.name
-      WHERE t.user_id = $1
+      WHERE p.user_id = $1
       ${matchTypeFilter}
       GROUP BY p.id, p.player_name
       ORDER BY total_runs DESC
@@ -32,13 +31,12 @@ router.get('/', async (req, res) => {
     const { rows: runRows } = await pool.query(runScorerQuery, params);
     const highestRunScorer = runRows[0] || null;
 
-    // 2. Highest Centuries (total hundreds)
+    // 2. Highest Centuries
     const centuriesQuery = `
       SELECT p.id AS player_id, p.player_name, SUM(pp.hundreds) AS total_centuries
       FROM player_performance pp
       JOIN players p ON pp.player_id = p.id
-      JOIN teams t ON p.team_name = t.name
-      WHERE t.user_id = $1
+      WHERE p.user_id = $1
       ${matchTypeFilter}
       GROUP BY p.id, p.player_name
       ORDER BY total_centuries DESC
@@ -47,13 +45,12 @@ router.get('/', async (req, res) => {
     const { rows: centuriesRows } = await pool.query(centuriesQuery, params);
     const highestCenturies = centuriesRows[0] || null;
 
-    // 3. Highest Wickets (total wickets)
+    // 3. Highest Wickets
     const wicketsQuery = `
       SELECT p.id AS player_id, p.player_name, SUM(pp.wickets_taken) AS total_wickets
       FROM player_performance pp
       JOIN players p ON pp.player_id = p.id
-      JOIN teams t ON p.team_name = t.name
-      WHERE t.user_id = $1
+      WHERE p.user_id = $1
       ${matchTypeFilter}
       GROUP BY p.id, p.player_name
       ORDER BY total_wickets DESC
@@ -62,7 +59,7 @@ router.get('/', async (req, res) => {
     const { rows: wicketsRows } = await pool.query(wicketsQuery, params);
     const highestWicketTaker = wicketsRows[0] || null;
 
-    // 4. Team with most wins
+    // 4. Team with most wins (use ILIKE for substring matching)
     const teamWinFilter = matchType !== 'All' ? `AND m.match_type = $2` : '';
     const winParams = matchType !== 'All' ? [userId, matchType] : [userId];
     const teamWinQuery = `
@@ -70,7 +67,7 @@ router.get('/', async (req, res) => {
       FROM match_history m
       JOIN teams t ON (m.team1 = t.name OR m.team2 = t.name)
       WHERE t.user_id = $1
-        AND m.winner = t.name
+        AND m.winner ILIKE '%' || t.name || '%'
         ${teamWinFilter}
       GROUP BY t.id, t.name
       ORDER BY wins DESC
@@ -79,32 +76,27 @@ router.get('/', async (req, res) => {
     const { rows: winRows } = await pool.query(teamWinQuery, winParams);
     const teamMostWins = winRows[0] || null;
 
-    // 5. Player Ratings (top 5 by batting/bowling/allrounder, per match type)
-    // Use player_ratings and players (user filter by team_name -> teams.user_id)
-    // We'll build a ratings object for all 3 formats
-    async function getTopRatings(dept, matchTypeValue) {
-      // dept: batting_rating, bowling_rating, allrounder_rating
-      // matchTypeValue: ODI, T20, Test, or All (for all match types)
-      const ratingType = dept;
-      const mtFilter = matchTypeValue !== 'All' ? `AND pr.match_type = $2` : '';
-      const mtParams = matchTypeValue !== 'All' ? [userId, matchTypeValue] : [userId];
-      const q = `
-        SELECT p.id AS player_id, p.player_name, p.team_name, pr.match_type, pr.${ratingType} AS rating
-        FROM player_ratings pr
-        JOIN players p ON pr.player_id = p.id
-        JOIN teams t ON p.team_name = t.name
-        WHERE t.user_id = $1
-        ${mtFilter}
-        ORDER BY pr.${ratingType} DESC
-        LIMIT 5
-      `;
-      const { rows } = await pool.query(q, mtParams);
-      return rows;
-    }
-    // For the requested matchType
-    const topBatting = await getTopRatings("batting_rating", matchType);
-    const topBowling = await getTopRatings("bowling_rating", matchType);
-    const topAllrounder = await getTopRatings("allrounder_rating", matchType);
+    // 5. Player Ratings (Top 5, all 3 ratings per player)
+    // Query all ratings at once for this user and match type
+    const ratingFilter = matchType !== 'All' ? `AND pr.match_type = $2` : '';
+    const ratingParams = matchType !== 'All' ? [userId, matchType] : [userId];
+    const ratingQuery = `
+      SELECT p.id AS player_id, p.player_name, p.team_name, pr.match_type, 
+             pr.batting_rating, pr.bowling_rating, pr.allrounder_rating
+      FROM player_ratings pr
+      JOIN players p ON pr.player_id = p.id
+      WHERE p.user_id = $1
+        ${ratingFilter}
+        AND pr.match_type IN ('ODI','T20','Test')
+      ORDER BY pr.batting_rating DESC, pr.bowling_rating DESC, pr.allrounder_rating DESC
+      LIMIT 5
+    `;
+    const { rows: ratingsRows } = await pool.query(ratingQuery, ratingParams);
+
+    // Split Top 5 for each rating (batting, bowling, allrounder)
+    const topBatting = [...ratingsRows].sort((a, b) => b.batting_rating - a.batting_rating).slice(0, 5);
+    const topBowling = [...ratingsRows].sort((a, b) => b.bowling_rating - a.bowling_rating).slice(0, 5);
+    const topAllrounder = [...ratingsRows].sort((a, b) => b.allrounder_rating - a.allrounder_rating).slice(0, 5);
 
     res.json({
       match_type: matchType,
