@@ -26,7 +26,8 @@ router.post("/test-match", async (req, res) => {
       runs1_2, overs1_2, wickets1_2,
       runs2_2, overs2_2, wickets2_2,
       total_overs_used,
-      match_name
+      match_name,
+      user_id
     } = req.body;
 
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
@@ -62,47 +63,47 @@ router.post("/test-match", async (req, res) => {
     const totalWickets2 = wickets2 + wickets2_2;
 
     // ✅ 3. Insert into test_match_results
-    if (winner === "Draw") {
-      await pool.query(`
-        INSERT INTO test_match_results (
-          match_id, match_type, team1, team2, winner, points,
-          runs1, overs1, wickets1,
-          runs2, overs2, wickets2,
-          runs1_2, overs1_2, wickets1_2,
-          runs2_2, overs2_2, wickets2_2,
-          total_overs_used, match_name
-        ) VALUES
-        ($1, $2, $3, $4, $5, 2, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19),
-        ($1, $2, $4, $3, $5, 2, $9, $10, $11, $6, $7, $8, $15, $16, $17, $12, $13, $14, $18, $19)
-      `, [
-        match_id, match_type, team1, team2, winner,
-        runs1, overs1, wickets1,
-        runs2, overs2, wickets2,
-        runs1_2, overs1_2, wickets1_2,
-        runs2_2, overs2_2, wickets2_2,
-        total_overs_used, match_name?.toUpperCase()
-      ]);
-    } else {
-      await pool.query(`
-        INSERT INTO test_match_results (
-          match_id, match_type, team1, team2, winner, points,
-          runs1, overs1, wickets1,
-          runs2, overs2, wickets2,
-          runs1_2, overs1_2, wickets1_2,
-          runs2_2, overs2_2, wickets2_2,
-          total_overs_used, match_name
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6,
-          $7, $8, $9, $10, $11, $12,
-          $13, $14, $15, $16, $17, $18,
-          $19, $20
-        )
-      `, [
-        match_id, match_type, team1, team2, winner, points,
-        runs1, overs1, wickets1, runs2, overs2, wickets2,
-        runs1_2, overs1_2, wickets1_2, runs2_2, overs2_2, wickets2_2,
-        total_overs_used, match_name?.toUpperCase()
-      ]);
+if (winner === "Draw") {
+  await pool.query(`
+    INSERT INTO test_match_results (
+      match_id, match_type, team1, team2, winner, points,
+      runs1, overs1, wickets1,
+      runs2, overs2, wickets2,
+      runs1_2, overs1_2, wickets1_2,
+      runs2_2, overs2_2, wickets2_2,
+      total_overs_used, match_name, user_id    -- <== Add user_id here
+    ) VALUES
+    ($1, $2, $3, $4, $5, 2, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20),
+    ($1, $2, $4, $3, $5, 2, $9, $10, $11, $6, $7, $8, $15, $16, $17, $12, $13, $14, $18, $19, $20)
+  `, [
+    match_id, match_type, team1, team2, winner,
+    runs1, overs1, wickets1,
+    runs2, overs2, wickets2,
+    runs1_2, overs1_2, wickets1_2,
+    runs2_2, overs2_2, wickets2_2,
+    total_overs_used, match_name?.toUpperCase(), user_id // <== Add user_id at end
+  ]);
+} else {
+  await pool.query(`
+    INSERT INTO test_match_results (
+      match_id, match_type, team1, team2, winner, points,
+      runs1, overs1, wickets1,
+      runs2, overs2, wickets2,
+      runs1_2, overs1_2, wickets1_2,
+      runs2_2, overs2_2, wickets2_2,
+      total_overs_used, match_name, user_id    -- <== Add user_id here
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6,
+      $7, $8, $9, $10, $11, $12,
+      $13, $14, $15, $16, $17, $18,
+      $19, $20, $21                         -- <== Add $21 for user_id
+    )
+  `, [
+    match_id, match_type, team1, team2, winner, points,
+    runs1, overs1, wickets1, runs2, overs2, wickets2,
+    runs1_2, overs1_2, wickets1_2, runs2_2, overs2_2, wickets2_2,
+    total_overs_used, match_name?.toUpperCase(), user_id // <== Add user_id at end
+  ]);
     }
     const message = winner === "Draw"
       ? "🤝 The match ended in a draw!"
