@@ -4,7 +4,13 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 
-// User-Isolated Dashboard Stats (V2) - uses robust SQL for "winner" as a sentence!
+// ==============================
+// User Dashboard Stats (V2)
+// Combines ODI, T20 from match_history + Test from test_match_results
+// Supports team-level and per-player stats (see JSON response)
+// [Updated by Ranaj Parida | 14-June-2025]
+// ==============================
+
 router.get('/user-dashboard-stats-v2', async (req, res) => {
   try {
     const userId = parseInt(req.query.user_id, 10);
@@ -18,103 +24,116 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
       return res.status(400).json({ error: "Invalid match_type" });
     }
 
-    // Step 1: Get user's teams
+    // 1️⃣ GET all teams for this user (lowercase for comparison)
     const playerTeamsRes = await pool.query(
-      'SELECT DISTINCT team_name FROM players WHERE user_id = $1',
+      'SELECT DISTINCT LOWER(TRIM(team_name)) AS team_name FROM players WHERE user_id = $1',
       [userId]
     );
     if (playerTeamsRes.rowCount === 0) {
       // New user: return empty stats
       return res.json({
-        matches_played: 0,
-        matches_won: 0,
-        matches_lost: 0,
-        matches_draw: 0,
-        total_runs: 0,
-        total_wickets: 0,
+        matches_played: 0, matches_won: 0, matches_lost: 0, matches_draw: 0,
+        total_runs: 0, total_wickets: 0,
+        // Player stats
+        player_total_runs: 0, player_total_wickets: 0
       });
     }
-    // Not used below but fetched for completeness
-    const teamNames = playerTeamsRes.rows.map(r => r.team_name.trim());
+    const teamNames = playerTeamsRes.rows.map(r => r.team_name);
 
-    // Step 2: Main match stats query (LIKE logic for winner sentences!)
-    let matchHistoryQuery = `
-      WITH user_teams AS (
-        SELECT DISTINCT team_name FROM players WHERE user_id = $1
-      )
-      SELECT 
-        COUNT(*) AS matches_played,
-        SUM(
-          CASE
-            WHEN EXISTS (
-              SELECT 1 FROM user_teams ut
-              WHERE LOWER(TRIM(winner)) LIKE '%' || LOWER(TRIM(ut.team_name)) || '%'
-            )
-            THEN 1 ELSE 0
-          END
-        ) AS matches_won,
-        SUM(
-          CASE WHEN winner IS NULL OR TRIM(winner) = '' THEN 1 ELSE 0 END
-        ) AS matches_draw,
-        SUM(
-          CASE
-            WHEN winner IS NOT NULL AND TRIM(winner) <> ''
-              AND NOT EXISTS (
-                SELECT 1 FROM user_teams ut
-                WHERE LOWER(TRIM(winner)) LIKE '%' || LOWER(TRIM(ut.team_name)) || '%'
-              )
-              AND (
-                LOWER(TRIM(team1)) IN (SELECT LOWER(TRIM(team_name)) FROM user_teams)
-                OR LOWER(TRIM(team2)) IN (SELECT LOWER(TRIM(team_name)) FROM user_teams)
-              )
-            THEN 1 ELSE 0
-          END
-        ) AS matches_lost
+    // 2️⃣ COMBINE all matches for user's teams (ODI/T20 from match_history + Test from test_match_results)
+    // Will use UNION ALL so all formats are included!
+    let unionQuery = `
+      SELECT
+        match_type,
+        LOWER(TRIM(team1)) AS team1,
+        LOWER(TRIM(team2)) AS team2,
+        LOWER(TRIM(winner)) AS winner,
+        runs1, wickets1, runs2, wickets2, match_name, match_id
       FROM match_history
-      WHERE
-        (LOWER(TRIM(team1)) IN (SELECT LOWER(TRIM(team_name)) FROM user_teams)
-         OR LOWER(TRIM(team2)) IN (SELECT LOWER(TRIM(team_name)) FROM user_teams))
+      WHERE (LOWER(TRIM(team1)) = ANY($1) OR LOWER(TRIM(team2)) = ANY($1))
+      ${matchType !== 'All' && matchType !== 'Test' ? 'AND match_type = $2' : ''}
+
+      UNION ALL
+
+      SELECT
+        match_type,
+        LOWER(TRIM(team1)) AS team1,
+        LOWER(TRIM(team2)) AS team2,
+        LOWER(TRIM(winner)) AS winner,
+        runs1, wickets1, runs2, wickets2, match_name, match_id
+      FROM test_match_results
+      WHERE (LOWER(TRIM(team1)) = ANY($1) OR LOWER(TRIM(team2)) = ANY($1))
+      ${matchType !== 'All' && matchType !== 'ODI' && matchType !== 'T20' ? 'AND match_type = $2' : ''}
     `;
-    let matchHistoryParams = [userId];
-    if (matchType !== 'All') {
-      matchHistoryQuery += ' AND match_type = $2';
-      matchHistoryParams.push(matchType);
-    }
 
-    const matchStatsRes = await pool.query(matchHistoryQuery, matchHistoryParams);
-    const matchStats = matchStatsRes.rows[0];
+    // Params
+    let unionParams = [teamNames];
+    if (matchType !== 'All') unionParams.push(matchType);
 
-    // Step 3: Get all user player IDs for stats
+    // 3️⃣ AGGREGATE team stats from unified match dataset
+    const statsRes = await pool.query(`
+      WITH all_matches AS (
+        ${unionQuery}
+      )
+      SELECT
+        COUNT(*) AS matches_played,
+        SUM(CASE WHEN winner IS NOT NULL AND winner = ANY($1) THEN 1 ELSE 0 END) AS matches_won,
+        SUM(CASE WHEN winner = 'draw' THEN 1 ELSE 0 END) AS matches_draw,
+        SUM(CASE WHEN winner IS NOT NULL AND winner <> 'draw' AND winner <> '' AND winner <> ANY($1) THEN 1 ELSE 0 END) AS matches_lost,
+        -- Runs & wickets should be *only* for this user's teams!
+        SUM(
+          CASE
+            WHEN team1 = ANY($1) THEN runs1
+            WHEN team2 = ANY($1) THEN runs2
+            ELSE 0
+          END
+        ) AS total_runs,
+        SUM(
+          CASE
+            WHEN team1 = ANY($1) THEN wickets1
+            WHEN team2 = ANY($1) THEN wickets2
+            ELSE 0
+          END
+        ) AS total_wickets
+      FROM all_matches
+    `, unionParams);
+
+    const stats = statsRes.rows[0];
+
+    // 4️⃣ (OPTIONAL) AGGREGATE per-player stats for user (sum of all their players' performances)
+    // NOTE: This *does not* affect your current UI. Only included for future!
     const playerIdsRes = await pool.query(
       'SELECT id FROM players WHERE user_id = $1',
       [userId]
     );
     const playerIds = playerIdsRes.rows.map(r => r.id);
 
-    // Step 4: Run & wicket stats (with matchType filter)
-    let statsQuery = `
+    let playerStatsQuery = `
       SELECT
-        COALESCE(SUM(run_scored), 0) AS total_runs,
-        COALESCE(SUM(wickets_taken), 0) AS total_wickets
+        COALESCE(SUM(run_scored), 0) AS player_total_runs,
+        COALESCE(SUM(wickets_taken), 0) AS player_total_wickets
       FROM player_performance
       WHERE player_id = ANY($1)
     `;
-    let statsParams = [playerIds];
+    let playerStatsParams = [playerIds];
     if (matchType !== 'All') {
-      statsQuery += ' AND match_type = $2';
-      statsParams.push(matchType);
+      playerStatsQuery += ' AND match_type = $2';
+      playerStatsParams.push(matchType);
     }
-    const statsRes = await pool.query(statsQuery, statsParams);
-    const stats = statsRes.rows[0];
+    const playerStatsRes = await pool.query(playerStatsQuery, playerStatsParams);
+    const playerStats = playerStatsRes.rows[0];
 
-    // Step 5: Respond
+    // 5️⃣ Respond - include both team stats (dashboard) and player stats (optional)
     res.json({
-      matches_played: parseInt(matchStats.matches_played, 10) || 0,
-      matches_won: parseInt(matchStats.matches_won, 10) || 0,
-      matches_lost: parseInt(matchStats.matches_lost, 10) || 0,
-      matches_draw: parseInt(matchStats.matches_draw, 10) || 0,
+      matches_played: parseInt(stats.matches_played, 10) || 0,
+      matches_won: parseInt(stats.matches_won, 10) || 0,
+      matches_lost: parseInt(stats.matches_lost, 10) || 0,
+      matches_draw: parseInt(stats.matches_draw, 10) || 0,
       total_runs: parseInt(stats.total_runs, 10) || 0,
       total_wickets: parseInt(stats.total_wickets, 10) || 0,
+      // Highlight: These two fields are "per-player" stats, not team stats!
+      player_total_runs: parseInt(playerStats.player_total_runs, 10) || 0,
+      player_total_wickets: parseInt(playerStats.player_total_wickets, 10) || 0,
     });
   } catch (err) {
     console.error("❌ User dashboard stats v2 error:", err);
