@@ -8,7 +8,7 @@ const pool = require('../db');
 // User Dashboard Stats (V2)
 // Combines ODI, T20 from match_history + Test from test_match_results
 // Supports team-level and per-player stats (see JSON response)
-// [Updated by Ranaj Parida | 14-June-2025]
+// [Updated by Ranaj Parida & ChatGPT | 14-June-2025]
 // ==============================
 
 router.get('/user-dashboard-stats-v2', async (req, res) => {
@@ -24,7 +24,7 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
       return res.status(400).json({ error: "Invalid match_type" });
     }
 
-    // 1️⃣ GET all teams for this user (lowercase for comparison)
+    // 1️⃣ GET all teams for this user (lowercase for matching)
     const playerTeamsRes = await pool.query(
       'SELECT DISTINCT LOWER(TRIM(team_name)) AS team_name FROM players WHERE user_id = $1',
       [userId]
@@ -34,21 +34,20 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
       return res.json({
         matches_played: 0, matches_won: 0, matches_lost: 0, matches_draw: 0,
         total_runs: 0, total_wickets: 0,
-        // Player stats
         player_total_runs: 0, player_total_wickets: 0
       });
     }
     const teamNames = playerTeamsRes.rows.map(r => r.team_name);
 
-    // 2️⃣ COMBINE all matches for user's teams (ODI/T20 from match_history + Test from test_match_results)
-    // Will use UNION ALL so all formats are included!
+    // 2️⃣ Create a single dataset: ODI+T20 from match_history, Test from test_match_results
+    // This part dynamically filters by match_type!
     let unionQuery = `
       SELECT
         match_type,
         LOWER(TRIM(team1)) AS team1,
         LOWER(TRIM(team2)) AS team2,
         LOWER(TRIM(winner)) AS winner,
-        runs1, wickets1, runs2, wickets2, match_name, match_id
+        runs1, wickets1, runs2, wickets2, match_name, id as match_id
       FROM match_history
       WHERE (LOWER(TRIM(team1)) = ANY($1) OR LOWER(TRIM(team2)) = ANY($1))
       ${matchType !== 'All' && matchType !== 'Test' ? 'AND match_type = $2' : ''}
@@ -63,14 +62,14 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
         runs1, wickets1, runs2, wickets2, match_name, match_id
       FROM test_match_results
       WHERE (LOWER(TRIM(team1)) = ANY($1) OR LOWER(TRIM(team2)) = ANY($1))
-      ${matchType !== 'All' && matchType !== 'ODI' && matchType !== 'T20' ? 'AND match_type = $2' : ''}
+      ${matchType !== 'All' && matchType === 'Test' ? 'AND match_type = $2' : ''}
     `;
 
     // Params
     let unionParams = [teamNames];
     if (matchType !== 'All') unionParams.push(matchType);
 
-    // 3️⃣ AGGREGATE team stats from unified match dataset
+    // 3️⃣ AGGREGATE: Team-level stats for matches where user's teams participated
     const statsRes = await pool.query(`
       WITH all_matches AS (
         ${unionQuery}
@@ -80,7 +79,6 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
         SUM(CASE WHEN winner IS NOT NULL AND winner = ANY($1) THEN 1 ELSE 0 END) AS matches_won,
         SUM(CASE WHEN winner = 'draw' THEN 1 ELSE 0 END) AS matches_draw,
         SUM(CASE WHEN winner IS NOT NULL AND winner <> 'draw' AND winner <> '' AND winner <> ANY($1) THEN 1 ELSE 0 END) AS matches_lost,
-        -- Runs & wickets should be *only* for this user's teams!
         SUM(
           CASE
             WHEN team1 = ANY($1) THEN runs1
@@ -100,8 +98,8 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
 
     const stats = statsRes.rows[0];
 
-    // 4️⃣ (OPTIONAL) AGGREGATE per-player stats for user (sum of all their players' performances)
-    // NOTE: This *does not* affect your current UI. Only included for future!
+    // 4️⃣ OPTIONAL: Per-player stats (for future use)
+    // This aggregates total runs & wickets for *all* players belonging to this user
     const playerIdsRes = await pool.query(
       'SELECT id FROM players WHERE user_id = $1',
       [userId]
@@ -123,7 +121,7 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
     const playerStatsRes = await pool.query(playerStatsQuery, playerStatsParams);
     const playerStats = playerStatsRes.rows[0];
 
-    // 5️⃣ Respond - include both team stats (dashboard) and player stats (optional)
+    // 5️⃣ Respond: Team stats (for dashboard) + per-player stats (for future, optional UI)
     res.json({
       matches_played: parseInt(stats.matches_played, 10) || 0,
       matches_won: parseInt(stats.matches_won, 10) || 0,
@@ -131,7 +129,7 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
       matches_draw: parseInt(stats.matches_draw, 10) || 0,
       total_runs: parseInt(stats.total_runs, 10) || 0,
       total_wickets: parseInt(stats.total_wickets, 10) || 0,
-      // Highlight: These two fields are "per-player" stats, not team stats!
+      // --- For optional UI use, these are "per-player" stats, not team stats! ---
       player_total_runs: parseInt(playerStats.player_total_runs, 10) || 0,
       player_total_wickets: parseInt(playerStats.player_total_wickets, 10) || 0,
     });
