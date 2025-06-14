@@ -1,3 +1,7 @@
+const express = require('express');
+const router = express.Router();
+const pool = require('../db');
+
 router.get('/user-dashboard-stats-v2', async (req, res) => {
   try {
     const userId = parseInt(req.query.user_id, 10);
