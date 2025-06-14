@@ -1,17 +1,8 @@
-// routes/userDashboardV2Routes.js
-
-const express = require('express');
-const router = express.Router();
-const pool = require('../db');
-
-// ==============================
-// User Dashboard Stats (V2) - Handles ODI, T20, Test (correct logic!)
-// ==============================
-
 router.get('/user-dashboard-stats-v2', async (req, res) => {
   try {
     const userId = parseInt(req.query.user_id, 10);
     const matchType = req.query.match_type || 'All';
+    const teamName = (req.query.team_name || '').trim().toLowerCase(); // #SYNCBUGFIX-1
 
     if (!userId) {
       return res.status(400).json({ error: "Missing or invalid user_id" });
@@ -20,8 +11,11 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
     if (!validTypes.includes(matchType)) {
       return res.status(400).json({ error: "Invalid match_type" });
     }
+    if (!teamName) {
+      return res.status(400).json({ error: "Missing or invalid team_name" }); // #SYNCBUGFIX-2
+    }
 
-    // 1️⃣ User's teams
+    // User's teams
     const playerTeamsRes = await pool.query(
       'SELECT DISTINCT LOWER(TRIM(team_name)) AS team_name FROM players WHERE user_id = $1',
       [userId]
@@ -34,60 +28,62 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
       });
     }
     const teamNames = playerTeamsRes.rows.map(r => r.team_name);
+    if (!teamNames.includes(teamName)) {
+      return res.json({
+        matches_played: 0, matches_won: 0, matches_lost: 0, matches_draw: 0,
+        total_runs: 0, total_wickets: 0,
+        player_total_runs: 0, player_total_wickets: 0
+      }); // #SYNCBUGFIX-3
+    }
 
-    // 2️⃣ STATS: ODI/T20 (match_history)
+    // ODI/T20 stats (for just this team)
     let statsOdiT20 = {
       matches_played: 0, matches_won: 0, matches_lost: 0, matches_draw: 0,
       total_runs: 0, total_wickets: 0
     };
-
     if (matchType === 'All' || matchType === 'ODI' || matchType === 'T20') {
-      let where = `(LOWER(TRIM(team1)) = ANY($1) OR LOWER(TRIM(team2)) = ANY($1))`;
+      let where = `(LOWER(TRIM(team1)) = $1 OR LOWER(TRIM(team2)) = $1)`;
       if (matchType !== 'All') {
         where += ` AND match_type = $2`;
       }
-      const params = [teamNames];
+      const params = [teamName];
       if (matchType !== 'All') params.push(matchType);
 
       const result = await pool.query(`
         SELECT
           COUNT(*) AS matches_played,
-          SUM(CASE WHEN winner IS NOT NULL AND winner <> '' AND winner = ANY($1) THEN 1 ELSE 0 END) AS matches_won,
-          SUM(CASE WHEN winner = 'draw' THEN 1 ELSE 0 END) AS matches_draw,
-          SUM(CASE WHEN winner IS NOT NULL AND winner <> 'draw' AND winner <> '' AND winner <> ANY($1) THEN 1 ELSE 0 END) AS matches_lost,
+          SUM(CASE WHEN LOWER(TRIM(winner)) = $1 THEN 1 ELSE 0 END) AS matches_won,
+          SUM(CASE WHEN LOWER(TRIM(winner)) = 'draw' THEN 1 ELSE 0 END) AS matches_draw,
+          SUM(CASE WHEN winner IS NOT NULL AND winner <> '' AND LOWER(TRIM(winner)) <> 'draw' AND LOWER(TRIM(winner)) <> $1 THEN 1 ELSE 0 END) AS matches_lost,
           SUM(
             CASE
-              WHEN LOWER(TRIM(team1)) = ANY($1) THEN runs1
-              WHEN LOWER(TRIM(team2)) = ANY($1) THEN runs2
+              WHEN LOWER(TRIM(team1)) = $1 THEN runs1
+              WHEN LOWER(TRIM(team2)) = $1 THEN runs2
               ELSE 0
             END
           ) AS total_runs,
           SUM(
             CASE
-              WHEN LOWER(TRIM(team1)) = ANY($1) THEN wickets1
-              WHEN LOWER(TRIM(team2)) = ANY($1) THEN wickets2
+              WHEN LOWER(TRIM(team1)) = $1 THEN wickets1
+              WHEN LOWER(TRIM(team2)) = $1 THEN wickets2
               ELSE 0
             END
           ) AS total_wickets
         FROM match_history
         WHERE ${where}
-      `, params);
+      `, params); // #SYNCBUGFIX-4
       statsOdiT20 = result.rows[0];
     }
 
-    // 3️⃣ STATS: Test Matches (test_match_results, sum both innings!)
+    // Test stats (for just this team)
     let statsTest = {
       matches_played: 0, matches_won: 0, matches_lost: 0, matches_draw: 0,
       total_runs: 0, total_wickets: 0
     };
-
     if (matchType === 'All' || matchType === 'Test') {
-      let where = `(LOWER(TRIM(team1)) = ANY($1) OR LOWER(TRIM(team2)) = ANY($1))`;
-      if (matchType === 'Test') {
-        where += ` AND match_type = 'Test'`;
-      }
-      const params = [teamNames];
-      // Get all Test match records for the user's teams
+      let where = `(LOWER(TRIM(team1)) = $1 OR LOWER(TRIM(team2)) = $1)`;
+      const params = [teamName];
+
       const result = await pool.query(`
         SELECT 
           team1, team2, winner,
@@ -98,20 +94,19 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
         FROM test_match_results
         WHERE ${where}
         GROUP BY team1, team2, winner
-      `, params);
+      `, params); // #SYNCBUGFIX-5
 
-      // Aggregate for all user's teams
       let played = 0, won = 0, lost = 0, draw = 0, runs = 0, wickets = 0;
       result.rows.forEach(row => {
-        const userTeamIsTeam1 = teamNames.includes(row.team1.trim().toLowerCase());
-        const userTeamIsTeam2 = teamNames.includes(row.team2.trim().toLowerCase());
+        const userTeamIsTeam1 = row.team1.trim().toLowerCase() === teamName;
+        const userTeamIsTeam2 = row.team2.trim().toLowerCase() === teamName;
         if (userTeamIsTeam1 || userTeamIsTeam2) played += 1;
 
         if (row.winner && row.winner.trim().toLowerCase() === 'draw') draw += 1;
-        else if (row.winner && teamNames.includes(row.winner.trim().toLowerCase())) won += 1;
-        else if (row.winner && row.winner !== '' && !teamNames.includes(row.winner.trim().toLowerCase())) lost += 1;
+        else if (row.winner && row.winner.trim().toLowerCase() === teamName) won += 1;
+        else if (row.winner && row.winner !== '' && row.winner.trim().toLowerCase() !== teamName && row.winner.trim().toLowerCase() !== 'draw') lost += 1;
 
-        // Team runs/wickets: always sum for the user's teams only
+        // Team runs/wickets: only for this team
         if (userTeamIsTeam1) {
           runs += Number(row.runs1 || 0) + Number(row.runs1_2 || 0);
           wickets += Number(row.wickets1 || 0) + Number(row.wickets1_2 || 0);
@@ -131,7 +126,7 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
       };
     }
 
-    // 4️⃣ Combine for 'All', or use single for ODI/T20/Test
+    // Combine stats (same logic)
     let stats = { matches_played: 0, matches_won: 0, matches_lost: 0, matches_draw: 0, total_runs: 0, total_wickets: 0 };
     if (matchType === 'All') {
       stats = {
@@ -144,33 +139,36 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
       };
     } else if (matchType === 'Test') {
       stats = statsTest;
-    } else { // ODI or T20
+    } else {
       stats = statsOdiT20;
     }
 
-    // 5️⃣ Per-player stats (optional/future)
+    // Per-player stats (just for this team)
     const playerIdsRes = await pool.query(
-      'SELECT id FROM players WHERE user_id = $1',
-      [userId]
+      'SELECT id FROM players WHERE user_id = $1 AND LOWER(TRIM(team_name)) = $2',
+      [userId, teamName] // #SYNCBUGFIX-6
     );
     const playerIds = playerIdsRes.rows.map(r => r.id);
 
-    let playerStatsQuery = `
-      SELECT
-        COALESCE(SUM(run_scored), 0) AS player_total_runs,
-        COALESCE(SUM(wickets_taken), 0) AS player_total_wickets
-      FROM player_performance
-      WHERE player_id = ANY($1)
-    `;
-    let playerStatsParams = [playerIds];
-    if (matchType !== 'All') {
-      playerStatsQuery += ' AND match_type = $2';
-      playerStatsParams.push(matchType);
+    let playerStats = { player_total_runs: 0, player_total_wickets: 0 };
+    if (playerIds.length > 0) {
+      let playerStatsQuery = `
+        SELECT
+          COALESCE(SUM(run_scored), 0) AS player_total_runs,
+          COALESCE(SUM(wickets_taken), 0) AS player_total_wickets
+        FROM player_performance
+        WHERE player_id = ANY($1)
+      `;
+      let playerStatsParams = [playerIds];
+      if (matchType !== 'All') {
+        playerStatsQuery += ' AND match_type = $2';
+        playerStatsParams.push(matchType);
+      }
+      const playerStatsRes = await pool.query(playerStatsQuery, playerStatsParams);
+      playerStats = playerStatsRes.rows[0];
     }
-    const playerStatsRes = await pool.query(playerStatsQuery, playerStatsParams);
-    const playerStats = playerStatsRes.rows[0];
 
-    // 6️⃣ Respond (UI code does not need to change)
+    // Response
     res.json({
       matches_played: Number(stats.matches_played) || 0,
       matches_won: Number(stats.matches_won) || 0,
@@ -187,5 +185,3 @@ router.get('/user-dashboard-stats-v2', async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-module.exports = router;
