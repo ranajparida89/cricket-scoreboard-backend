@@ -3,7 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 
 // GET /api/team-match-stats?user_id=..&team_name=..&match_type=..
-router.get('/team-match-stats', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const userId = parseInt(req.query.user_id, 10);
     const teamName = (req.query.team_name || '').trim().toLowerCase();
