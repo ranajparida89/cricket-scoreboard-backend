@@ -23,11 +23,25 @@ router.get('/', async (req, res) => {
       [userId, teamName]
     );
     if (teamRow.rowCount === 0) {
-      return res.json({ matches_played: 0, matches_won: 0, matches_lost: 0, matches_draw: 0, total_runs: 0, total_wickets: 0 });
+      return res.json({
+        matches_played: 0,
+        matches_won: 0,
+        matches_lost: 0,
+        matches_draw: 0,
+        total_runs: 0,
+        total_wickets: 0
+      });
     }
 
     // ODI/T20 (match_history)
-    let statsOdiT20 = { matches_played: 0, matches_won: 0, matches_lost: 0, matches_draw: 0, total_runs: 0, total_wickets: 0 };
+    let statsOdiT20 = {
+      matches_played: 0,
+      matches_won: 0,
+      matches_lost: 0,
+      matches_draw: 0,
+      total_runs: 0,
+      total_wickets: 0
+    };
     if (matchType === 'All' || matchType === 'ODI' || matchType === 'T20') {
       let sql = `
         SELECT
@@ -62,7 +76,14 @@ router.get('/', async (req, res) => {
     }
 
     // Test matches (test_match_results)
-    let statsTest = { matches_played: 0, matches_won: 0, matches_lost: 0, matches_draw: 0, total_runs: 0, total_wickets: 0 };
+    let statsTest = {
+      matches_played: 0,
+      matches_won: 0,
+      matches_lost: 0,
+      matches_draw: 0,
+      total_runs: 0,
+      total_wickets: 0
+    };
     if (matchType === 'All' || matchType === 'Test') {
       const result = await pool.query(`
         SELECT 
@@ -95,11 +116,25 @@ router.get('/', async (req, res) => {
           wickets += Number(row.wickets2 || 0) + Number(row.wickets2_2 || 0);
         }
       });
-      statsTest = { matches_played: played, matches_won: won, matches_lost: lost, matches_draw: draw, total_runs: runs, total_wickets: wickets };
+      statsTest = {
+        matches_played: played,
+        matches_won: won,
+        matches_lost: lost,
+        matches_draw: draw,
+        total_runs: runs,
+        total_wickets: wickets
+      };
     }
 
-    // Combine
-    let stats = { matches_played: 0, matches_won: 0, matches_lost: 0, matches_draw: 0, total_runs: 0, total_wickets: 0 };
+    // Combine results
+    let stats = {
+      matches_played: 0,
+      matches_won: 0,
+      matches_lost: 0,
+      matches_draw: 0,
+      total_runs: 0,
+      total_wickets: 0
+    };
     if (matchType === 'All') {
       stats = {
         matches_played: Number(statsOdiT20.matches_played || 0) + Number(statsTest.matches_played || 0),
