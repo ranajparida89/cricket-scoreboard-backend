@@ -97,6 +97,7 @@ app.use('/api', topPerformerRoutes);
 app.use('/api/win-loss-trend', winLossTrendRoutes);
 app.use('/api', teamListRoutes);
 app.use('/api/user-achievements', userAchievementsRoutes);
+app.use('/api', require('./routes/teamMatchStats'));
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
 const io = socketIo(server, {
