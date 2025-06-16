@@ -32,7 +32,7 @@ const dashboardWidgetsRoutes = require("./routes/dashboardWidgetsRoutes");
 const dashboardSettingsRoutes = require("./routes/dashboardSettingsRoutes"); // user setting 
 const dashboardNotificationsRoutes = require("./routes/dashboardNotificationsRoutes");
 const userDashboardRoutes = require('./routes/userDashboardRoutes');
-const userDashboardV2Routes = require('./routes/userDashboardV2Routes');
+//const userDashboardV2Routes = require('./routes/userDashboardV2Routes');
 const topPerformerRoutes = require('./routes/topPerformerRoutes');
 const winLossTrendRoutes = require('./routes/winLossTrendRoutes');
 const teamListRoutes = require('./routes/teamListRoutes');
@@ -92,7 +92,7 @@ app.use("/api/dashboard/widgets", dashboardWidgetsRoutes);
 app.use("/api/dashboard/settings", dashboardSettingsRoutes); // user settings
 app.use("/api/dashboard/notifications", dashboardNotificationsRoutes);
 app.use('/api', userDashboardRoutes);
-app.use('/api', userDashboardV2Routes);
+// app.use('/api', userDashboardV2Routes);
 app.use("/api", require("./routes/userRecentMatchesV2Routes"));
 app.use('/api', topPerformerRoutes);
 app.use('/api/win-loss-trend', winLossTrendRoutes);
