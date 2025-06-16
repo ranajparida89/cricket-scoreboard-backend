@@ -33,7 +33,7 @@ router.get('/', async (req, res) => {
       });
     }
 
-    // ODI/T20 (match_history)
+    // ODI/T20 (match_history) - **filtered by user_id**
     let statsOdiT20 = {
       matches_played: 0,
       matches_won: 0,
@@ -65,17 +65,18 @@ router.get('/', async (req, res) => {
           ) AS total_wickets
         FROM match_history
         WHERE (LOWER(TRIM(team1)) = $1 OR LOWER(TRIM(team2)) = $1)
+          AND user_id = $2
       `;
-      let params = [teamName];
+      let params = [teamName, userId];
       if (matchType !== 'All') {
-        sql += ' AND match_type = $2';
+        sql += ' AND match_type = $3';
         params.push(matchType);
       }
       const r = await pool.query(sql, params);
       statsOdiT20 = r.rows[0];
     }
 
-    // Test matches (test_match_results)
+    // Test matches (test_match_results) - **filtered by user_id**
     let statsTest = {
       matches_played: 0,
       matches_won: 0,
@@ -85,7 +86,7 @@ router.get('/', async (req, res) => {
       total_wickets: 0
     };
     if (matchType === 'All' || matchType === 'Test') {
-      const result = await pool.query(`
+      const sql = `
         SELECT 
           team1, team2, winner,
           SUM(runs1) AS runs1, SUM(wickets1) AS wickets1,
@@ -94,8 +95,12 @@ router.get('/', async (req, res) => {
           SUM(runs2_2) AS runs2_2, SUM(wickets2_2) AS wickets2_2
         FROM test_match_results
         WHERE (LOWER(TRIM(team1)) = $1 OR LOWER(TRIM(team2)) = $1)
+          AND user_id = $2
         GROUP BY team1, team2, winner
-      `, [teamName]);
+      `;
+      const params = [teamName, userId];
+
+      const result = await pool.query(sql, params);
 
       let played = 0, won = 0, lost = 0, draw = 0, runs = 0, wickets = 0;
       result.rows.forEach(row => {
