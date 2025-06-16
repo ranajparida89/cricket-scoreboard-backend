@@ -1,47 +1,46 @@
-// routes/topPerformerRoutes.js
-
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 
-// GET /api/top-performer?user_id=..&period=month&match_type=..&team_name=..
+/**
+ * GET /api/top-performer?user_id=23&period=month&limit=5&match_type=Test&team_name=England
+ * Returns the top performer (by total runs) for the given user, match type, period, and team
+ */
 router.get('/top-performer', async (req, res) => {
   try {
     // 1. Parse query parameters
     const userId = parseInt(req.query.user_id, 10);
-    const period = req.query.period || 'month';
-    const limit = parseInt(req.query.limit, 10) || 5;
+    const period = req.query.period || 'month'; // Default: month
+    const limit = parseInt(req.query.limit, 10) || 1; // Default: 1 (single top performer)
     const matchType = req.query.match_type || 'All';
-    const teamName = (req.query.team_name || '').trim(); // DO NOT LOWERCASE
+    const teamName = req.query.team_name || null;
 
     if (!userId) return res.status(400).json({ error: 'Missing or invalid user_id' });
 
-    // 2. Build WHERE clause and params
     let params = [userId];
     let whereClauses = ['p.user_id = $1', 'rp.match_id IS NOT NULL'];
     let paramIdx = 2;
 
-    // 3. (Optional) Date filter for period, skip for Test
+    // Only restrict to recent period for ODI/T20. For Test, period filter is **not** applied.
     if (period === 'month' && matchType !== 'Test') {
       whereClauses.push(`rp.created_at >= NOW() - INTERVAL '30 days'`);
     }
 
-    // 4. Filter by matchType if not 'All'
+    // Match type filter (if not All)
     if (matchType && matchType !== 'All') {
       whereClauses.push(`rp.match_type = $${paramIdx}`);
       params.push(matchType);
       paramIdx++;
     }
 
-    // 5. Filter by teamName if provided (UI always sends selectedTeam)
+    // Team name filter – ***always case-insensitive***
     if (teamName && teamName.length > 0) {
-      // Note: Your player_performance should have correct team_name stored!
-      whereClauses.push(`rp.team_name = $${paramIdx}`);
+      whereClauses.push(`LOWER(rp.team_name) = LOWER($${paramIdx})`);
       params.push(teamName);
       paramIdx++;
     }
 
-    // 6. SQL query with proper grouping
+    // FINAL QUERY
     const sql = `
       SELECT
         p.player_name,
@@ -71,15 +70,17 @@ router.get('/top-performer', async (req, res) => {
       WHERE ${whereClauses.join(' AND ')}
       GROUP BY p.player_name, rp.match_type
       ORDER BY total_runs DESC
-      LIMIT 1
+      LIMIT $${paramIdx}
     `;
 
-    // 7. Run the query
+    params.push(limit);
+
+    // Run the query
     const result = await pool.query(sql, params);
     if (!result.rows.length) return res.json({ performer: null });
 
     const performer = result.rows[0];
-    performer.mvp_badge = period === 'month' ? true : false;
+    performer.mvp_badge = (period === 'month'); // Add badge if period is 'month'
     res.json({ performer });
 
   } catch (err) {
