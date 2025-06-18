@@ -47,7 +47,7 @@ router.get('/', async (req, res) => {
         SELECT
           COUNT(*) AS matches_played,
           SUM(CASE WHEN LOWER(TRIM(winner)) = $1 THEN 1 ELSE 0 END) AS matches_won,
-          SUM(CASE WHEN LOWER(TRIM(winner)) = 'draw' THEN 1 ELSE 0 END) AS matches_draw,
+          SUM(CASE WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw') THEN 1 ELSE 0 END) AS matches_draw, -- handled for match_draw
           SUM(CASE WHEN winner IS NOT NULL AND winner <> '' AND LOWER(TRIM(winner)) <> 'draw' AND LOWER(TRIM(winner)) <> $1 THEN 1 ELSE 0 END) AS matches_lost,
           SUM(
             CASE
@@ -108,7 +108,10 @@ router.get('/', async (req, res) => {
         const userTeamIsTeam2 = row.team2.trim().toLowerCase() === teamName;
         if (userTeamIsTeam1 || userTeamIsTeam2) played += 1;
 
-        if (row.winner && row.winner.trim().toLowerCase() === 'draw') draw += 1;
+                  if (
+            row.winner &&
+            ['draw', 'match draw'].includes(row.winner.trim().toLowerCase())
+          ) draw += 1; // Handled for Draw in Test Match.
         else if (row.winner && row.winner.trim().toLowerCase() === teamName) won += 1;
         else if (row.winner && row.winner !== '' && row.winner.trim().toLowerCase() !== teamName && row.winner.trim().toLowerCase() !== 'draw') lost += 1;
 
