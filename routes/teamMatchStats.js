@@ -44,29 +44,47 @@ router.get('/', async (req, res) => {
     };
     if (matchType === 'All' || matchType === 'ODI' || matchType === 'T20') {
       let sql = `
-        SELECT
-          COUNT(*) AS matches_played,
-          SUM(CASE WHEN LOWER(TRIM(winner)) = $1 THEN 1 ELSE 0 END) AS matches_won,
-          SUM(CASE WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw') THEN 1 ELSE 0 END) AS matches_draw, -- handled for match_draw
-          SUM(CASE WHEN winner IS NOT NULL AND winner <> '' AND LOWER(TRIM(winner)) <> 'draw' AND LOWER(TRIM(winner)) <> $1 THEN 1 ELSE 0 END) AS matches_lost,
-          SUM(
-            CASE
-              WHEN LOWER(TRIM(team1)) = $1 THEN runs1
-              WHEN LOWER(TRIM(team2)) = $1 THEN runs2
-              ELSE 0
-            END
-          ) AS total_runs,
-          SUM(
-            CASE
-              WHEN LOWER(TRIM(team1)) = $1 THEN wickets1
-              WHEN LOWER(TRIM(team2)) = $1 THEN wickets2
-              ELSE 0
-            END
-          ) AS total_wickets
-        FROM match_history
-        WHERE (LOWER(TRIM(team1)) = $1 OR LOWER(TRIM(team2)) = $1)
-          AND user_id = $2
-      `;
+  SELECT
+    COUNT(*) AS matches_played,
+    SUM(
+      CASE
+        WHEN LOWER(TRIM(winner)) = $1
+          OR LOWER(TRIM(winner)) = $1 || ' won the match!'
+        THEN 1 ELSE 0
+      END
+    ) AS matches_won,
+    SUM(
+      CASE
+        WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw')
+          OR LOWER(TRIM(winner)) = 'match draw'
+        THEN 1 ELSE 0
+      END
+    ) AS matches_draw,
+    SUM(
+      CASE
+        WHEN winner IS NOT NULL AND winner <> ''
+          AND LOWER(TRIM(winner)) NOT IN ($1, $1 || ' won the match!', 'draw', 'match draw')
+        THEN 1 ELSE 0
+      END
+    ) AS matches_lost,
+    SUM(
+      CASE
+        WHEN LOWER(TRIM(team1)) = $1 THEN runs1
+        WHEN LOWER(TRIM(team2)) = $1 THEN runs2
+        ELSE 0
+      END
+    ) AS total_runs,
+    SUM(
+      CASE
+        WHEN LOWER(TRIM(team1)) = $1 THEN wickets1
+        WHEN LOWER(TRIM(team2)) = $1 THEN wickets2
+        ELSE 0
+      END
+    ) AS total_wickets
+  FROM match_history
+  WHERE (LOWER(TRIM(team1)) = $1 OR LOWER(TRIM(team2)) = $1)
+    AND user_id = $2
+`;
       let params = [teamName, userId];
       if (matchType !== 'All') {
         sql += ' AND match_type = $3';
