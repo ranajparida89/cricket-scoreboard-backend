@@ -185,31 +185,33 @@ app.post("/api/submit-result", async (req, res) => {
     if (runs1 > runs2) { winner = `${team1} won the match!`; points1 = 2; points2 = 0; }
     else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; points2 = 2; }
 
-    await pool.query(`
-      INSERT INTO teams (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled)
-      VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
-      ON CONFLICT (match_id, name) DO UPDATE SET
-        wins = EXCLUDED.wins,
-        losses = EXCLUDED.losses,
-        points = EXCLUDED.points,
-        total_runs = EXCLUDED.total_runs,
-        total_overs = EXCLUDED.total_overs,
-        total_runs_conceded = EXCLUDED.total_runs_conceded,
-        total_overs_bowled = EXCLUDED.total_overs_bowled
-    `, [match_id, team1, points1 === 2 ? 1 : 0, points2 === 2 ? 1 : 0, points1, runs1, actualOvers1, runs2, overs2DecimalRaw]);
+  await pool.query(`
+  INSERT INTO teams (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id)
+  VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10)
+  ON CONFLICT (match_id, name) DO UPDATE SET
+    wins = EXCLUDED.wins,
+    losses = EXCLUDED.losses,
+    points = EXCLUDED.points,
+    total_runs = EXCLUDED.total_runs,
+    total_overs = EXCLUDED.total_overs,
+    total_runs_conceded = EXCLUDED.total_runs_conceded,
+    total_overs_bowled = EXCLUDED.total_overs_bowled,
+    user_id = EXCLUDED.user_id
+`, [match_id, team1, points1 === 2 ? 1 : 0, points2 === 2 ? 1 : 0, points1, runs1, actualOvers1, runs2, overs2DecimalRaw, req.body.user_id]);
 
-    await pool.query(`
-      INSERT INTO teams (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled)
-      VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
-      ON CONFLICT (match_id, name) DO UPDATE SET
-        wins = EXCLUDED.wins,
-        losses = EXCLUDED.losses,
-        points = EXCLUDED.points,
-        total_runs = EXCLUDED.total_runs,
-        total_overs = EXCLUDED.total_overs,
-        total_runs_conceded = EXCLUDED.total_runs_conceded,
-        total_overs_bowled = EXCLUDED.total_overs_bowled
-    `, [match_id, team2, points2 === 2 ? 1 : 0, points1 === 2 ? 1 : 0, points2, runs2, actualOvers2, runs1, overs1DecimalRaw]);
+   await pool.query(`
+  INSERT INTO teams (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id)
+  VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10)
+  ON CONFLICT (match_id, name) DO UPDATE SET
+    wins = EXCLUDED.wins,
+    losses = EXCLUDED.losses,
+    points = EXCLUDED.points,
+    total_runs = EXCLUDED.total_runs,
+    total_overs = EXCLUDED.total_overs,
+    total_runs_conceded = EXCLUDED.total_runs_conceded,
+    total_overs_bowled = EXCLUDED.total_overs_bowled,
+    user_id = EXCLUDED.user_id
+`, [match_id, team2, points2 === 2 ? 1 : 0, points1 === 2 ? 1 : 0, points2, runs2, actualOvers2, runs1, overs1DecimalRaw, req.body.user_id]);
 
     await pool.query(`
       WITH team_stats AS (
