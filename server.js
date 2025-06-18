@@ -148,10 +148,10 @@ setInterval(() => {
 // ✅ Create Match Entry
 app.post("/api/match", async (req, res) => {
   try {
-    const { match_name, match_type } = req.body;
+    const { match_name, match_type, user_id } = req.body;
     const result = await pool.query(
-      "INSERT INTO matches (match_name, match_type) VALUES ($1, $2) RETURNING id",
-      [match_name, match_type]
+      "INSERT INTO matches (match_name, match_type, user_id) VALUES ($1, $2, $3) RETURNING id",
+      [match_name, match_type, user_id]
     );
     res.json({ match_id: result.rows[0].id });
   } catch (err) {
