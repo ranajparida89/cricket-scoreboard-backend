@@ -1,3 +1,6 @@
+// ✅ /routes/teamMatchStats.js
+// ✅ [2024-06-19 | ChatGPT+Ranaj Parida] -- Ownership check REMOVED for correct stats per team & user
+
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
@@ -17,29 +20,23 @@ router.get('/', async (req, res) => {
       return res.status(400).json({ error: "Invalid match_type" });
     }
 
-    // --------------------------------------------------------------------------------------
-    // [IMPORTANT] Ownership validation for dropdown filtering (do NOT remove this!)
-    // This ensures that only teams created/owned by this user show in the dropdown
-    // --------------------------------------------------------------------------------------
-    const teamRow = await pool.query(
-      "SELECT 1 FROM players WHERE user_id = $1 AND LOWER(TRIM(team_name)) = $2 LIMIT 1",
-      [userId, teamName]
-    );
-    if (teamRow.rowCount === 0) {
-      // Team not in "players" for this user → dashboard/pallet stats stay 0, not shown in dropdown
-      return res.json({
-        matches_played: 0,
-        matches_won: 0,
-        matches_lost: 0,
-        matches_draw: 0,
-        total_runs: 0,
-        total_wickets: 0
-      });
-    }
-    // Only teams in "players" for this user reach here.
-    // All match data below will only show for teams the user has actually created/owns.
+    // 👇❌ REMOVED: Check for ownership in players table. Now shows stats for ANY team played under this user!
+    // const teamRow = await pool.query(
+    //   "SELECT 1 FROM players WHERE user_id = $1 AND LOWER(TRIM(team_name)) = $2 LIMIT 1",
+    //   [userId, teamName]
+    // );
+    // if (teamRow.rowCount === 0) {
+    //   return res.json({
+    //     matches_played: 0,
+    //     matches_won: 0,
+    //     matches_lost: 0,
+    //     matches_draw: 0,
+    //     total_runs: 0,
+    //     total_wickets: 0
+    //   });
+    // }
 
-    // ODI/T20 (match_history) - filtered by user_id and team_name
+    // ODI/T20 (match_history) - **filtered by user_id**
     let statsOdiT20 = {
       matches_played: 0,
       matches_won: 0,
@@ -100,7 +97,7 @@ router.get('/', async (req, res) => {
       statsOdiT20 = r.rows[0];
     }
 
-    // Test matches (test_match_results) - filtered by user_id and team_name
+    // Test matches (test_match_results) - **filtered by user_id**
     let statsTest = {
       matches_played: 0,
       matches_won: 0,
@@ -158,7 +155,7 @@ router.get('/', async (req, res) => {
       };
     }
 
-    // Combine results for the response
+    // Combine results
     let stats = {
       matches_played: 0,
       matches_won: 0,
