@@ -17,12 +17,16 @@ router.get('/', async (req, res) => {
       return res.status(400).json({ error: "Invalid match_type" });
     }
 
-    // Validate that user owns this team
+    // --------------------------------------------------------------------------------------
+    // [IMPORTANT] Ownership validation for dropdown filtering (do NOT remove this!)
+    // This ensures that only teams created/owned by this user show in the dropdown
+    // --------------------------------------------------------------------------------------
     const teamRow = await pool.query(
       "SELECT 1 FROM players WHERE user_id = $1 AND LOWER(TRIM(team_name)) = $2 LIMIT 1",
       [userId, teamName]
     );
     if (teamRow.rowCount === 0) {
+      // Team not in "players" for this user → dashboard/pallet stats stay 0, not shown in dropdown
       return res.json({
         matches_played: 0,
         matches_won: 0,
@@ -32,8 +36,10 @@ router.get('/', async (req, res) => {
         total_wickets: 0
       });
     }
+    // Only teams in "players" for this user reach here.
+    // All match data below will only show for teams the user has actually created/owns.
 
-    // ODI/T20 (match_history) - **filtered by user_id**
+    // ODI/T20 (match_history) - filtered by user_id and team_name
     let statsOdiT20 = {
       matches_played: 0,
       matches_won: 0,
@@ -44,47 +50,47 @@ router.get('/', async (req, res) => {
     };
     if (matchType === 'All' || matchType === 'ODI' || matchType === 'T20') {
       let sql = `
-  SELECT
-    COUNT(*) AS matches_played,
-    SUM(
-      CASE
-        WHEN LOWER(TRIM(winner)) = $1
-          OR LOWER(TRIM(winner)) = $1 || ' won the match!'
-        THEN 1 ELSE 0
-      END
-    ) AS matches_won,
-    SUM(
-      CASE
-        WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw')
-          OR LOWER(TRIM(winner)) = 'match draw'
-        THEN 1 ELSE 0
-      END
-    ) AS matches_draw,
-    SUM(
-      CASE
-        WHEN winner IS NOT NULL AND winner <> ''
-          AND LOWER(TRIM(winner)) NOT IN ($1, $1 || ' won the match!', 'draw', 'match draw')
-        THEN 1 ELSE 0
-      END
-    ) AS matches_lost,
-    SUM(
-      CASE
-        WHEN LOWER(TRIM(team1)) = $1 THEN runs1
-        WHEN LOWER(TRIM(team2)) = $1 THEN runs2
-        ELSE 0
-      END
-    ) AS total_runs,
-    SUM(
-      CASE
-        WHEN LOWER(TRIM(team1)) = $1 THEN wickets1
-        WHEN LOWER(TRIM(team2)) = $1 THEN wickets2
-        ELSE 0
-      END
-    ) AS total_wickets
-  FROM match_history
-  WHERE (LOWER(TRIM(team1)) = $1 OR LOWER(TRIM(team2)) = $1)
-    AND user_id = $2
-`;
+        SELECT
+          COUNT(*) AS matches_played,
+          SUM(
+            CASE
+              WHEN LOWER(TRIM(winner)) = $1
+                OR LOWER(TRIM(winner)) = $1 || ' won the match!'
+              THEN 1 ELSE 0
+            END
+          ) AS matches_won,
+          SUM(
+            CASE
+              WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw')
+                OR LOWER(TRIM(winner)) = 'match draw'
+              THEN 1 ELSE 0
+            END
+          ) AS matches_draw,
+          SUM(
+            CASE
+              WHEN winner IS NOT NULL AND winner <> ''
+                AND LOWER(TRIM(winner)) NOT IN ($1, $1 || ' won the match!', 'draw', 'match draw')
+              THEN 1 ELSE 0
+            END
+          ) AS matches_lost,
+          SUM(
+            CASE
+              WHEN LOWER(TRIM(team1)) = $1 THEN runs1
+              WHEN LOWER(TRIM(team2)) = $1 THEN runs2
+              ELSE 0
+            END
+          ) AS total_runs,
+          SUM(
+            CASE
+              WHEN LOWER(TRIM(team1)) = $1 THEN wickets1
+              WHEN LOWER(TRIM(team2)) = $1 THEN wickets2
+              ELSE 0
+            END
+          ) AS total_wickets
+        FROM match_history
+        WHERE (LOWER(TRIM(team1)) = $1 OR LOWER(TRIM(team2)) = $1)
+          AND user_id = $2
+      `;
       let params = [teamName, userId];
       if (matchType !== 'All') {
         sql += ' AND match_type = $3';
@@ -94,7 +100,7 @@ router.get('/', async (req, res) => {
       statsOdiT20 = r.rows[0];
     }
 
-    // Test matches (test_match_results) - **filtered by user_id**
+    // Test matches (test_match_results) - filtered by user_id and team_name
     let statsTest = {
       matches_played: 0,
       matches_won: 0,
@@ -126,10 +132,10 @@ router.get('/', async (req, res) => {
         const userTeamIsTeam2 = row.team2.trim().toLowerCase() === teamName;
         if (userTeamIsTeam1 || userTeamIsTeam2) played += 1;
 
-                  if (
-            row.winner &&
-            ['draw', 'match draw'].includes(row.winner.trim().toLowerCase())
-          ) draw += 1; // Handled for Draw in Test Match.
+        if (
+          row.winner &&
+          ['draw', 'match draw'].includes(row.winner.trim().toLowerCase())
+        ) draw += 1; // Handled for Draw in Test Match.
         else if (row.winner && row.winner.trim().toLowerCase() === teamName) won += 1;
         else if (row.winner && row.winner !== '' && row.winner.trim().toLowerCase() !== teamName && row.winner.trim().toLowerCase() !== 'draw') lost += 1;
 
@@ -152,7 +158,7 @@ router.get('/', async (req, res) => {
       };
     }
 
-    // Combine results
+    // Combine results for the response
     let stats = {
       matches_played: 0,
       matches_won: 0,
