@@ -16,7 +16,10 @@ router.get("/team-rankings", async (req, res) => {
           (SUM(t.total_runs)::decimal / NULLIF(SUM(t.total_overs),0)) -
           (SUM(t.total_runs_conceded)::decimal / NULLIF(SUM(t.total_overs_bowled),0)), 2
         ) AS nrr,
-        m.match_type
+        m.match_type,
+        NULL AS wins,
+        NULL AS losses,
+        NULL AS draws
       FROM teams t
       JOIN matches m ON m.id = t.match_id
       WHERE m.match_type IN ('ODI', 'T20')
@@ -24,14 +27,17 @@ router.get("/team-rankings", async (req, res) => {
 
       UNION ALL
 
-      -- Test: New logic, NO NRR
+      -- Test: New logic, NO NRR, add win/loss/draw
       SELECT
         team,
         COUNT(*) AS matches,
         SUM(points) AS points,
         ROUND(SUM(points)::decimal / NULLIF(COUNT(*), 0), 2) AS rating,
-        NULL AS nrr,        -- No NRR for Test
-        'Test' AS match_type
+        NULL AS nrr,
+        'Test' AS match_type,
+        SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN outcome = 'loss' THEN 1 ELSE 0 END) AS losses,
+        SUM(CASE WHEN outcome = 'draw' THEN 1 ELSE 0 END) AS draws
       FROM (
         -- Team1's stats per match
         SELECT
@@ -41,7 +47,13 @@ router.get("/team-rankings", async (req, res) => {
             WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team2)) THEN 6
             WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw') THEN 4
             ELSE 0
-          END AS points
+          END AS points,
+          CASE
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team1)) THEN 'win'
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team2)) THEN 'loss'
+            WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw') THEN 'draw'
+            ELSE NULL
+          END AS outcome
         FROM test_match_results
 
         UNION ALL
@@ -54,7 +66,13 @@ router.get("/team-rankings", async (req, res) => {
             WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team1)) THEN 6
             WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw') THEN 4
             ELSE 0
-          END AS points
+          END AS points,
+          CASE
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team2)) THEN 'win'
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team1)) THEN 'loss'
+            WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw') THEN 'draw'
+            ELSE NULL
+          END AS outcome
         FROM test_match_results
       ) AS scored
       GROUP BY team
