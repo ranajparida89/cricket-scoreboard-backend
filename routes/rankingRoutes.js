@@ -1,15 +1,12 @@
 // ✅ routes/rankingRoutes.js
-// ✅ [Ranaj Parida - 27 May 2025] Aggregates Test stats from test_match_results using correct columns
-
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
 router.get("/team-rankings", async (req, res) => {
   try {
-    // Ranaj Parida 27 May 2025: Test chart from test_match_results with correct columns!
     const result = await pool.query(`
-      -- ODI/T20 from regular tables
+      -- ODI/T20: Include NRR
       SELECT 
         t.name AS team_name,
         SUM(t.matches_played) AS matches,
@@ -27,39 +24,39 @@ router.get("/team-rankings", async (req, res) => {
 
       UNION ALL
 
-      -- Test stats from test_match_results, correct columns
-      SELECT 
-        team AS team_name,
+      -- Test: New logic, NO NRR
+      SELECT
+        team,
         COUNT(*) AS matches,
         SUM(points) AS points,
         ROUND(SUM(points)::decimal / NULLIF(COUNT(*), 0), 2) AS rating,
-        ROUND(
-          (SUM(runs_scored)::decimal / NULLIF(SUM(overs_used), 0)) -
-          (SUM(runs_conceded)::decimal / NULLIF(SUM(overs_bowled), 0)),
-          2
-        ) AS nrr,
+        NULL AS nrr,        -- No NRR for Test
         'Test' AS match_type
       FROM (
-        -- team1 as main team, team2 as opponent
+        -- Team1's stats per match
         SELECT
           team1 AS team,
-          points,
-          runs1 + runs1_2 AS runs_scored,
-          overs1 + overs1_2 AS overs_used,
-          runs2 + runs2_2 AS runs_conceded,
-          overs2 + overs2_2 AS overs_bowled
+          CASE
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team1)) THEN 12
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team2)) THEN 6
+            WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw') THEN 4
+            ELSE 0
+          END AS points
         FROM test_match_results
+
         UNION ALL
-        -- team2 as main team, team1 as opponent
+
+        -- Team2's stats per match
         SELECT
           team2 AS team,
-          points,
-          runs2 + runs2_2 AS runs_scored,
-          overs2 + overs2_2 AS overs_used,
-          runs1 + runs1_2 AS runs_conceded,
-          overs1 + overs1_2 AS overs_bowled
+          CASE
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team2)) THEN 12
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team1)) THEN 6
+            WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw') THEN 4
+            ELSE 0
+          END AS points
         FROM test_match_results
-      ) AS exploded
+      ) AS scored
       GROUP BY team
     `);
 
