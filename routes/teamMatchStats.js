@@ -97,64 +97,87 @@ router.get('/', async (req, res) => {
       statsOdiT20 = r.rows[0];
     }
 
-    // Test matches (test_match_results) - **filtered by user_id**
-    let statsTest = {
-      matches_played: 0,
-      matches_won: 0,
-      matches_lost: 0,
-      matches_draw: 0,
-      total_runs: 0,
-      total_wickets: 0
-    };
-    if (matchType === 'All' || matchType === 'Test') {
-      const sql = `
-        SELECT 
-          team1, team2, winner,
-          SUM(runs1) AS runs1, SUM(wickets1) AS wickets1,
-          SUM(runs2) AS runs2, SUM(wickets2) AS wickets2,
-          SUM(runs1_2) AS runs1_2, SUM(wickets1_2) AS wickets1_2,
-          SUM(runs2_2) AS runs2_2, SUM(wickets2_2) AS wickets2_2
+    // correct update count for test match 14-june-2025
+// Test matches (test_match_results) - **filtered by user_id**
+let statsTest = {
+  matches_played: 0,
+  matches_won: 0,
+  matches_lost: 0,
+  matches_draw: 0,
+  total_runs: 0,
+  total_wickets: 0
+};
+if (matchType === 'All' || matchType === 'Test') {
+  // Get all appearances for the team, whether team1 or team2, for this user_id
+  const sql = `
+    WITH all_appearances AS (
+      SELECT
+        id,
+        user_id,
+        team_name,
+        outcome,
+        runs_scored,
+        wickets_taken
+      FROM (
+        -- Team1 perspective
+        SELECT
+          id,
+          user_id,
+          team1 AS team_name,
+          CASE
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team1)) THEN 'win'
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team2)) THEN 'loss'
+            WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw') THEN 'draw'
+            ELSE NULL
+          END AS outcome,
+          COALESCE(runs1,0) + COALESCE(runs1_2,0) AS runs_scored,
+          COALESCE(wickets1,0) + COALESCE(wickets1_2,0) AS wickets_taken
         FROM test_match_results
-        WHERE (LOWER(TRIM(team1)) = $1 OR LOWER(TRIM(team2)) = $1)
-          AND user_id = $2
-        GROUP BY team1, team2, winner
-      `;
-      const params = [teamName, userId];
+        WHERE user_id = $1
 
-      const result = await pool.query(sql, params);
+        UNION ALL
 
-      let played = 0, won = 0, lost = 0, draw = 0, runs = 0, wickets = 0;
-      result.rows.forEach(row => {
-        const userTeamIsTeam1 = row.team1.trim().toLowerCase() === teamName;
-        const userTeamIsTeam2 = row.team2.trim().toLowerCase() === teamName;
-        if (userTeamIsTeam1 || userTeamIsTeam2) played += 1;
+        -- Team2 perspective
+        SELECT
+          id,
+          user_id,
+          team2 AS team_name,
+          CASE
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team2)) THEN 'win'
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team1)) THEN 'loss'
+            WHEN LOWER(TRIM(winner)) IN ('draw', 'match draw') THEN 'draw'
+            ELSE NULL
+          END AS outcome,
+          COALESCE(runs2,0) + COALESCE(runs2_2,0) AS runs_scored,
+          COALESCE(wickets2,0) + COALESCE(wickets2_2,0) AS wickets_taken
+        FROM test_match_results
+        WHERE user_id = $1
+      ) all_rows
+      WHERE LOWER(TRIM(team_name)) = $2
+    )
+    SELECT
+      COUNT(*) AS matches_played,
+      SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END) AS matches_won,
+      SUM(CASE WHEN outcome = 'loss' THEN 1 ELSE 0 END) AS matches_lost,
+      SUM(CASE WHEN outcome = 'draw' THEN 1 ELSE 0 END) AS matches_draw,
+      SUM(runs_scored) AS total_runs,
+      SUM(wickets_taken) AS total_wickets
+    FROM all_appearances;
+  `;
+  const params = [userId, teamName];
 
-        if (
-          row.winner &&
-          ['draw', 'match draw'].includes(row.winner.trim().toLowerCase())
-        ) draw += 1; // Handled for Draw in Test Match.
-        else if (row.winner && row.winner.trim().toLowerCase() === teamName) won += 1;
-        else if (row.winner && row.winner !== '' && row.winner.trim().toLowerCase() !== teamName && row.winner.trim().toLowerCase() !== 'draw') lost += 1;
-
-        if (userTeamIsTeam1) {
-          runs += Number(row.runs1 || 0) + Number(row.runs1_2 || 0);
-          wickets += Number(row.wickets1 || 0) + Number(row.wickets1_2 || 0);
-        }
-        if (userTeamIsTeam2) {
-          runs += Number(row.runs2 || 0) + Number(row.runs2_2 || 0);
-          wickets += Number(row.wickets2 || 0) + Number(row.wickets2_2 || 0);
-        }
-      });
-      statsTest = {
-        matches_played: played,
-        matches_won: won,
-        matches_lost: lost,
-        matches_draw: draw,
-        total_runs: runs,
-        total_wickets: wickets
-      };
-    }
-
+  const result = await pool.query(sql, params);
+  if (result.rows.length > 0) {
+    statsTest = {
+      matches_played: Number(result.rows[0].matches_played) || 0,
+      matches_won: Number(result.rows[0].matches_won) || 0,
+      matches_lost: Number(result.rows[0].matches_lost) || 0,
+      matches_draw: Number(result.rows[0].matches_draw) || 0,
+      total_runs: Number(result.rows[0].total_runs) || 0,
+      total_wickets: Number(result.rows[0].total_wickets) || 0,
+    };
+  }
+}
     // Combine results
     let stats = {
       matches_played: 0,
