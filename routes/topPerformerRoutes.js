@@ -75,43 +75,38 @@
 
       // ============= HARD CODED TEST MATCH FALLBACK ============
       // If no result for Test (even after all filters), do a minimal fallback query for Test only
-      if ((!result.rows.length) && matchType === 'Test') {
-        // Only filter by user and Test match_type (ignore team_name, ignore period)
-    const sqlTest = `
-    SELECT
+     // ============= UPDATED TEST MATCH FALLBACK ============
+if ((!result.rows.length) && matchType === 'Test') {
+  const sqlTest = `
+    SELECT 
       p.player_name,
-      rp.match_type,
-      rp.team_name,
-      SUM(rp.run_scored) AS total_runs,
-      COUNT(*) AS innings,
-      SUM(CASE WHEN COALESCE(rp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END) AS outs,
-      CASE
-        WHEN SUM(CASE WHEN COALESCE(rp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END) > 0
-          THEN ROUND(SUM(rp.run_scored)::numeric / SUM(CASE WHEN COALESCE(rp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END), 2)
-        ELSE NULL
-      END AS batting_avg,
-      SUM(rp.wickets_taken) AS total_wickets,
-      SUM(rp.runs_given) AS total_runs_given,
-      CASE
-        WHEN SUM(rp.wickets_taken) > 0
-          THEN ROUND(SUM(rp.runs_given)::numeric / SUM(rp.wickets_taken), 2)
-        ELSE NULL
-      END AS bowling_avg,
-      CASE
-        WHEN SUM(rp.balls_faced) > 0
-          THEN ROUND(SUM(rp.run_scored)::numeric * 100 / SUM(rp.balls_faced), 2)
-        ELSE NULL
-      END AS strike_rate
-    FROM player_performance rp
-    JOIN players p ON rp.player_id = p.id
-    WHERE p.user_id = $1 AND rp.match_type = 'Test'
-    GROUP BY p.player_name, rp.match_type, rp.team_name
-    ORDER BY total_runs DESC
+      agg.match_type,
+      SUM(agg.total_runs) AS total_runs,
+      SUM(agg.total_wickets) AS total_wickets,
+      SUM(agg.total_fifties) AS total_fifties,
+      SUM(agg.total_hundreds) AS total_hundreds
+    FROM players p
+    JOIN (
+        SELECT 
+            player_id,
+            match_type,
+            SUM(run_scored) AS total_runs,
+            SUM(wickets_taken) AS total_wickets,
+            SUM(fifties) AS total_fifties,
+            SUM(hundreds) AS total_hundreds
+        FROM player_performance
+        WHERE match_type = 'Test'
+        GROUP BY player_id, match_type
+    ) agg ON agg.player_id = p.id
+    WHERE p.user_id = $1
+    GROUP BY p.player_name, agg.match_type
+    ORDER BY SUM(agg.total_runs) DESC
     LIMIT 1
   `;
-        result = await pool.query(sqlTest, [userId]);
-      }
-      // =========== END TEST FALLBACK ============
+  result = await pool.query(sqlTest, [userId]);
+}
+// =========== END TEST FALLBACK ============
+ // =========== END TEST FALLBACK ============
 
       if (!result.rows.length) return res.json({ performer: null });
 
