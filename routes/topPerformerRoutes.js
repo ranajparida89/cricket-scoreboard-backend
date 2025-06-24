@@ -65,6 +65,7 @@
       END AS strike_rate
     FROM player_performance rp
     JOIN players p ON rp.player_id = p.id
+     WHERE ${whereClauses.join(' AND ')} 
     GROUP BY p.player_name, rp.match_type, rp.team_name    -- ADD team_name to group by!
     ORDER BY total_runs DESC
     LIMIT 1
@@ -72,7 +73,7 @@
 
       let result = await pool.query(sql, params);
 
-      // ============= HARD CODED TEST MATCH FALLBACK ============ WHERE ${whereClauses.join(' AND ')}
+      // ============= HARD CODED TEST MATCH FALLBACK ============ 
       // If no result for Test (even after all filters), do a minimal fallback query for Test only
      // ============= UPDATED TEST MATCH FALLBACK ============
 if ((!result.rows.length) && matchType === 'Test') {
