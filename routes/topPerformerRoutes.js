@@ -79,29 +79,36 @@
 if ((!result.rows.length) && matchType === 'Test') {
   const sqlTest = `
     SELECT 
-      p.player_name,
-      agg.match_type,
-      SUM(agg.total_runs) AS total_runs,
-      SUM(agg.total_wickets) AS total_wickets,
-      SUM(agg.total_fifties) AS total_fifties,
-      SUM(agg.total_hundreds) AS total_hundreds
-    FROM players p
-    JOIN (
-        SELECT 
-            player_id,
-            match_type,
-            SUM(run_scored) AS total_runs,
-            SUM(wickets_taken) AS total_wickets,
-            SUM(fifties) AS total_fifties,
-            SUM(hundreds) AS total_hundreds
-        FROM player_performance
-        WHERE match_type = 'Test'
-        GROUP BY player_id, match_type
-    ) agg ON agg.player_id = p.id
-    WHERE p.user_id = $1
-    GROUP BY p.player_name, agg.match_type
-    ORDER BY SUM(agg.total_runs) DESC
-    LIMIT 1
+  p.player_name,
+  'Test' AS match_type,
+  SUM(pp.run_scored) AS total_runs,
+  COUNT(*) AS innings,
+  SUM(CASE WHEN COALESCE(pp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END) AS outs,
+  CASE 
+    WHEN SUM(CASE WHEN COALESCE(pp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END) > 0
+      THEN ROUND(SUM(pp.run_scored)::numeric / SUM(CASE WHEN COALESCE(pp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END), 2)
+    ELSE NULL
+  END AS batting_avg,
+  SUM(pp.wickets_taken) AS total_wickets,
+  SUM(pp.runs_given) AS total_runs_given,
+  CASE 
+    WHEN SUM(pp.wickets_taken) > 0 
+      THEN ROUND(SUM(pp.runs_given)::numeric / SUM(pp.wickets_taken), 2)
+    ELSE NULL
+  END AS bowling_avg,
+  SUM(pp.balls_faced) AS total_balls_faced,
+  CASE
+    WHEN SUM(pp.balls_faced) > 0
+      THEN ROUND(SUM(pp.run_scored)::numeric * 100 / SUM(pp.balls_faced), 2)
+    ELSE NULL
+  END AS strike_rate
+FROM player_performance pp
+JOIN players p ON pp.player_id = p.id
+WHERE pp.match_type = 'Test'
+  AND p.user_id = $1
+GROUP BY p.player_name
+ORDER BY SUM(pp.run_scored) DESC
+LIMIT 1
   `;
   result = await pool.query(sqlTest, [userId]);
 }
