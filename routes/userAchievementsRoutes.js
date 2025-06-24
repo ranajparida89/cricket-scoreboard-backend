@@ -60,21 +60,55 @@ router.get('/', async (req, res) => {
     const highestWicketTaker = wicketsRows[0] || null;
 
     // 4. Team with most wins (use ILIKE for substring matching)
-    const teamWinFilter = matchType !== 'All' ? `AND m.match_type = $2` : '';
-    const winParams = matchType !== 'All' ? [userId, matchType] : [userId];
-    const teamWinQuery = `
-      SELECT t.id AS team_id, t.name AS team_name, COUNT(*) AS wins
-      FROM match_history m
-      JOIN teams t ON (m.team1 = t.name OR m.team2 = t.name)
-      WHERE t.user_id = $1
-        AND m.winner ILIKE '%' || t.name || '%'
-        ${teamWinFilter}
-      GROUP BY t.id, t.name
-      ORDER BY wins DESC
-      LIMIT 1
-    `;
-    const { rows: winRows } = await pool.query(teamWinQuery, winParams);
-    const teamMostWins = winRows[0] || null;
+   let teamMostWins = null;
+if (matchType === 'Test') {
+  // For Test, look at test_match_results, count wins by team for this user
+  const testMostWinsQuery = `
+    SELECT
+      team_name,
+      COUNT(*) AS wins
+    FROM (
+      -- Team1 as winner
+      SELECT team1 AS team_name
+      FROM test_match_results
+      WHERE user_id = $1 AND LOWER(TRIM(winner)) = LOWER(TRIM(team1))
+      UNION ALL
+      -- Team2 as winner
+      SELECT team2 AS team_name
+      FROM test_match_results
+      WHERE user_id = $1 AND LOWER(TRIM(winner)) = LOWER(TRIM(team2))
+    ) AS all_wins
+    GROUP BY team_name
+    ORDER BY wins DESC
+    LIMIT 1
+  `;
+  const { rows: testWinRows } = await pool.query(testMostWinsQuery, [userId]);
+  if (testWinRows.length > 0) {
+    teamMostWins = {
+      team_id: null, // test_match_results doesn't have a team id column; adjust as needed
+      team_name: testWinRows[0].team_name,
+      wins: Number(testWinRows[0].wins)
+    };
+  }
+} else {
+  // ODI, T20, or All: original logic from match_history
+  const teamWinFilter = matchType !== 'All' ? `AND m.match_type = $2` : '';
+  const winParams = matchType !== 'All' ? [userId, matchType] : [userId];
+  const teamWinQuery = `
+    SELECT t.id AS team_id, t.name AS team_name, COUNT(*) AS wins
+    FROM match_history m
+    JOIN teams t ON (m.team1 = t.name OR m.team2 = t.name)
+    WHERE t.user_id = $1
+      AND m.winner ILIKE '%' || t.name || '%'
+      ${teamWinFilter}
+    GROUP BY t.id, t.name
+    ORDER BY wins DESC
+    LIMIT 1
+  `;
+  const { rows: winRows } = await pool.query(teamWinQuery, winParams);
+  teamMostWins = winRows[0] || null;
+}
+
 
     // 5. Player Ratings (Top 5, all 3 ratings per player)
     // Query all ratings at once for this user and match type
