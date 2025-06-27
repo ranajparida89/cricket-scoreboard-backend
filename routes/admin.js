@@ -1,7 +1,7 @@
 // routes/admin.js
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcryptjs'); // added and installed..
 const pool = require('../db'); // your Postgres connection
 
 /**
