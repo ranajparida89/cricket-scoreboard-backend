@@ -1,67 +1,64 @@
 // routes/admin.js
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
-const pool = require('../db');
+const bcrypt = require('bcryptjs'); // bcryptjs, not bcrypt
+const pool = require('../db'); // Postgres connection
 
-// Add a debug log when file loads
+// --- Debug logging for every load
 console.log("[ADMIN] admin.js loaded and route file imported.");
 
-// Simple GET to verify route is mounted
+// Test endpoint to verify router is active
 router.get('/test', (req, res) => {
-  console.log("[ADMIN] GET /api/admin/test called");
-  res.json({ ok: true, msg: "Admin test endpoint hit" });
+  console.log("[ADMIN] /test endpoint hit!");
+  res.json({ status: "ok" });
 });
 
 /**
  * POST /api/admin/login
+ * Allows admin login with username OR email
  */
 router.post('/login', async (req, res) => {
-  console.log("[ADMIN] POST /api/admin/login called"); // Debug log on handler call
+  console.log("[ADMIN][POST] /api/admin/login called. Body:", req.body);
 
   const { username, password } = req.body;
-  // More logging
-  console.log("[ADMIN] Received payload:", { username, password: password ? '****' : undefined });
-
-  // Basic validation
+  // 1. Basic validation
   if (!username || !password) {
-    console.log("[ADMIN] Missing username or password.");
+    console.log("[ADMIN][POST] Missing username or password");
     return res.status(400).json({ error: "Username/email and password are required." });
   }
 
   try {
-    // Query for admin user
+    // 2. Find admin by username or email (case-insensitive)
     const result = await pool.query(
       `SELECT * FROM admins WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1) LIMIT 1`,
       [username]
     );
     const admin = result.rows[0];
     if (!admin) {
-      console.log("[ADMIN] Admin not found for username:", username);
+      console.log("[ADMIN][POST] Invalid username/email.");
       return res.status(401).json({ error: "Invalid username/email or password." });
     }
 
-    // Password check
+    // 3. Check password using bcryptjs
     const isMatch = await bcrypt.compare(password, admin.password_hash);
     if (!isMatch) {
-      console.log("[ADMIN] Invalid password for user:", username);
+      console.log("[ADMIN][POST] Password did not match for", username);
       return res.status(401).json({ error: "Invalid username/email or password." });
     }
 
-    // (Optional) Log login
+    // 4. Log successful login
     try {
       await pool.query(
         `INSERT INTO admin_audit_log (admin_id, action, action_detail, ip_address, user_agent)
          VALUES ($1, 'login', 'Successful admin login', $2, $3)`,
         [admin.id, req.ip, req.get('user-agent')]
       );
-      console.log("[ADMIN] Login audit log recorded for user:", username);
+      console.log("[ADMIN][POST] Login audit log inserted.");
     } catch (e) {
-      console.warn("[ADMIN] Admin audit log failed:", e);
+      console.warn('[ADMIN][POST] Admin audit log failed:', e);
     }
 
-    // Success
-    console.log("[ADMIN] Login success for user:", username);
+    // 5. Respond success
     res.json({
       isAdmin: true,
       admin: {
@@ -70,12 +67,14 @@ router.post('/login', async (req, res) => {
         full_name: admin.full_name,
         email: admin.email,
         is_super_admin: admin.is_super_admin,
-      },
+      }
     });
+    console.log("[ADMIN][POST] Login successful for", username);
   } catch (err) {
-    console.error("[ADMIN] Admin login error:", err);
+    console.error("[ADMIN][POST] Admin login error:", err);
     res.status(500).json({ error: "Server error during admin login." });
   }
 });
 
+console.log("[ADMIN] admin.js routes loaded.");
 module.exports = router;
