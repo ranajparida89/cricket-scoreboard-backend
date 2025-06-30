@@ -24,7 +24,9 @@ router.post('/login', async (req, res) => {
   // 1. Basic validation
   if (!username || !password) {
     console.log("[ADMIN][POST] Missing username or password");
-    return res.status(400).json({ error: "Username/email and password are required." });
+    console.log("[ADMIN][POST] /api/admin/login called. Body:", req.body);
+    res.json({ test: true });
+    return res.status(400).json({ error: "Username/email and password are required." });    
   }
 
   try {
