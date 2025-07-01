@@ -27,6 +27,63 @@ router.get('/list', async (req, res) => {
   }
 });
 
+// --- POST /api/admin/create --- 
+// Creates a new admin. Only super_admins should be allowed (for now, no auth middleware).
+// 01-JUNE-2025 RANAJ PARIDA
+router.post('/create', async (req, res) => {
+  console.log("[ADMIN][POST] /api/admin/create called. Body:", req.body);
+
+  const { username, email, password, full_name, is_super_admin } = req.body;
+
+  // 1. Basic input validation
+  if (
+    !username || !email || !password || !full_name ||
+    typeof username !== "string" || typeof email !== "string" ||
+    typeof password !== "string" || typeof full_name !== "string" ||
+    username.trim() === "" || email.trim() === "" ||
+    password.trim() === "" || full_name.trim() === ""
+  ) {
+    console.log("[ADMIN][POST] Missing or invalid fields for create admin");
+    return res.status(400).json({ error: "All fields are required (username, email, password, full_name)" });
+  }
+
+  // 2. Check if admin with same username/email exists
+  try {
+    const exists = await pool.query(
+      `SELECT id FROM admins WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2) LIMIT 1`,
+      [username.trim(), email.trim()]
+    );
+    if (exists.rows.length > 0) {
+      return res.status(409).json({ error: "Admin with same username or email already exists" });
+    }
+
+    // 3. Create the admin (plain password for now, see phase 2C for hashing)
+    const result = await pool.query(
+      `INSERT INTO admins (username, email, password_hash, full_name, is_super_admin, status)
+       VALUES ($1, $2, $3, $4, $5, 'active')
+       RETURNING id, username, email, full_name, is_super_admin, created_at`,
+      [
+        username.trim(),
+        email.trim(),
+        password.trim(),
+        full_name.trim(),
+        !!is_super_admin // force boolean
+      ]
+    );
+
+    console.log("[ADMIN][POST] Admin created:", result.rows[0]);
+
+    res.json({
+      success: true,
+      admin: result.rows[0]
+    });
+  } catch (err) {
+    console.error("[ADMIN][POST] Admin create error:", err);
+    res.status(500).json({ error: "Server error during admin creation." });
+  }
+});
+
+
 /**
  * POST /api/admin/login
  * Allows admin login with username OR email
