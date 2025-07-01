@@ -12,6 +12,21 @@ router.get('/test', (req, res) => {
   res.json({ status: "ok" });
 });
 
+// --- GET /api/admin/list ---
+// Returns all admins (safe fields only) 01-JUNE-2025 RANAJ PARIDA
+router.get('/list', async (req, res) => {
+  try {
+    // TODO: Add authentication middleware (for now, allow all for dev)
+    const result = await pool.query(
+      `SELECT id, username, email, full_name, is_super_admin, created_at FROM admins ORDER BY id`
+    );
+    res.json({ admins: result.rows });
+  } catch (err) {
+    console.error("[ADMIN][GET] /api/admin/list error:", err);
+    res.status(500).json({ error: "Failed to fetch admins." });
+  }
+});
+
 /**
  * POST /api/admin/login
  * Allows admin login with username OR email
