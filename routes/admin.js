@@ -83,6 +83,56 @@ router.post('/create', async (req, res) => {
   }
 });
 
+/**
+ * DELETE /api/admin/delete/:id
+ * Deletes an admin by ID (Only super_admins, skip middleware for now)
+ * 01-JULY-2025 RANAJ PARIDA
+ */
+router.delete('/delete/:id', async (req, res) => {
+  const adminId = parseInt(req.params.id, 10);
+
+  // Basic validation
+  if (isNaN(adminId) || adminId <= 0) {
+    return res.status(400).json({ error: "Invalid admin ID." });
+  }
+
+  try {
+    // 1. Check if admin exists
+    const result = await pool.query(
+      'SELECT * FROM admins WHERE id = $1',
+      [adminId]
+    );
+    const admin = result.rows[0];
+
+    if (!admin) {
+      return res.status(404).json({ error: "Admin not found." });
+    }
+
+    // 2. Prevent deleting last super admin
+    if (admin.is_super_admin) {
+      const superAdminCountResult = await pool.query(
+        'SELECT COUNT(*) FROM admins WHERE is_super_admin = true'
+      );
+      if (parseInt(superAdminCountResult.rows[0].count, 10) === 1) {
+        return res.status(400).json({ error: "Cannot delete the last super admin." });
+      }
+    }
+
+    // 3. Prevent self-delete (for now, pass user id via body)
+    // In production, get the current admin's id from session/JWT
+    if (req.body.current_admin_id && parseInt(req.body.current_admin_id, 10) === adminId) {
+      return res.status(400).json({ error: "You cannot delete yourself." });
+    }
+
+    // 4. Actually delete the admin
+    await pool.query('DELETE FROM admins WHERE id = $1', [adminId]);
+    res.json({ success: true, deleted_admin_id: adminId });
+  } catch (err) {
+    console.error("[ADMIN][DELETE] Error deleting admin:", err);
+    res.status(500).json({ error: "Server error during admin delete." });
+  }
+});
+
 
 /**
  * POST /api/admin/login
