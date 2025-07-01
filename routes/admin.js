@@ -133,6 +133,71 @@ router.delete('/delete/:id', async (req, res) => {
   }
 });
 
+// --- PUT /api/admin/update/:id ---
+// Updates an admin. Only super_admins should be allowed (for now, no auth middleware).
+// 01-JUNE-2025 RANAJ PARIDA
+
+router.put('/update/:id', async (req, res) => {
+  console.log("[ADMIN][PUT] /api/admin/update called. Body:", req.body, "Params:", req.params);
+
+  const adminId = parseInt(req.params.id, 10);
+  const { username, email, password, full_name, is_super_admin } = req.body;
+
+  // 1. Input validation
+  if (
+    !username || !email || !password || !full_name ||
+    typeof username !== "string" || typeof email !== "string" ||
+    typeof password !== "string" || typeof full_name !== "string" ||
+    username.trim() === "" || email.trim() === "" || password.trim() === "" || full_name.trim() === ""
+  ) {
+    console.log("[ADMIN][PUT] Missing or invalid fields for update admin");
+    return res.status(400).json({ error: "All fields are required (username, email, password, full_name)" });
+  }
+  if (isNaN(adminId) || adminId <= 0) {
+    return res.status(400).json({ error: "Invalid admin ID" });
+  }
+
+  try {
+    // 2. Check for duplicate username/email (except this admin)
+    const exists = await pool.query(
+      `SELECT id FROM admins WHERE (LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2)) AND id <> $3`,
+      [username.trim(), email.trim(), adminId]
+    );
+    if (exists.rows.length > 0) {
+      return res.status(409).json({ error: "Username or email already in use by another admin." });
+    }
+
+    // 3. Update the admin
+    const result = await pool.query(
+      `UPDATE admins SET
+        username = $1,
+        email = $2,
+        password_hash = $3,      -- still called password_hash, but plain text
+        full_name = $4,
+        is_super_admin = $5
+      WHERE id = $6
+      RETURNING id, username, email, full_name, is_super_admin, created_at`,
+      [
+        username.trim(),
+        email.trim(),
+        password.trim(),      // PLAIN TEXT password for now
+        full_name.trim(),
+        !!is_super_admin,     // force boolean
+        adminId
+      ]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Admin not found." });
+    }
+    console.log("[ADMIN][PUT] Admin updated:", result.rows[0]);
+
+    res.json({ success: true, admin: result.rows[0] });
+  } catch (err) {
+    console.error("[ADMIN][PUT] Admin update error:", err);
+    res.status(500).json({ error: "Server error during admin update." });
+  }
+});
+
 
 /**
  * POST /api/admin/login
