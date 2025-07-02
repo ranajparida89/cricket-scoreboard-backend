@@ -7,7 +7,7 @@ const pool = require('../db'); // Postgres connection
 
 // JWT requirements
 const jwt = require('jsonwebtoken');
-const { requireAdminAuth } = require('../middleware/auth');
+const { requireAdminAuth } = require('./auth');
 
 // --- Debug logging for every load
 console.log("[ADMIN] admin.js loaded and route file imported.");
