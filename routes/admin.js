@@ -1,12 +1,21 @@
 // routes/admin.js
+// 05-JULY-2025 RANAJ PARIDA -- JWT authentication added
+
 const express = require('express');
 const router = express.Router();
 const pool = require('../db'); // Postgres connection
 
+// JWT requirements
+const jwt = require('jsonwebtoken');
+const { requireAdminAuth } = require('../middleware/auth');
+
 // --- Debug logging for every load
 console.log("[ADMIN] admin.js loaded and route file imported.");
 
-// Test endpoint to verify router is active
+// --- JWT secret (store in env for production!)
+const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_jwt_key_here';
+
+// Test endpoint (no auth)
 router.get('/test', (req, res) => {
   console.log("[ADMIN] /test endpoint hit!");
   res.json({ status: "ok" });
@@ -14,9 +23,8 @@ router.get('/test', (req, res) => {
 
 // --- GET /api/admin/list ---
 // Returns all admins (safe fields only) 01-JUNE-2025 RANAJ PARIDA
-router.get('/list', async (req, res) => {
+router.get('/list', requireAdminAuth, async (req, res) => {
   try {
-    // TODO: Add authentication middleware (for now, allow all for dev)
     const result = await pool.query(
       `SELECT id, username, email, full_name, is_super_admin, created_at FROM admins ORDER BY id`
     );
@@ -28,14 +36,14 @@ router.get('/list', async (req, res) => {
 });
 
 // --- POST /api/admin/create --- 
-// Creates a new admin. Only super_admins should be allowed (for now, no auth middleware).
-// 01-JUNE-2025 RANAJ PARIDA
-router.post('/create', async (req, res) => {
-  console.log("[ADMIN][POST] /api/admin/create called. Body:", req.body);
+// Creates a new admin. Only super_admins allowed (checked in middleware)
+router.post('/create', requireAdminAuth, async (req, res) => {
+  // Only allow super admins
+  if (!req.admin || !req.admin.is_super_admin) {
+    return res.status(403).json({ error: "Only super admins can add new admins." });
+  }
 
   const { username, email, password, full_name, is_super_admin } = req.body;
-
-  // 1. Basic input validation
   if (
     !username || !email || !password || !full_name ||
     typeof username !== "string" || typeof email !== "string" ||
@@ -43,11 +51,9 @@ router.post('/create', async (req, res) => {
     username.trim() === "" || email.trim() === "" ||
     password.trim() === "" || full_name.trim() === ""
   ) {
-    console.log("[ADMIN][POST] Missing or invalid fields for create admin");
     return res.status(400).json({ error: "All fields are required (username, email, password, full_name)" });
   }
 
-  // 2. Check if admin with same username/email exists
   try {
     const exists = await pool.query(
       `SELECT id FROM admins WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2) LIMIT 1`,
@@ -57,7 +63,6 @@ router.post('/create', async (req, res) => {
       return res.status(409).json({ error: "Admin with same username or email already exists" });
     }
 
-    // 3. Create the admin (plain password for now, see phase 2C for hashing)
     const result = await pool.query(
       `INSERT INTO admins (username, email, password_hash, full_name, is_super_admin, status)
        VALUES ($1, $2, $3, $4, $5, 'active')
@@ -67,48 +72,40 @@ router.post('/create', async (req, res) => {
         email.trim(),
         password.trim(),
         full_name.trim(),
-        !!is_super_admin // force boolean
+        !!is_super_admin
       ]
     );
-
-    console.log("[ADMIN][POST] Admin created:", result.rows[0]);
 
     res.json({
       success: true,
       admin: result.rows[0]
     });
   } catch (err) {
-    console.error("[ADMIN][POST] Admin create error:", err);
     res.status(500).json({ error: "Server error during admin creation." });
   }
 });
 
-/**
- * DELETE /api/admin/delete/:id
- * Deletes an admin by ID (Only super_admins, skip middleware for now)
- * 01-JULY-2025 RANAJ PARIDA
- */
-router.delete('/delete/:id', async (req, res) => {
+// --- DELETE /api/admin/delete/:id ---
+// Only super_admins allowed
+router.delete('/delete/:id', requireAdminAuth, async (req, res) => {
+  if (!req.admin || !req.admin.is_super_admin) {
+    return res.status(403).json({ error: "Only super admins can delete admins." });
+  }
   const adminId = parseInt(req.params.id, 10);
-
-  // Basic validation
   if (isNaN(adminId) || adminId <= 0) {
     return res.status(400).json({ error: "Invalid admin ID." });
   }
 
   try {
-    // 1. Check if admin exists
     const result = await pool.query(
       'SELECT * FROM admins WHERE id = $1',
       [adminId]
     );
     const admin = result.rows[0];
-
     if (!admin) {
       return res.status(404).json({ error: "Admin not found." });
     }
-
-    // 2. Prevent deleting last super admin
+    // Prevent deleting last super admin
     if (admin.is_super_admin) {
       const superAdminCountResult = await pool.query(
         'SELECT COUNT(*) FROM admins WHERE is_super_admin = true'
@@ -117,40 +114,32 @@ router.delete('/delete/:id', async (req, res) => {
         return res.status(400).json({ error: "Cannot delete the last super admin." });
       }
     }
-
-    // 3. Prevent self-delete (for now, pass user id via body)
-    // In production, get the current admin's id from session/JWT
-    if (req.body.current_admin_id && parseInt(req.body.current_admin_id, 10) === adminId) {
+    // Prevent self-delete
+    if (req.admin && req.admin.id === adminId) {
       return res.status(400).json({ error: "You cannot delete yourself." });
     }
 
-    // 4. Actually delete the admin
     await pool.query('DELETE FROM admins WHERE id = $1', [adminId]);
     res.json({ success: true, deleted_admin_id: adminId });
   } catch (err) {
-    console.error("[ADMIN][DELETE] Error deleting admin:", err);
     res.status(500).json({ error: "Server error during admin delete." });
   }
 });
 
 // --- PUT /api/admin/update/:id ---
-// Updates an admin. Only super_admins should be allowed (for now, no auth middleware).
-// 01-JUNE-2025 RANAJ PARIDA
-
-router.put('/update/:id', async (req, res) => {
-  console.log("[ADMIN][PUT] /api/admin/update called. Body:", req.body, "Params:", req.params);
-
+// Only super_admins allowed
+router.put('/update/:id', requireAdminAuth, async (req, res) => {
+  if (!req.admin || !req.admin.is_super_admin) {
+    return res.status(403).json({ error: "Only super admins can update admins." });
+  }
   const adminId = parseInt(req.params.id, 10);
   const { username, email, password, full_name, is_super_admin } = req.body;
-
-  // 1. Input validation
   if (
     !username || !email || !password || !full_name ||
     typeof username !== "string" || typeof email !== "string" ||
     typeof password !== "string" || typeof full_name !== "string" ||
     username.trim() === "" || email.trim() === "" || password.trim() === "" || full_name.trim() === ""
   ) {
-    console.log("[ADMIN][PUT] Missing or invalid fields for update admin");
     return res.status(400).json({ error: "All fields are required (username, email, password, full_name)" });
   }
   if (isNaN(adminId) || adminId <= 0) {
@@ -158,7 +147,6 @@ router.put('/update/:id', async (req, res) => {
   }
 
   try {
-    // 2. Check for duplicate username/email (except this admin)
     const exists = await pool.query(
       `SELECT id FROM admins WHERE (LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2)) AND id <> $3`,
       [username.trim(), email.trim(), adminId]
@@ -167,12 +155,11 @@ router.put('/update/:id', async (req, res) => {
       return res.status(409).json({ error: "Username or email already in use by another admin." });
     }
 
-    // 3. Update the admin
     const result = await pool.query(
       `UPDATE admins SET
         username = $1,
         email = $2,
-        password_hash = $3,      -- still called password_hash, but plain text
+        password_hash = $3,
         full_name = $4,
         is_super_admin = $5
       WHERE id = $6
@@ -180,33 +167,27 @@ router.put('/update/:id', async (req, res) => {
       [
         username.trim(),
         email.trim(),
-        password.trim(),      // PLAIN TEXT password for now
+        password.trim(),
         full_name.trim(),
-        !!is_super_admin,     // force boolean
+        !!is_super_admin,
         adminId
       ]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Admin not found." });
     }
-    console.log("[ADMIN][PUT] Admin updated:", result.rows[0]);
-
     res.json({ success: true, admin: result.rows[0] });
   } catch (err) {
-    console.error("[ADMIN][PUT] Admin update error:", err);
     res.status(500).json({ error: "Server error during admin update." });
   }
 });
 
-
 /**
  * POST /api/admin/login
  * Allows admin login with username OR email
- * Uses plain text password comparison (NO HASHING)
+ * Now issues JWT on successful login!
  */
 router.post('/login', async (req, res) => {
-  console.log("[ADMIN][POST] /api/admin/login called. Body:", req.body);
-
   const { username, password } = req.body;
 
   // 1. Basic input validation
@@ -218,7 +199,6 @@ router.post('/login', async (req, res) => {
     username.trim() === "" ||
     password.trim() === ""
   ) {
-    console.log("[ADMIN][POST] Missing or invalid username or password");
     return res.status(400).json({ error: "Username/email and password are required." });
   }
 
@@ -230,14 +210,11 @@ router.post('/login', async (req, res) => {
     );
     const admin = result.rows[0];
     if (!admin) {
-      console.log("[ADMIN][POST] Invalid username/email.");
       return res.status(401).json({ error: "Invalid username/email or password." });
     }
 
     // 3. Directly compare plain text password
     if (password !== admin.password_hash) {
-      // Note: Still called password_hash in DB for compatibility, but is plain text!
-      console.log("[ADMIN][POST] Password did not match for", username);
       return res.status(401).json({ error: "Invalid username/email or password." });
     }
 
@@ -248,14 +225,25 @@ router.post('/login', async (req, res) => {
          VALUES ($1, 'login', 'Successful admin login', $2, $3)`,
         [admin.id, req.ip, req.get('user-agent')]
       );
-      console.log("[ADMIN][POST] Login audit log inserted.");
     } catch (e) {
       console.warn('[ADMIN][POST] Admin audit log failed:', e);
     }
 
-    // 5. Respond success
+    // 5. Generate JWT and respond
+    const token = jwt.sign(
+      {
+        id: admin.id,
+        username: admin.username,
+        is_super_admin: admin.is_super_admin,
+        email: admin.email,
+      },
+      JWT_SECRET,
+      { expiresIn: "2h" }
+    );
+
     res.json({
       isAdmin: true,
+      token,
       admin: {
         id: admin.id,
         username: admin.username,
@@ -264,9 +252,7 @@ router.post('/login', async (req, res) => {
         is_super_admin: admin.is_super_admin,
       }
     });
-    console.log("[ADMIN][POST] Login successful for", username);
   } catch (err) {
-    console.error("[ADMIN][POST] Admin login error:", err);
     res.status(500).json({ error: "Server error during admin login." });
   }
 });
