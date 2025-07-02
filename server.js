@@ -101,6 +101,7 @@ app.use('/api/user-achievements', userAchievementsRoutes);
 app.use('/api/team-match-stats', teamMatchStatsRoutes);
 app.use('/api/admin', adminRoutes);              // ✅ With your other app.use() lines
 console.log("[ADMIN] adminRoutes mounted at /api/admin");
+app.use('/api/match', require('./routes/match')); // added for automated approval.
 
 
 
