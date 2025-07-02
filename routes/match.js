@@ -1,5 +1,5 @@
 // routes/match.js
-// 07-JULY-2025 RANAJ PARIDA -- Automated match approval system with advanced rule-based validation
+// 09-JULY-2025 RANAJ PARIDA -- Full file: Automated match approval + history push
 
 const express = require('express');
 const router = express.Router();
@@ -221,15 +221,78 @@ router.get('/pending', requireAdminAuth, async (req, res) => {
   res.json({ pending: result.rows });
 });
 
-// -- PATCH /api/match/approve/:id (admin only)
+/**
+ * PATCH /api/match/approve/:id
+ * On admin approval, copy match row into correct historical table before marking as approved
+ */
 router.patch('/approve/:id', requireAdminAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  const result = await pool.query(
-    `UPDATE matches SET status = 'approved', auto_flag_reason = NULL, updated_at = NOW() WHERE id = $1 RETURNING *`,
-    [id]
-  );
-  if (result.rows.length === 0) return res.status(404).json({ error: "Match not found." });
-  res.json({ status: "approved", match: result.rows[0] });
+
+  try {
+    // 1. Get pending match info
+    const result = await pool.query('SELECT * FROM matches WHERE id = $1', [id]);
+    if (!result.rows.length) return res.status(404).json({ error: "Match not found." });
+    const match = result.rows[0];
+
+    // Only allow pending matches to be approved
+    if (match.status !== 'pending') {
+      return res.status(400).json({ error: "Only pending matches can be approved." });
+    }
+
+    // 2. Insert into appropriate history table based on match_type
+    if (/^test$/i.test(match.match_type)) {
+      // --- Insert into test_match_results
+      await pool.query(`
+        INSERT INTO test_match_results
+        (match_type, team1, team2, winner, points, runs1, overs1, wickets1, runs2, overs2, wickets2, match_time, match_name, user_id, created_at)
+        VALUES
+        ($1, $2, $3, $4, 12, $5, NULL, $6, $7, NULL, $8, $9, $10, $11, NULL, NOW())
+      `, [
+        match.match_type,
+        match.team1,
+        match.team2,
+        match.result,
+        match.runs1,
+        match.wickets1,
+        match.runs2,
+        match.wickets2,
+        match.match_date,
+        match.match_name || null,
+        // user_id: null, created_at auto
+      ]);
+    } else {
+      // --- Insert into match_history (for ODI/T20)
+      await pool.query(`
+        INSERT INTO match_history
+        (match_name, match_type, team1, runs1, wickets1, team2, runs2, wickets2, winner, match_time, user_id, created_at)
+        VALUES
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, NOW())
+      `, [
+        match.match_name || null,
+        match.match_type,
+        match.team1,
+        match.runs1,
+        match.wickets1,
+        match.team2,
+        match.runs2,
+        match.wickets2,
+        match.result,
+        match.match_date
+        // user_id: null, created_at auto
+      ]);
+    }
+
+    // 3. Approve the match in matches table
+    const update = await pool.query(
+      `UPDATE matches SET status = 'approved', auto_flag_reason = NULL, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    res.json({ status: "approved", match: update.rows[0] });
+
+  } catch (err) {
+    console.error("[APPROVE MATCH] Error:", err);
+    res.status(500).json({ error: "Failed to approve match." });
+  }
 });
 
 // -- PATCH /api/match/deny/:id (admin only)
