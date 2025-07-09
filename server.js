@@ -39,6 +39,7 @@ const teamListRoutes = require('./routes/teamListRoutes');
 const userAchievementsRoutes = require('./routes/userAchievementsRoutes');
 const teamMatchStatsRoutes = require('./routes/teamMatchStats');
 const adminRoutes = require('./routes/admin');  // ✅ At the top with your other requires
+const galleryRoutes = require("./routes/gallery"); // for gallary
 
 const app = express();
 const server = http.createServer(app);
@@ -102,6 +103,8 @@ app.use('/api/team-match-stats', teamMatchStatsRoutes);
 app.use('/api/admin', adminRoutes);              // ✅ With your other app.use() lines
 console.log("[ADMIN] adminRoutes mounted at /api/admin");
 app.use('/api/match', require('./routes/match')); // added for automated approval.
+app.use('/uploads/gallery', express.static(path.join(__dirname, 'public/uploads/gallery'))); // for gallary
+app.use("/api/gallery", galleryRoutes); // for gallary
 
 
 
