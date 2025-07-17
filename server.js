@@ -200,33 +200,65 @@ app.post("/api/submit-result", async (req, res) => {
 
     // ✅ Insert team1 stats
     await pool.query(`
-      INSERT INTO teams (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id)
-      VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10)
-      ON CONFLICT (match_id, name) DO UPDATE SET
-        wins = EXCLUDED.wins,
-        losses = EXCLUDED.losses,
-        points = EXCLUDED.points,
-        total_runs = EXCLUDED.total_runs,
-        total_overs = EXCLUDED.total_overs,
-        total_runs_conceded = EXCLUDED.total_runs_conceded,
-        total_overs_bowled = EXCLUDED.total_overs_bowled,
-        user_id = EXCLUDED.user_id
-    `, [match_id, team1, points1 === 2 ? 1 : 0, points2 === 2 ? 1 : 0, points1, runs1, actualOvers1, runs2, actualOvers2, user_id]);
+  INSERT INTO teams (
+    match_id, name, matches_played, wins, losses, points,
+    total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id
+  ) VALUES (
+    $1, $2, 1, $3, $4, $5,
+    $6, $7, $8, $9, $10
+  )
+  ON CONFLICT (match_id, name) DO UPDATE SET
+    wins = EXCLUDED.wins,
+    losses = EXCLUDED.losses,
+    points = EXCLUDED.points,
+    total_runs = EXCLUDED.total_runs,
+    total_overs = EXCLUDED.total_overs,
+    total_runs_conceded = EXCLUDED.total_runs_conceded,
+    total_overs_bowled = EXCLUDED.total_overs_bowled,
+    user_id = EXCLUDED.user_id
+`, [
+  match_id,
+  team1,
+  points1 === 2 ? 1 : 0,
+  points2 === 2 ? 1 : 0,
+  points1,
+  runs1,                // ✅ team1's own runs
+  overs1DecimalRaw,     // ✅ team1's own overs faced (regardless of all out)
+  runs2,                // ✅ runs conceded
+  actualOvers2,         // ✅ actual overs bowled by team1 (based on opponent innings)
+  user_id
+]);
 
     // ✅ Insert team2 stats
     await pool.query(`
-      INSERT INTO teams (match_id, name, matches_played, wins, losses, points, total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id)
-      VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10)
-      ON CONFLICT (match_id, name) DO UPDATE SET
-        wins = EXCLUDED.wins,
-        losses = EXCLUDED.losses,
-        points = EXCLUDED.points,
-        total_runs = EXCLUDED.total_runs,
-        total_overs = EXCLUDED.total_overs,
-        total_runs_conceded = EXCLUDED.total_runs_conceded,
-        total_overs_bowled = EXCLUDED.total_overs_bowled,
-        user_id = EXCLUDED.user_id
-    `, [match_id, team2, points2 === 2 ? 1 : 0, points1 === 2 ? 1 : 0, points2, runs2, actualOvers2, runs1, actualOvers1, user_id]);
+  INSERT INTO teams (
+    match_id, name, matches_played, wins, losses, points,
+    total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id
+  ) VALUES (
+    $1, $2, 1, $3, $4, $5,
+    $6, $7, $8, $9, $10
+  )
+  ON CONFLICT (match_id, name) DO UPDATE SET
+    wins = EXCLUDED.wins,
+    losses = EXCLUDED.losses,
+    points = EXCLUDED.points,
+    total_runs = EXCLUDED.total_runs,
+    total_overs = EXCLUDED.total_overs,
+    total_runs_conceded = EXCLUDED.total_runs_conceded,
+    total_overs_bowled = EXCLUDED.total_overs_bowled,
+    user_id = EXCLUDED.user_id
+`, [
+  match_id,
+  team2,
+  points2 === 2 ? 1 : 0,
+  points1 === 2 ? 1 : 0,
+  points2,
+  runs2,                // ✅ team2's own runs
+  overs2DecimalRaw,     // ✅ team2's overs faced
+  runs1,                // ✅ runs conceded
+  actualOvers1,         // ✅ actual overs bowled by team2
+  user_id
+]);
 
     // ✅ [NRR FIX | 17-July-2025 | by Ranaj Parida] Recalculate correct NRR for each team
     for (const team of [team1, team2]) {
