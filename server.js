@@ -224,7 +224,7 @@ else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; point
   points2 === 2 ? 1 : 0,
   points1,
   runs1,                // ✅ team1's own runs
-  overs1DecimalRaw,     // ✅ team1's own overs faced (regardless of all out)
+  actualOvers1,     // ✅ team1's own overs faced (regardless of all out)
   runs2,                // ✅ runs conceded
   actualOvers2,         // ✅ actual overs bowled by team1 (based on opponent innings)
   user_id
@@ -255,7 +255,7 @@ else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; point
   points1 === 2 ? 1 : 0,
   points2,
   runs2,                // ✅ team2's own runs
-  overs2DecimalRaw,     // ✅ team2's overs faced
+  actualOvers2,     // ✅ team2's overs faced
   runs1,                // ✅ runs conceded
   actualOvers1,         // ✅ actual overs bowled by team2
   user_id
