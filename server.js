@@ -185,18 +185,19 @@ app.post("/api/submit-result", async (req, res) => {
     if (matchResult.rows.length === 0) return res.status(400).json({ error: "Invalid match_id" });
 
     const { match_name, match_type } = matchResult.rows[0];
-    const maxOvers = match_type === "T20" ? 20 : 50;
+const maxOvers = match_type === "T20" ? 20 : 50;
 
-    const overs1DecimalRaw = sanitizeOversInput(overs1);
-    const overs2DecimalRaw = sanitizeOversInput(overs2);
+const overs1DecimalRaw = sanitizeOversInput(overs1);
+const overs2DecimalRaw = sanitizeOversInput(overs2);
 
-    const actualOvers1 = (wickets1 === 10) ? maxOvers : overs1DecimalRaw;
-    const actualOvers2 = (wickets2 === 10) ? maxOvers : overs2DecimalRaw;
+// ✅ Use maxOvers if team is all out, otherwise actual overs used
+const actualOvers1 = (wickets1 === 10) ? maxOvers : overs1DecimalRaw;
+const actualOvers2 = (wickets2 === 10) ? maxOvers : overs2DecimalRaw;
 
-    let winner = "Match Draw";
-    let points1 = 1, points2 = 1;
-    if (runs1 > runs2) { winner = `${team1} won the match!`; points1 = 2; points2 = 0; }
-    else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; points2 = 2; }
+let winner = "Match Draw";
+let points1 = 1, points2 = 1;
+if (runs1 > runs2) { winner = `${team1} won the match!`; points1 = 2; points2 = 0; }
+else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; points2 = 2; }
 
     // ✅ Insert team1 stats
     await pool.query(`
