@@ -14,47 +14,52 @@ router.get('/top-performer', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'Missing or invalid user_id' });
 
     // === MAIN CHANGE: Use correct query for Test matches ===
-    if (matchType === 'Test') {
-      // For Test, ignore teamName (we want sum across all teams for the player)
-      const sql = `
-        SELECT 
-          p.player_name,
-          'Test' AS match_type,
-          SUM(pp.run_scored) AS total_runs,
-          COUNT(*) AS innings,
-          SUM(CASE WHEN COALESCE(pp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END) AS outs,
-          CASE 
-            WHEN SUM(CASE WHEN COALESCE(pp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END) > 0
-              THEN ROUND(SUM(pp.run_scored)::numeric / SUM(CASE WHEN COALESCE(pp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END), 2)
-            ELSE NULL
-          END AS batting_avg,
-          SUM(pp.wickets_taken) AS total_wickets,
-          SUM(pp.runs_given) AS total_runs_given,
-          CASE 
-            WHEN SUM(pp.wickets_taken) > 0 
-              THEN ROUND(SUM(pp.runs_given)::numeric / SUM(pp.wickets_taken), 2)
-            ELSE NULL
-          END AS bowling_avg,
-          SUM(pp.balls_faced) AS total_balls_faced,
-          CASE
-            WHEN SUM(pp.balls_faced) > 0
-              THEN ROUND(SUM(pp.run_scored)::numeric * 100 / SUM(pp.balls_faced), 2)
-            ELSE NULL
-          END AS strike_rate
-        FROM player_performance pp
-        JOIN players p ON pp.player_id = p.id
-        WHERE pp.match_type = 'Test'
-          AND p.user_id = $1
-        GROUP BY p.player_name
-        ORDER BY SUM(pp.run_scored) DESC
-        LIMIT 1
-      `;
-      const result = await pool.query(sql, [userId]);
-      if (!result.rows.length) return res.json({ performer: null });
-      const performer = result.rows[0];
-      performer.mvp_badge = period === 'month';
-      return res.json({ performer });
-    }
+ if (matchType === 'Test') {
+  // ✅ 21-July-2025: Added team_name filter for Test MVP like ODI
+  const sql = `
+    SELECT 
+      p.player_name,
+      'Test' AS match_type,
+      pp.team_name, -- ✅ Included in SELECT and GROUP BY
+      SUM(pp.run_scored) AS total_runs,
+      COUNT(*) AS innings,
+      SUM(CASE WHEN COALESCE(pp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END) AS outs,
+      CASE 
+        WHEN SUM(CASE WHEN COALESCE(pp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END) > 0
+          THEN ROUND(SUM(pp.run_scored)::numeric / SUM(CASE WHEN COALESCE(pp.dismissed, '') ILIKE '%out%' THEN 1 ELSE 0 END), 2)
+        ELSE NULL
+      END AS batting_avg,
+      SUM(pp.wickets_taken) AS total_wickets,
+      SUM(pp.runs_given) AS total_runs_given,
+      CASE 
+        WHEN SUM(pp.wickets_taken) > 0 
+          THEN ROUND(SUM(pp.runs_given)::numeric / SUM(pp.wickets_taken), 2)
+        ELSE NULL
+      END AS bowling_avg,
+      SUM(pp.balls_faced) AS total_balls_faced,
+      CASE
+        WHEN SUM(pp.balls_faced) > 0
+          THEN ROUND(SUM(pp.run_scored)::numeric * 100 / SUM(pp.balls_faced), 2)
+        ELSE NULL
+      END AS strike_rate
+    FROM player_performance pp
+    JOIN players p ON pp.player_id = p.id
+    WHERE pp.match_type = 'Test'
+      AND p.user_id = $1
+      ${teamName ? `AND LOWER(pp.team_name) = LOWER($2)` : ''} -- ✅ Conditional filter for team
+    GROUP BY p.player_name, pp.team_name -- ✅ Required since pp.team_name added to SELECT
+    ORDER BY SUM(pp.run_scored) DESC
+    LIMIT 1
+  `;
+
+  // ✅ Conditionally bind team name param if passed
+  const testParams = teamName ? [userId, teamName.trim()] : [userId];
+  const result = await pool.query(sql, testParams);
+  if (!result.rows.length) return res.json({ performer: null });
+  const performer = result.rows[0];
+  performer.mvp_badge = period === 'month';
+  return res.json({ performer });
+}
     // === END MAIN CHANGE ===
 
     // The rest is for ODI/T20/All - you can keep your existing logic
