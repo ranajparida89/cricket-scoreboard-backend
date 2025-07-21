@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
     const params = matchType !== 'All' ? [userId, matchType] : [userId];
 
     // 1. Highest Run Scorer
-   const runScorerQuery = `
+const runScorerQuery = `
   SELECT p.id AS player_id, p.player_name, SUM(pp.run_scored) AS total_runs
   FROM player_performance pp
   JOIN players p ON pp.player_id = p.id
