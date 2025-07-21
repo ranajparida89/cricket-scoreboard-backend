@@ -14,8 +14,7 @@ router.get('/', async (req, res) => {
     if (!userId) return res.status(400).json({ error: "user_id is required" });
 
     // Dynamic WHERE clause for match_type
-    // const matchTypeFilter = matchType !== 'All' ? `AND pp.match_type = $2` : '';
-    const matchTypeFilter = matchType !== 'All' ? `AND pp.match_type ILIKE $2` : '';
+    const matchTypeFilter = matchType !== 'All' ? `AND pp.match_type = $2` : '';
     const params = matchType !== 'All' ? [userId, matchType] : [userId];
 
     // 1. Highest Run Scorer
@@ -35,32 +34,30 @@ router.get('/', async (req, res) => {
     const highestRunScorer = runRows[0] || null;
 
     // 2. Highest Centuries
-  const centuriesQuery = `
-  SELECT p.id AS player_id, p.player_name, SUM(pp.hundreds) AS total_centuries
-  FROM player_performance pp
-  JOIN players p ON pp.player_id = p.id
-  WHERE p.user_id = $1
-    AND pp.match_id IS NOT NULL
-    ${matchTypeFilter}
-  GROUP BY p.id, p.player_name
-  ORDER BY total_centuries DESC
-  LIMIT 1
-`;
+    const centuriesQuery = `
+      SELECT p.id AS player_id, p.player_name, SUM(pp.hundreds) AS total_centuries
+      FROM player_performance pp
+      JOIN players p ON pp.player_id = p.id
+      WHERE p.user_id = $1
+      ${matchTypeFilter}
+      GROUP BY p.id, p.player_name
+      ORDER BY total_centuries DESC
+      LIMIT 1
+    `;
     const { rows: centuriesRows } = await pool.query(centuriesQuery, params);
     const highestCenturies = centuriesRows[0] || null;
 
     // 3. Highest Wickets
-   const wicketsQuery = `
-  SELECT p.id AS player_id, p.player_name, SUM(pp.wickets_taken) AS total_wickets
-  FROM player_performance pp
-  JOIN players p ON pp.player_id = p.id
-  WHERE p.user_id = $1
-    AND pp.match_id IS NOT NULL
-    ${matchTypeFilter}
-  GROUP BY p.id, p.player_name
-  ORDER BY total_wickets DESC
-  LIMIT 1
-`;
+    const wicketsQuery = `
+      SELECT p.id AS player_id, p.player_name, SUM(pp.wickets_taken) AS total_wickets
+      FROM player_performance pp
+      JOIN players p ON pp.player_id = p.id
+      WHERE p.user_id = $1
+      ${matchTypeFilter}
+      GROUP BY p.id, p.player_name
+      ORDER BY total_wickets DESC
+      LIMIT 1
+    `;
     const { rows: wicketsRows } = await pool.query(wicketsQuery, params);
     const highestWicketTaker = wicketsRows[0] || null;
 
