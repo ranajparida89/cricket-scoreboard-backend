@@ -14,7 +14,8 @@ router.get('/', async (req, res) => {
     if (!userId) return res.status(400).json({ error: "user_id is required" });
 
     // Dynamic WHERE clause for match_type
-    const matchTypeFilter = matchType !== 'All' ? `AND pp.match_type = $2` : '';
+    // const matchTypeFilter = matchType !== 'All' ? `AND pp.match_type = $2` : '';
+    const matchTypeFilter = matchType !== 'All' ? `AND pp.match_type ILIKE $2` : '';
     const params = matchType !== 'All' ? [userId, matchType] : [userId];
 
     // 1. Highest Run Scorer
