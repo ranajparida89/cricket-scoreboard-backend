@@ -18,16 +18,17 @@ router.get('/', async (req, res) => {
     const params = matchType !== 'All' ? [userId, matchType] : [userId];
 
     // 1. Highest Run Scorer
-    const runScorerQuery = `
-      SELECT p.id AS player_id, p.player_name, SUM(pp.run_scored) AS total_runs
-      FROM player_performance pp
-      JOIN players p ON pp.player_id = p.id
-      WHERE p.user_id = $1
-      ${matchTypeFilter}
-      GROUP BY p.id, p.player_name
-      ORDER BY total_runs DESC
-      LIMIT 1
-    `;
+   const runScorerQuery = `
+  SELECT p.id AS player_id, p.player_name, SUM(pp.run_scored) AS total_runs
+  FROM player_performance pp
+  JOIN players p ON pp.player_id = p.id
+  WHERE p.user_id = $1
+    AND pp.match_id IS NOT NULL
+    ${matchTypeFilter}
+  GROUP BY p.id, p.player_name
+  ORDER BY total_runs DESC
+  LIMIT 1
+`;
     const { rows: runRows } = await pool.query(runScorerQuery, params);
     const highestRunScorer = runRows[0] || null;
 
