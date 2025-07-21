@@ -23,7 +23,6 @@ const runScorerQuery = `
   FROM player_performance pp
   JOIN players p ON pp.player_id = p.id
   WHERE p.user_id = $1
-    AND pp.match_id IS NOT NULL
     ${matchTypeFilter}
   GROUP BY p.id, p.player_name
   ORDER BY total_runs DESC
