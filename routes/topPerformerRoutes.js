@@ -19,6 +19,7 @@ router.get('/top-performer', async (req, res) => {
   const sql = `
     SELECT 
       p.player_name,
+      p.profile_url, -- added to handle pic 21-07-2025 Ranaj Parida
       'Test' AS match_type,
       pp.team_name, -- ✅ Included in SELECT and GROUP BY
       SUM(pp.run_scored) AS total_runs,
@@ -92,6 +93,7 @@ router.get('/top-performer', async (req, res) => {
     const sql = `
       SELECT
         p.player_name,
+        p.profile_url, -- added to handle pic 21-07-2025 Ranaj Parida
         rp.match_type,
         rp.team_name,
         SUM(rp.run_scored) AS total_runs,
