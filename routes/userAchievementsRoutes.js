@@ -20,13 +20,14 @@ router.get('/', async (req, res) => {
     const filterParams = matchType !== 'All' ? [userId, matchType] : [userId];
 
     // 1. ✅ Highest Run Scorer (fixed for aggregation)
-    const runScorerQuery = `
-      SELECT p.id AS player_id, p.player_name, SUM(pp.run_scored) AS total_runs
+   const runScorerQuery = `
+      SELECT p.player_name, 
+	  SUM(pp.run_scored) AS total_runs
       FROM player_performance pp
       JOIN players p ON pp.player_id = p.id
       WHERE p.user_id = $1
         ${filterClause}
-      GROUP BY p.id, p.player_name
+      GROUP BY p.player_name
       ORDER BY total_runs DESC
       LIMIT 1
     `;
