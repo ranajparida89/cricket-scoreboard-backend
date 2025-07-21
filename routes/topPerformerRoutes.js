@@ -59,7 +59,8 @@ router.get('/top-performer', async (req, res) => {
 
     // The rest is for ODI/T20/All - you can keep your existing logic
     let params = [userId];
-    let whereClauses = ['p.user_id = $1', 'rp.match_id IS NOT NULL'];
+    // let whereClauses = ['p.user_id = $1', 'rp.match_id IS NOT NULL'];
+    let whereClauses = ['p.user_id = $1'];  // 21-July-2025 Ranaj Parida  
     let paramIdx = 2;
 
     // Team name filter (case-insensitive)
