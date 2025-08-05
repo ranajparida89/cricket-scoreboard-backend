@@ -41,11 +41,14 @@ const userAchievementsRoutes = require('./routes/userAchievementsRoutes');
 const teamMatchStatsRoutes = require('./routes/teamMatchStats');
 const adminRoutes = require('./routes/admin');  // ✅ At the top with your other requires
 const galleryRoutes = require("./routes/gallery"); // for gallary
+const schedulerRoutes = require("./routes/scheduler"); // ✅ Match Scheduler API
 
 
 const app = express();
 const server = http.createServer(app);
 startRatingScheduler();
+app.set("db", pool); // ✅ make pg pool available to scheduler router
+
 
 // ✅ Enable CORS for Vercel + Custom Domains (Updated by Ranaj Parida | 15-April-2025)
 const allowedOrigins = [
@@ -108,6 +111,8 @@ app.use('/api/match', require('./routes/match')); // added for automated approva
 
 app.use('/uploads/gallery', express.static(path.join(__dirname, 'uploads/gallery'))); // serve images
 app.use("/api/gallery", galleryRoutes);
+app.use("/api/scheduler", schedulerRoutes); // ✅ /api/scheduler/*
+
 
 
 
