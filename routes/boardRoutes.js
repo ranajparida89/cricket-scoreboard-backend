@@ -231,4 +231,35 @@ router.delete("/delete/:registration_id", async (req, res) => {
   }
 });
 
+// ✅ STEP 3: Get All Registered Boards with Teams
+router.get("/boards", async (req, res) => {
+  try {
+    const client = await pool.connect();
+
+    const result = await client.query(`
+      SELECT 
+        br.registration_id,
+        br.board_name,
+        br.owner_name,
+        TO_CHAR(br.registration_date, 'YYYY-MM-DD') AS registration_date,
+        br.owner_email,
+        ARRAY_AGG(bt.team_name) AS teams
+      FROM board_registration br
+      LEFT JOIN board_teams bt ON br.registration_id = bt.registration_id
+      GROUP BY br.registration_id, br.board_name, br.owner_name, br.registration_date, br.owner_email
+      ORDER BY br.registration_date DESC
+    `);
+
+    client.release();
+
+    res.status(200).json({
+      boards: result.rows
+    });
+  } catch (error) {
+    console.error("Error fetching boards:", error);
+    res.status(500).json({ error: "Error fetching boards." });
+  }
+});
+
+
 module.exports = router;
