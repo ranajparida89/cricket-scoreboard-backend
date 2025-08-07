@@ -231,8 +231,8 @@ router.delete("/delete/:registration_id", async (req, res) => {
   }
 });
 
-// ✅ STEP 3: Get All Registered Boards with Teams
-router.get("/boards", async (req, res) => {
+// ✅ RECOMMENDED: Use /all-boards to avoid conflict
+router.get("/all-boards", async (req, res) => {
   try {
     const client = await pool.connect();
 
@@ -260,6 +260,7 @@ router.get("/boards", async (req, res) => {
     res.status(500).json({ error: "Error fetching boards." });
   }
 });
+
 
 
 module.exports = router;
