@@ -42,6 +42,8 @@ const teamMatchStatsRoutes = require('./routes/teamMatchStats');
 const adminRoutes = require('./routes/admin');  // ✅ At the top with your other requires
 const galleryRoutes = require("./routes/gallery"); // for gallary
 const schedulerRoutes = require("./routes/scheduler"); // ✅ Match Scheduler API
+const boardRoutes = require('./routes/boardRoutes'); // ✅ Board Registration APIs
+
 
 
 const app = express();
@@ -112,6 +114,7 @@ app.use('/api/match', require('./routes/match')); // added for automated approva
 app.use('/uploads/gallery', express.static(path.join(__dirname, 'uploads/gallery'))); // serve images
 app.use("/api/gallery", galleryRoutes);
 app.use("/api/scheduler", schedulerRoutes); // ✅ /api/scheduler/*
+app.use("/api/boards", boardRoutes); // ✅ Mount Board Registration APIs
 
 
 
