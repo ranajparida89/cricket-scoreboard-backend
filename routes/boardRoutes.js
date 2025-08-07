@@ -1,5 +1,3 @@
-// C:\cricket-scoreboard-backend\routes/boardRoutes.js
-
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
@@ -8,6 +6,14 @@ const { v4: uuidv4 } = require("uuid");
 // 📌 Email validation helper
 const isValidEmail = (email) =>
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+// ✅ 🔐 Admin-only middleware
+const adminOnly = (req, res, next) => {
+  if (!req.admin || req.admin.role !== "admin") {  // changes to admin 08/08/2025
+    return res.status(403).json({ error: "Access denied. Admins only." });
+  }
+  next();
+};
 
 /**
  * ✅ API 1: Register a New Board
@@ -113,9 +119,9 @@ router.get("/all", async (req, res) => {
 });
 
 /**
- * ✅ API 3: Update Board Info
+ * ✅ API 3: Update Board Info (Admin Only)
  */
-router.put("/update/:registration_id", async (req, res) => {
+router.put("/update/:registration_id", adminOnly, async (req, res) => {
   try {
     const { registration_id } = req.params;
     const {
@@ -163,13 +169,11 @@ router.put("/update/:registration_id", async (req, res) => {
         registration_id,
       ]);
 
-      // Delete old teams
       await client.query(
         "DELETE FROM board_teams WHERE registration_id = $1",
         [registration_id]
       );
 
-      // Insert new teams
       const insertTeam = `
         INSERT INTO board_teams (registration_id, team_name)
         VALUES ($1, $2)
@@ -194,9 +198,9 @@ router.put("/update/:registration_id", async (req, res) => {
 });
 
 /**
- * ✅ API 4: Delete Board + Its Teams
+ * ✅ API 4: Delete Board + Its Teams (Admin Only)
  */
-router.delete("/delete/:registration_id", async (req, res) => {
+router.delete("/delete/:registration_id", adminOnly, async (req, res) => {
   try {
     const { registration_id } = req.params;
     const client = await pool.connect();
@@ -204,13 +208,11 @@ router.delete("/delete/:registration_id", async (req, res) => {
     try {
       await client.query("BEGIN");
 
-      // Delete teams first (FK dependency)
       await client.query(
         "DELETE FROM board_teams WHERE registration_id = $1",
         [registration_id]
       );
 
-      // Then delete the board
       await client.query(
         "DELETE FROM board_registration WHERE registration_id = $1",
         [registration_id]
@@ -231,7 +233,9 @@ router.delete("/delete/:registration_id", async (req, res) => {
   }
 });
 
-// ✅ RECOMMENDED: Use /all-boards to avoid conflict
+/**
+ * ✅ API 5: Get All Boards (Optimized)
+ */
 router.get("/all-boards", async (req, res) => {
   try {
     const client = await pool.connect();
@@ -260,7 +264,5 @@ router.get("/all-boards", async (req, res) => {
     res.status(500).json({ error: "Error fetching boards." });
   }
 });
-
-
 
 module.exports = router;
