@@ -46,6 +46,7 @@ const boardRoutes = require('./routes/boardRoutes'); // ✅ Board Registration A
 //const { attachAdminIfPresent } = require("./middleware/auth");
 // 🔁 moved to routes folder (Linux is case-sensitive, file must be exactly routes/auth.js)
 const { attachAdminIfPresent, requireAdminAuth } = require('./routes/auth');
+const boardAnalyticsRoutes = require("./routes/boardAnalyticsRoutes");
 
 
 
@@ -121,6 +122,7 @@ app.use("/api/gallery", galleryRoutes);
 app.use("/api/scheduler", schedulerRoutes); // ✅ /api/scheduler/*
 // app.use("/api/boards", boardRoutes); // ✅ Mount Board Registration APIs
 app.use("/api/boards", attachAdminIfPresent, boardRoutes);
+app.use("/api/boards/analytics", boardAnalyticsRoutes);
 
 
 
