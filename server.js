@@ -43,7 +43,10 @@ const adminRoutes = require('./routes/admin');  // ✅ At the top with your othe
 const galleryRoutes = require("./routes/gallery"); // for gallary
 const schedulerRoutes = require("./routes/scheduler"); // ✅ Match Scheduler API
 const boardRoutes = require('./routes/boardRoutes'); // ✅ Board Registration APIs
-const { attachAdminIfPresent } = require("./middleware/auth");
+//const { attachAdminIfPresent } = require("./middleware/auth");
+// 🔁 moved to routes folder (Linux is case-sensitive, file must be exactly routes/auth.js)
+const { attachAdminIfPresent, requireAdminAuth } = require('./routes/auth');
+
 
 
 
@@ -118,8 +121,6 @@ app.use("/api/gallery", galleryRoutes);
 app.use("/api/scheduler", schedulerRoutes); // ✅ /api/scheduler/*
 // app.use("/api/boards", boardRoutes); // ✅ Mount Board Registration APIs
 app.use("/api/boards", attachAdminIfPresent, boardRoutes);
-
-
 
 
 
