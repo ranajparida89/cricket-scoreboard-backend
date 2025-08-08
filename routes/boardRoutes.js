@@ -9,11 +9,24 @@ const { v4: uuidv4 } = require("uuid");
  * --------------------------------------------- */
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "");
 
-// ✅ CHANGE 1: accept admin via req.admin (admin JWT) OR req.user (normal login)
+// ✅ CHANGE #1: make admin check compatible with BOTH token shapes
+// - Accept admin if:
+//   • req.admin.role === "admin"   (some tokens)
+//   • req.admin.is_super_admin === true (your ManageAdmins flow)
+//   • req.admin.isAdmin === true   (legacy)
+//   • or same via req.user (if you ever attach a user session)
 const adminOnly = (req, res, next) => {
-  const viaAdminJwt = req.admin && req.admin.role === "admin";
-  const viaUserSession = req.user && req.user.role === "admin";
-  if (!viaAdminJwt && !viaUserSession) {
+  const tokenAdmin =
+    req.admin &&
+    (req.admin.role === "admin" ||
+      req.admin.is_super_admin === true ||
+      req.admin.isAdmin === true);
+
+  const sessionAdmin =
+    req.user &&
+    (req.user.role === "admin" || req.user.isAdmin === true);
+
+  if (!tokenAdmin && !sessionAdmin) {
     return res.status(403).json({ error: "Access denied. Admins only." });
   }
   next();
@@ -38,6 +51,7 @@ function sanitizeTeams(teams) {
 
 /** ---------------------------------------------
  * API 1: Register a New Board (OPEN to normal users)
+ *  - Keep requirement: initial registration REQUIRES at least 1 team
  * --------------------------------------------- */
 router.post("/register", async (req, res) => {
   try {
@@ -49,22 +63,19 @@ router.post("/register", async (req, res) => {
       teams,
     } = req.body;
 
-    // ✅ CHANGE 2: trim/normalize
+    // ✅ trim/normalize
     board_name = String(board_name || "").trim();
     owner_name = String(owner_name || "").trim();
     owner_email = String(owner_email || "").trim().toLowerCase();
     teams = sanitizeTeams(teams);
 
     if (!board_name || !owner_name || !registration_date || !owner_email) {
-      return res
-        .status(400)
-        .json({ error: "All fields are required." });
+      return res.status(400).json({ error: "All fields are required." });
     }
 
+    // ✅ Registration requires at least one team
     if (!Array.isArray(teams) || teams.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "At least one team is required." });
+      return res.status(400).json({ error: "At least one team is required." });
     }
 
     if (!isValidEmail(owner_email)) {
@@ -150,7 +161,10 @@ router.get("/all", async (req, res) => {
 
 /** ---------------------------------------------
  * API 3: Update Board Info (ADMIN ONLY)
- * Frontend should send the FULL board payload.
+ * Frontend sends FULL payload (we replace teams).
+ *
+ * ✅ CHANGE #2: allow teams to be EMPTY (user may release all teams).
+ * Previously blocked updates with 0 teams.
  * --------------------------------------------- */
 router.put("/update/:registration_id", adminOnly, async (req, res) => {
   try {
@@ -163,22 +177,19 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
       teams,
     } = req.body;
 
-    // ✅ CHANGE 2: trim/normalize
+    // trim/normalize
     board_name = String(board_name || "").trim();
     owner_name = String(owner_name || "").trim();
     owner_email = String(owner_email || "").trim().toLowerCase();
-    teams = sanitizeTeams(teams);
+    teams = sanitizeTeams(teams); // ✅ can be [] now
 
     if (!board_name || !owner_name || !registration_date || !owner_email) {
-      return res
-        .status(400)
-        .json({ error: "All fields are required." });
+      return res.status(400).json({ error: "All fields are required." });
     }
 
-    if (!Array.isArray(teams) || teams.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "At least one team is required." });
+    // ✅ CHANGE: allow empty array, but must be an array if provided
+    if (!Array.isArray(teams)) {
+      return res.status(400).json({ error: "Teams must be an array." });
     }
 
     if (!isValidEmail(owner_email)) {
@@ -210,18 +221,20 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
         registration_id,
       ]);
 
-      // replace teams
+      // replace teams (can be empty)
       await client.query(
         "DELETE FROM board_teams WHERE registration_id = $1",
         [registration_id]
       );
 
-      const insertTeam = `
-        INSERT INTO board_teams (registration_id, team_name)
-        VALUES ($1, $2)
-      `;
-      for (const team of teams) {
-        await client.query(insertTeam, [registration_id, team]);
+      if (teams.length > 0) {
+        const insertTeam = `
+          INSERT INTO board_teams (registration_id, team_name)
+          VALUES ($1, $2)
+        `;
+        for (const team of teams) {
+          await client.query(insertTeam, [registration_id, team]);
+        }
       }
 
       await client.query("COMMIT");
