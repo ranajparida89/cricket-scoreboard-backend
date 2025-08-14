@@ -48,7 +48,7 @@ const boardRoutes = require('./routes/boardRoutes'); // ✅ Board Registration A
 const { attachAdminIfPresent, requireAdminAuth } = require('./routes/auth');
 const boardAnalyticsRoutes = require("./routes/boardAnalyticsRoutes");
 
-
+const squadRoutes = require("./routes/squadRoutes");
 
 
 
@@ -123,7 +123,7 @@ app.use("/api/scheduler", schedulerRoutes); // ✅ /api/scheduler/*
 // app.use("/api/boards", boardRoutes); // ✅ Mount Board Registration APIs
 app.use("/api/boards", attachAdminIfPresent, boardRoutes);
 app.use("/api/boards/analytics", boardAnalyticsRoutes);
-
+app.use("/api/squads", attachAdminIfPresent, squadRoutes);
 
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
