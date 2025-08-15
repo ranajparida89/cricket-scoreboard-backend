@@ -1,10 +1,15 @@
 // C:\cricket-scoreboard-backend\routes\squadRoutes.js
-// 14-AUG-2025  — Squad + Lineup APIs with validations and suggestions
+// 14-AUG-2025 — Squad + Lineup APIs with validations, per-format duplicate rule, and suggest fallback
+//
+// CHANGES (tagged below):
+// [CHANGED-1] POST /players duplicate check now enforces uniqueness on (team_name, lineup_type, lower(player_name))
+// [CHANGED-2] PUT  /players/:id duplicate check now enforces the same rule, excluding the record itself
+// [NEW-1]     POST /lineup validates that all player_ids belong to the same team+format
+// [NEW-2]     GET  /suggest uses SIMILARITY when available, otherwise falls back to simple ILIKE ordering
 
 const express = require("express");
 const router = express.Router();
-const pool = require("../db"); // <-- your pg Pool instance
-// If you don't have a central db.js, require where your Pool is exported from.
+const pool = require("../db"); // your pg Pool
 
 function ci(s) { return (s || "").trim(); }
 
@@ -37,16 +42,32 @@ router.get("/suggest", async (req, res) => {
     const team = ci(req.query.team);
     const q = (req.query.q || "").trim();
     if (!q) return res.json([]);
-    const { rows } = await pool.query(
-      `SELECT player_name, team_name
-       FROM players
-       WHERE ($1 = '' OR team_name = $1)
-         AND player_name ILIKE '%' || $2 || '%'
-       ORDER BY SIMILARITY(player_name, $2) DESC
-       LIMIT 8`,
-      [team, q]
-    );
-    res.json(rows.map(r => ({ name: r.player_name, team: r.team_name })));
+
+    // [NEW-2] Try SIMILARITY first (pg_trgm), fallback to simple ILIKE if extension isn't enabled
+    try {
+      const { rows } = await pool.query(
+        `SELECT player_name, team_name
+           FROM players
+          WHERE ($1 = '' OR team_name = $1)
+            AND player_name ILIKE '%' || $2 || '%'
+          ORDER BY SIMILARITY(player_name, $2) DESC, lower(player_name)
+          LIMIT 8`,
+        [team, q]
+      );
+      return res.json(rows.map(r => ({ name: r.player_name, team: r.team_name })));
+    } catch (err) {
+      // Fallback when SIMILARITY() is missing
+      const { rows } = await pool.query(
+        `SELECT player_name, team_name
+           FROM players
+          WHERE ($1 = '' OR team_name = $1)
+            AND player_name ILIKE '%' || $2 || '%'
+          ORDER BY lower(player_name)
+          LIMIT 8`,
+        [team, q]
+      );
+      return res.json(rows.map(r => ({ name: r.player_name, team: r.team_name })));
+    }
   } catch (e) {
     console.error("GET /suggest", e);
     res.status(500).json({ error: "Failed to suggest" });
@@ -62,16 +83,23 @@ router.post("/players", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // CI duplicate check
+    // [CHANGED-1] CI duplicate check now includes lineup_type (per-format uniqueness)
     const { rows: dup } = await pool.query(
-      `SELECT id FROM players WHERE team_name = $1 AND lower(player_name) = lower($2)`,
-      [team_name, player_name]
+      `SELECT id
+         FROM players
+        WHERE team_name   = $1
+          AND lineup_type = $2
+          AND lower(player_name) = lower($3)`,
+      [team_name, lineup_type, player_name]
     );
-    if (dup.length) return res.status(409).json({ error: "Player already exists in this team" });
+    if (dup.length) {
+      return res.status(409).json({ error: "Player already exists in this team & format" });
+    }
 
     const { rows } = await pool.query(
       `INSERT INTO players (player_name, team_name, lineup_type, skill_type, bowling_type, batting_style, profile_url)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING *`,
       [player_name, team_name, lineup_type, skill_type, bowling_type || null, batting_style || null, profile_url || null]
     );
     res.status(201).json(rows[0]);
@@ -87,20 +115,26 @@ router.put("/players/:id", async (req, res) => {
     const id = +req.params.id;
     const { player_name, team_name, lineup_type, skill_type, bowling_type, batting_style, profile_url } = req.body;
 
-    // CI duplicate check (exclude self)
+    // [CHANGED-2] CI duplicate check (team+format+name), excluding self
     const { rows: dup } = await pool.query(
-      `SELECT id FROM players
-       WHERE team_name = $1 AND lower(player_name) = lower($2) AND id <> $3`,
-      [team_name, player_name, id]
+      `SELECT id
+         FROM players
+        WHERE team_name   = $1
+          AND lineup_type = $2
+          AND lower(player_name) = lower($3)
+          AND id <> $4`,
+      [team_name, lineup_type, player_name, id]
     );
-    if (dup.length) return res.status(409).json({ error: "Another player with this name already exists in this team" });
+    if (dup.length) {
+      return res.status(409).json({ error: "Another player with this name already exists in this team & format" });
+    }
 
     const { rows } = await pool.query(
       `UPDATE players
-       SET player_name=$1, team_name=$2, lineup_type=$3, skill_type=$4,
-           bowling_type=$5, batting_style=$6, profile_url=$7
-       WHERE id=$8
-       RETURNING *`,
+          SET player_name=$1, team_name=$2, lineup_type=$3, skill_type=$4,
+              bowling_type=$5, batting_style=$6, profile_url=$7
+        WHERE id=$8
+      RETURNING *`,
       [player_name, team_name, lineup_type, skill_type, bowling_type || null, batting_style || null, profile_url || null, id]
     );
     res.json(rows[0]);
@@ -129,28 +163,34 @@ router.get("/lineup", async (req, res) => {
   try {
     const team = ci(req.query.team);
     const fmt  = ci(req.query.format);
+
     const { rows: heads } = await pool.query(
       `SELECT id, captain_player_id, vice_captain_player_id
-       FROM team_lineups
-       WHERE team_name=$1 AND lineup_type=$2
-       ORDER BY created_at DESC
-       LIMIT 1`, [team, fmt]
+         FROM team_lineups
+        WHERE team_name=$1 AND lineup_type=$2
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [team, fmt]
     );
-    if (!heads.length) return res.json({ lineup: [], captain_id: null, vice_id: null });
+    if (!heads.length) {
+      return res.json({ lineup: [], captain_id: null, vice_id: null });
+    }
 
     const lineupId = heads[0].id;
     const { rows: items } = await pool.query(
       `SELECT tlp.player_id, tlp.order_no, tlp.is_twelfth,
               p.player_name, p.skill_type, p.batting_style, p.bowling_type, p.profile_url
-       FROM team_lineup_players tlp
-       JOIN players p ON p.id = tlp.player_id
-       WHERE tlp.lineup_id=$1
-       ORDER BY tlp.order_no ASC`, [lineupId]
+         FROM team_lineup_players tlp
+         JOIN players p ON p.id = tlp.player_id
+        WHERE tlp.lineup_id=$1
+        ORDER BY tlp.order_no ASC`,
+      [lineupId]
     );
+
     res.json({
       lineup: items,
       captain_id: heads[0].captain_player_id,
-      vice_id: heads[0].vice_captain_player_id
+      vice_id: heads[0].vice_captain_player_id,
     });
   } catch (e) {
     console.error("GET /lineup", e);
@@ -165,17 +205,36 @@ router.post("/lineup", async (req, res) => {
     const { team_name, lineup_type, captain_player_id, vice_captain_player_id, players } = req.body;
     // players: [{player_id, order_no, is_twelfth:false}, ...]
 
-    if (!team_name || !lineup_type) return res.status(400).json({ error: "Missing team/format" });
-    if (!Array.isArray(players) || players.length < 11 || players.length > 12)
+    if (!team_name || !lineup_type) {
+      return res.status(400).json({ error: "Missing team/format" });
+    }
+    if (!Array.isArray(players) || players.length < 11 || players.length > 12) {
       return res.status(400).json({ error: "Lineup must have 11 to 12 players" });
-    if (!captain_player_id || !vice_captain_player_id || captain_player_id === vice_captain_player_id)
+    }
+    if (!captain_player_id || !vice_captain_player_id || captain_player_id === vice_captain_player_id) {
       return res.status(400).json({ error: "Captain and Vice-captain must be set and different" });
+    }
 
     await client.query("BEGIN");
 
+    // [NEW-1] sanity check: all player_ids belong to the same team+format
+    const ids = players.map(p => p.player_id);
+    const { rows: chk } = await client.query(
+      `SELECT COUNT(*)::int AS n
+         FROM players
+        WHERE id = ANY($1)
+          AND team_name   = $2
+          AND lineup_type = $3`,
+      [ids, team_name, lineup_type]
+    );
+    if (chk[0].n !== ids.length) {
+      throw new Error("All players must belong to the same team and format");
+    }
+
     const insHead = await client.query(
       `INSERT INTO team_lineups (team_name, lineup_type, captain_player_id, vice_captain_player_id)
-       VALUES ($1,$2,$3,$4) RETURNING id`,
+       VALUES ($1,$2,$3,$4)
+       RETURNING id`,
       [team_name, lineup_type, captain_player_id, vice_captain_player_id]
     );
     const lineupId = insHead.rows[0].id;
