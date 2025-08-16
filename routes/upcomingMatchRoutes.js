@@ -1,46 +1,13 @@
-// routes/upcomingMatchRoutes.js
+// ✅ routes/upcomingMatchRoutes.js
+// ✅ [Ranaj Parida | CrickEdge - Advanced Match Scheduler | 30-Apr-2025]
 
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
-const ci = (s) => (s || "").toString().trim();
-
-// --- date/time helpers ---
-function toISODate(input) {
-  const s = ci(input);
-  if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const m = s.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
-  if (m) {
-    const [, dd, mm, yyyy] = m;
-    return `${yyyy}-${mm}-${dd}`;
-  }
-  const d = new Date(s);
-  if (Number.isFinite(d.getTime())) return d.toISOString().slice(0, 10);
-  return null;
-}
-
-function toPgTime(input) {
-  const s = ci(input);
-  if (!s) return null;
-  if (/^\d{2}:\d{2}$/.test(s)) return `${s}:00`;
-  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s;
-  const m = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (m) {
-    let hh = parseInt(m[1], 10);
-    const mm = m[2];
-    const ap = m[3].toUpperCase();
-    if (ap === "PM" && hh < 12) hh += 12;
-    if (ap === "AM" && hh === 12) hh = 0;
-    return `${String(hh).padStart(2, "0")}:${mm}:00`;
-  }
-  return s;
-}
-
-// --- team normalization ---
+// --- helpers -------------------------------------------------
 function normalizeTeamName(name) {
-  const n = ci(name).toLowerCase();
+  const n = (name || "").trim().toLowerCase();
   if (["ind", "india"].includes(n)) return "India";
   if (["aus", "australia"].includes(n)) return "Australia";
   if (["pak", "pakistan"].includes(n)) return "Pakistan";
@@ -58,99 +25,98 @@ function normalizeTeamName(name) {
   if (["sco", "scotland"].includes(n)) return "Scotland";
   if (["uae"].includes(n)) return "UAE";
   if (["usa"].includes(n)) return "USA";
-  return ci(name);
+  return (name || "").trim();
 }
 
-// --- validation ---
+// Accept DD-MM-YYYY and convert to YYYY-MM-DD
+function toISODateMaybe(d) {
+  const s = (d || "").toString().trim().replace(/\//g, "-");
+  const m = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : s;
+}
+
+function normalizeModel(m) {
+  const match = { ...m };
+
+  // enums (case-insensitive, normalized)
+  const typeU = (match.match_type || "").toString().trim().toUpperCase();
+  match.match_type = typeU === "TEST" ? "Test" : typeU; // keep ODI/T20 upper, Test title-cased
+
+  const statusU = (match.match_status || "").toString().trim().toUpperCase();
+  match.match_status =
+    statusU === "POSTPONED" ? "Postponed" :
+    statusU === "CANCELLED" ? "Cancelled" :
+    "Scheduled";
+
+  const dnU = (match.day_night || "").toString().trim().toUpperCase();
+  match.day_night = dnU === "NIGHT" ? "Night" : "Day";
+
+  // date normalization
+  match.match_date = toISODateMaybe(match.match_date);
+
+  // normalize teams
+  match.team_1 = normalizeTeamName(match.team_1);
+  match.team_2 = normalizeTeamName(match.team_2);
+
+  // defaults
+  if (!match.match_name) match.match_name = `${match.team_1} vs ${match.team_2}`;
+  if (!match.created_by) match.created_by = "system@crickedge";
+
+  return match;
+}
+
 function validateUpcomingMatch(match) {
   const required = [
-    "match_name",
-    "match_type",
-    "team_1",
-    "team_2",
-    "location",
-    "match_date",
-    "match_time",
-    "match_status",
-    "day_night",
-    "created_by",
+    "match_name", "match_type", "team_1", "team_2",
+    "location", "match_date", "match_time",
+    "match_status", "day_night", "created_by"
   ];
-  for (const k of required) {
-    if (!match[k] || ci(match[k]) === "") return `Missing or empty required field: ${k}`;
+  for (const f of required) {
+    if (!match[f] || String(match[f]).trim() === "") {
+      return `Missing or empty required field: ${f}`;
+    }
   }
-
-  match.match_type = ci(match.match_type).toUpperCase(); // normalize
-
-  const allowedMatchTypes = ["ODI", "T20", "TEST"];
+  const allowedTypes = ["ODI", "T20", "Test"];
   const allowedStatuses = ["Scheduled", "Postponed", "Cancelled"];
-  const allowedDayNight = ["Day", "Night", "Day/Night"];
-
-  if (!allowedMatchTypes.includes(match.match_type)) return "Invalid match_type";
+  const allowedDN = ["Day", "Night"];
+  if (!allowedTypes.includes(match.match_type)) return "Invalid match_type";
   if (!allowedStatuses.includes(match.match_status)) return "Invalid match_status";
-  if (!allowedDayNight.includes(match.day_night)) return "Invalid day_night";
+  if (!allowedDN.includes(match.day_night)) return "Invalid day_night";
   return null;
 }
 
-// --- helpful GET so browser users don't see "Cannot GET" ---
-router.get("/upcoming-match", (req, res) => {
-  res.json({
-    ok: true,
-    usage: "POST /api/upcoming-match to create; GET /api/upcoming-matches to list.",
-    example_post_body: {
-      match_name: "India vs Hongkong",
-      match_type: "T20",
-      team_1: "India",
-      team_2: "Hongkong",
-      location: "Adelaide",
-      match_date: "18-08-2025",
-      match_time: "15:00",
-      series_name: "Triangular Series 2025",
-      match_status: "Scheduled",
-      day_night: "Day",
-      created_by: "admin@crickedge"
-    }
-  });
-});
+// --- routes --------------------------------------------------
 
-// --- create ---
+// POST /api/upcoming-match
 router.post("/upcoming-match", async (req, res) => {
   try {
-    const match = { ...req.body };
+    const match = normalizeModel(req.body);
 
-    const v = validateUpcomingMatch(match);
-    if (v) return res.status(400).json({ error: v });
+    const validationError = validateUpcomingMatch(match);
+    if (validationError) {
+      return res.status(400).json({ error: validationError });
+    }
 
-    const team1 = normalizeTeamName(match.team_1);
-    const team2 = normalizeTeamName(match.team_2);
-    const team_playing = `${team1} vs ${team2}`;
-
-    const isoDate = toISODate(match.match_date);
-    const pgTime = toPgTime(match.match_time);
-    if (!isoDate) return res.status(400).json({ error: "Invalid match_date" });
-    if (!pgTime) return res.status(400).json({ error: "Invalid match_time" });
-
-    const createdBy = ci(match.created_by);
-    const updatedBy = createdBy;
+    const team_playing = `${match.team_1} vs ${match.team_2}`;
 
     const result = await pool.query(
       `INSERT INTO upcoming_match_details
        (match_name, match_type, team_1, team_2, location, match_date, match_time,
         series_name, match_status, day_night, created_by, updated_by, team_playing)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12)
        RETURNING *`,
       [
-        ci(match.match_name),
-        match.match_type,        // ODI/T20/TEST
-        team1,
-        team2,
-        ci(match.location),
-        isoDate,                 // yyyy-mm-dd
-        pgTime,                  // hh:mm:ss
-        match.series_name ? ci(match.series_name) : null,
+        match.match_name.trim(),
+        match.match_type,
+        match.team_1,
+        match.team_2,
+        (match.location || "").trim(),
+        match.match_date,
+        match.match_time,
+        match.series_name?.trim() || null,
         match.match_status,
         match.day_night,
-        createdBy,
-        updatedBy,
+        match.created_by,
         team_playing,
       ]
     );
@@ -162,16 +128,15 @@ router.post("/upcoming-match", async (req, res) => {
       stack: err.stack,
       requestBody: req.body,
     });
-    if (err?.code && err?.detail) return res.status(500).json({ error: `${err.code}: ${err.detail}` });
     res.status(500).json({ error: "Something went wrong while scheduling match" });
   }
 });
 
-// --- list ---
-router.get("/upcoming-matches", async (req, res) => {
+// GET /api/upcoming-matches
+router.get("/upcoming-matches", async (_req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM upcoming_match_details ORDER BY match_date DESC, match_time DESC`
+      `SELECT * FROM upcoming_match_details ORDER BY match_date ASC, match_time ASC`
     );
     res.status(200).json(result.rows);
   } catch (err) {
