@@ -192,10 +192,12 @@ router.get("/points", async (req, res) => {
 /* ---------------- Runs by format ---------------- */
 router.get("/runs-by-format", async (req, res) => {
   const { team1, team2 } = req.query;
+  const upType = String(req.query.type || "ALL").toUpperCase(); // ← NEW: honor requested format
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
   try {
     const t1 = team1.trim(), t2 = team2.trim();
 
+    // collect match_names for this H2H across both tables
     const m = await pool.query(`
       SELECT match_name
       FROM match_history
@@ -215,6 +217,7 @@ router.get("/runs-by-format", async (req, res) => {
     const names = m.rows.map(r => r.match_name).filter(Boolean);
     if (!names.length) return res.json([]);
 
+    // NEW: filter by requested match_type (or 'ALL' for no filter)
     const r = await pool.query(`
       SELECT UPPER(TRIM(pp.match_type)) AS match_type,
              LOWER(TRIM(pp.team_name)) AS team,
@@ -222,9 +225,10 @@ router.get("/runs-by-format", async (req, res) => {
       FROM player_performance pp
       WHERE pp.match_name = ANY($1)
         AND LOWER(TRIM(pp.team_name)) IN (LOWER($2), LOWER($3))
+        AND ($4 = 'ALL' OR UPPER(TRIM(pp.match_type)) = $4)
       GROUP BY match_type, team
       ORDER BY match_type, team
-    `, [names, t1, t2]);
+    `, [names, t1, t2, upType]);
 
     const out = {};
     r.rows.forEach(row => {
@@ -326,7 +330,7 @@ router.get("/test-innings-averages", async (req, res) => {
     res.json(out);
   } catch (e) {
     console.warn("test-innings-averages (fallback):", e.message);
-    res.json([]);
+    res.json([]); // safe fallback
   }
 });
 
