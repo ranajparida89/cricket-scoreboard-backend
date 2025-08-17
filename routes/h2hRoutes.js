@@ -1,5 +1,4 @@
 // routes/h2hRoutes.js
-// VS head-to-head analytics (match_history + test_match_results + player_performance)
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
@@ -11,16 +10,15 @@ const nor = s => (s || "").trim().toLowerCase();
 const isDrawish = w =>
   !w || w.includes("draw") || w.includes("tie") || w.includes("no result") || w.includes("abandon");
 
-// escape regex special chars
+// escape regex special chars + whole-word check
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const wordHit = (winner, teamName) => {
   if (!winner || !teamName) return false;
-  // word boundary style check to avoid partial-name hits
   const re = new RegExp(`\\b${reEsc(teamName)}\\b`, "i");
   return re.test(winner);
 };
 
-/* ---------------- Teams (from both tables) ---------------- */
+/* ---------------- Teams ---------------- */
 router.get("/teams", async (_req, res) => {
   try {
     const q = `
@@ -41,7 +39,7 @@ router.get("/teams", async (_req, res) => {
   }
 });
 
-/* ---------------- Summary (ALL/ODI/T20/TEST) ---------------- */
+/* ---------------- Summary ---------------- */
 router.get("/summary", async (req, res) => {
   const { team1, team2, type } = req.query;
   if (!team1 || !team2 || !type || team1.toLowerCase() === team2.toLowerCase()) {
@@ -66,7 +64,6 @@ router.get("/summary", async (req, res) => {
       sql = `SELECT winner FROM match_history WHERE ${pair} AND LOWER(TRIM(match_type))=LOWER($3)`;
       params.push(up);
     } else {
-      // ✅ ALL: make sure parameter list matches both SELECTs (bug fixed)
       sql = `
         SELECT winner FROM match_history
         WHERE ${pair} AND LOWER(TRIM(match_type)) IN('odi','t20')
@@ -108,8 +105,6 @@ router.get("/by-format", async (req, res) => {
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
   try {
     const t1 = team1.trim(), t2 = team2.trim();
-
-    // Use ILIKE so text like "India win the match" still counts for India.
     const q = `
       WITH pair AS (
         SELECT team1,team2,winner, LOWER(TRIM(match_type)) AS match_type
@@ -142,7 +137,7 @@ router.get("/by-format", async (req, res) => {
   }
 });
 
-/* ---------------- Points (Test 12/6/4; ODI/T20 2/0/1) ---------------- */
+/* ---------------- Points ---------------- */
 router.get("/points", async (req, res) => {
   const { team1, team2, type = "ALL" } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
@@ -163,7 +158,7 @@ router.get("/points", async (req, res) => {
         else if (wordHit(w, t2)) b++;
       }
       if (fmt === "TEST") return { t1: a * 12 + b * 6 + d * 4, t2: b * 12 + a * 6 + d * 4 };
-      return { t1: a * 2 + d * 1, t2: b * 2 + d * 1 }; // ODI/T20
+      return { t1: a * 2 + d * 1, t2: b * 2 + d * 1 };
     };
 
     let total = { t1: 0, t2: 0 };
@@ -194,14 +189,13 @@ router.get("/points", async (req, res) => {
   }
 });
 
-/* ---------------- Total Runs by Format ---------------- */
+/* ---------------- Runs by format ---------------- */
 router.get("/runs-by-format", async (req, res) => {
   const { team1, team2 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
   try {
     const t1 = team1.trim(), t2 = team2.trim();
 
-    // collect match_names for this H2H across both tables
     const m = await pool.query(`
       SELECT match_name
       FROM match_history
@@ -221,7 +215,6 @@ router.get("/runs-by-format", async (req, res) => {
     const names = m.rows.map(r => r.match_name).filter(Boolean);
     if (!names.length) return res.json([]);
 
-    // use player_performance.match_type directly; normalize case
     const r = await pool.query(`
       SELECT UPPER(TRIM(pp.match_type)) AS match_type,
              LOWER(TRIM(pp.team_name)) AS team,
@@ -247,9 +240,7 @@ router.get("/runs-by-format", async (req, res) => {
   }
 });
 
-/* ---------------- Test extras (fail-safe JSON even if schema lacks 'innings') ---------------- */
-
-// FIRST-INNINGS LEAD (best effort / safe fallback)
+/* ---------------- Test extras (safe fallbacks) ---------------- */
 router.get("/test-innings-lead", async (req, res) => {
   const { team1, team2 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
@@ -268,7 +259,7 @@ router.get("/test-innings-lead", async (req, res) => {
           (LOWER(TRIM(t.team1))=LOWER($2) AND LOWER(TRIM(t.team2))=LOWER($1))
         )
           AND pp.match_type ILIKE 'test'
-          AND COALESCE(pp.innings,1) = 1   -- if 'innings' column doesn't exist, this whole route will fall back below
+          AND COALESCE(pp.innings,1) = 1
         GROUP BY pp.match_name, team
       ),
       per_match AS (
@@ -288,12 +279,10 @@ router.get("/test-innings-lead", async (req, res) => {
     res.json({ t1_leads: nz(row.t1_leads), t2_leads: nz(row.t2_leads), level: nz(row.level) });
   } catch (e) {
     console.warn("test-innings-lead (fallback):", e.message);
-    // ✅ Always return JSON so the UI never breaks
     res.json({ t1_leads: 0, t2_leads: 0, level: 0 });
   }
 });
 
-// Test Batting Averages per Innings (safe fallback)
 router.get("/test-innings-averages", async (req, res) => {
   const { team1, team2 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
@@ -337,11 +326,11 @@ router.get("/test-innings-averages", async (req, res) => {
     res.json(out);
   } catch (e) {
     console.warn("test-innings-averages (fallback):", e.message);
-    res.json([]); // ✅ safe JSON
+    res.json([]);
   }
 });
 
-/* ---------------- Recent (union) ---------------- */
+/* ---------------- Recent ---------------- */
 router.get("/recent", async (req, res) => {
   const { team1, team2, type = "ALL", limit = 10 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
