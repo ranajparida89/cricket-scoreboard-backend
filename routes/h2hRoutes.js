@@ -3,14 +3,14 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
-// helpers
+/* ---------------- Helpers ---------------- */
 const toTitle = (s = "") => s.toLowerCase().replace(/\b\w/g, m => m.toUpperCase());
 const nz = v => (v == null ? 0 : Number(v));
 const nor = s => (s || "").trim().toLowerCase();
 const isDrawish = w =>
   !w || w.includes("draw") || w.includes("tie") || w.includes("no result") || w.includes("abandon");
 
-// escape regex special chars + whole-word check
+// Escape regex special chars + whole-word check for winner name matching
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const wordHit = (winner, teamName) => {
   if (!winner || !teamName) return false;
@@ -64,6 +64,7 @@ router.get("/summary", async (req, res) => {
       sql = `SELECT winner FROM match_history WHERE ${pair} AND LOWER(TRIM(match_type))=LOWER($3)`;
       params.push(up);
     } else {
+      // ALL formats: ODI + T20 from match_history, plus Test from test_match_results
       sql = `
         SELECT winner FROM match_history
         WHERE ${pair} AND LOWER(TRIM(match_type)) IN('odi','t20')
@@ -158,7 +159,7 @@ router.get("/points", async (req, res) => {
         else if (wordHit(w, t2)) b++;
       }
       if (fmt === "TEST") return { t1: a * 12 + b * 6 + d * 4, t2: b * 12 + a * 6 + d * 4 };
-      return { t1: a * 2 + d * 1, t2: b * 2 + d * 1 };
+      return { t1: a * 2 + d * 1, t2: b * 2 + d * 1 }; // ODI/T20
     };
 
     let total = { t1: 0, t2: 0 };
@@ -192,12 +193,12 @@ router.get("/points", async (req, res) => {
 /* ---------------- Runs by format ---------------- */
 router.get("/runs-by-format", async (req, res) => {
   const { team1, team2 } = req.query;
-  const upType = String(req.query.type || "ALL").toUpperCase(); // ← NEW: honor requested format
+  const upType = String(req.query.type || "ALL").toUpperCase(); // honor requested format
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
   try {
     const t1 = team1.trim(), t2 = team2.trim();
 
-    // collect match_names for this H2H across both tables
+    // Collect match_names for this H2H across both tables
     const m = await pool.query(`
       SELECT match_name
       FROM match_history
@@ -217,7 +218,7 @@ router.get("/runs-by-format", async (req, res) => {
     const names = m.rows.map(r => r.match_name).filter(Boolean);
     if (!names.length) return res.json([]);
 
-    // NEW: filter by requested match_type (or 'ALL' for no filter)
+    // Filter by requested match_type (or 'ALL' for no filter)
     const r = await pool.query(`
       SELECT UPPER(TRIM(pp.match_type)) AS match_type,
              LOWER(TRIM(pp.team_name)) AS team,
@@ -241,6 +242,104 @@ router.get("/runs-by-format", async (req, res) => {
   } catch (e) {
     console.error("runs-by-format:", e);
     res.status(500).json({ error: "Failed to compute runs by format" });
+  }
+});
+
+/* ---------------- NEW: Top Batters (paired-matches, case-insensitive types) ---------------- */
+router.get("/top-batters", async (req, res) => {
+  const { team1, team2, type = "ALL", limit = 8 } = req.query;
+  if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
+  try {
+    const t1 = String(team1).trim();
+    const t2 = String(team2).trim();
+    const up = String(type).toUpperCase();
+    const lim = Number(limit) || 8;
+
+    const sql = `
+      WITH pp AS (
+        SELECT TRIM(match_name) AS match_name,
+               LOWER(TRIM(team_name)) AS team,
+               player_id,
+               SUM(run_scored) AS runs
+        FROM player_performance
+        WHERE ($3 = 'ALL' OR UPPER(TRIM(match_type)) = $3)
+        GROUP BY TRIM(match_name), LOWER(TRIM(team_name)), player_id
+      ),
+      paired_matches AS (
+        SELECT match_name
+        FROM pp
+        GROUP BY match_name
+        HAVING SUM(CASE WHEN team = LOWER($1) THEN 1 ELSE 0 END) > 0
+           AND SUM(CASE WHEN team = LOWER($2) THEN 1 ELSE 0 END) > 0
+      )
+      SELECT p.player_name, SUM(pp.runs) AS runs
+      FROM pp
+      JOIN paired_matches pm ON pm.match_name = pp.match_name
+      JOIN players p        ON p.id = pp.player_id
+      WHERE pp.team IN (LOWER($1), LOWER($2))
+      GROUP BY p.player_name
+      ORDER BY runs DESC
+      LIMIT $4
+    `;
+    const r = await pool.query(sql, [t1, t2, up, lim]);
+    res.json(r.rows || []);
+  } catch (e) {
+    console.error("top-batters:", e);
+    res.status(500).json({ error: "Failed to compute top batters" });
+  }
+});
+
+/* ---------------- NEW: Top Bowlers (avg; min 3 wkts; paired-matches) ---------------- */
+router.get("/top-bowlers", async (req, res) => {
+  const { team1, team2, type = "ALL", limit = 10, min_wkts = 3 } = req.query;
+  if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
+  try {
+    const t1 = String(team1).trim();
+    const t2 = String(team2).trim();
+    const up = String(type).toUpperCase();
+    const lim = Number(limit) || 10;
+    const min = Number(min_wkts) || 3;
+
+    const sql = `
+      WITH pp AS (
+        SELECT TRIM(match_name) AS match_name,
+               LOWER(TRIM(team_name)) AS team,
+               player_id,
+               SUM(wickets_taken) AS wkts,
+               SUM(runs_given)    AS runs_given
+        FROM player_performance
+        WHERE ($3 = 'ALL' OR UPPER(TRIM(match_type)) = $3)
+        GROUP BY TRIM(match_name), LOWER(TRIM(team_name)), player_id
+      ),
+      paired_matches AS (
+        SELECT match_name
+        FROM pp
+        GROUP BY match_name
+        HAVING SUM(CASE WHEN team = LOWER($1) THEN 1 ELSE 0 END) > 0
+           AND SUM(CASE WHEN team = LOWER($2) THEN 1 ELSE 0 END) > 0
+      ),
+      agg AS (
+        SELECT p.player_name,
+               SUM(pp.wkts)      AS wkts,
+               SUM(pp.runs_given) AS runs_given
+        FROM pp
+        JOIN paired_matches pm ON pm.match_name = pp.match_name
+        JOIN players p        ON p.id = pp.player_id
+        WHERE pp.team IN (LOWER($1), LOWER($2))
+        GROUP BY p.player_name
+      )
+      SELECT player_name, wkts, runs_given,
+             ROUND(CASE WHEN wkts > 0 THEN runs_given::numeric / wkts END, 2) AS bowl_avg
+      FROM agg
+      WHERE wkts >= $4
+      ORDER BY bowl_avg ASC NULLS LAST, wkts DESC
+      LIMIT $5
+    `;
+    const r = await pool.query(sql, [t1, t2, up, min, lim]);
+    res.json(r.rows || []);
+  } catch (e) {
+    console.error("top-bowlers:", e);
+    res.status(500).json({ error: "Failed to compute top bowlers" });
   }
 });
 
