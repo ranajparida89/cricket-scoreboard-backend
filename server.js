@@ -49,7 +49,7 @@ const { attachAdminIfPresent, requireAdminAuth } = require('./routes/auth');
 const boardAnalyticsRoutes = require("./routes/boardAnalyticsRoutes");
 
 const squadRoutes = require("./routes/squadRoutes");
-
+const playerAnalyticsRoutes = require('./routes/playerAnalyticsRoutes');
 
 
 const app = express();
@@ -124,7 +124,7 @@ app.use("/api/scheduler", schedulerRoutes); // ✅ /api/scheduler/*
 app.use("/api/boards", attachAdminIfPresent, boardRoutes);
 app.use("/api/boards/analytics", boardAnalyticsRoutes);
 app.use("/api/squads", attachAdminIfPresent, squadRoutes);
-
+app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespace
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
 const io = socketIo(server, {
