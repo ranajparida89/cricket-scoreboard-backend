@@ -48,6 +48,7 @@ router.get("/summary", async (req, res) => {
       `;
       queryParams.push(type);
     } else {
+      // ALL -> ODI/T20 from match_history + TEST from test_match_results
       queryText = `
         SELECT id, match_name, winner, match_type
         FROM match_history
@@ -238,34 +239,131 @@ router.get("/test-innings-averages", async (req, res) => {
   }
 });
 
-/** 4) Test: Points */
-router.get("/test-points", async (req, res) => {
+/** 4) Points (correct rules)
+ *  Test:  Win=12, Loss=6, Draw=4 (each)
+ *  ODI/T20: Win=2, Loss=0, Draw=1 (each)
+ *  type=TEST|ODI|T20|ALL
+ */
+router.get("/points", async (req, res) => {
+  const { team1, team2, type = "ALL" } = req.query;
+  if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
+
+  try {
+    const t1 = team1.trim(), t2 = team2.trim();
+
+    // helper to compute from rows
+    const compute = (rows, fmt) => {
+      let t1w = 0, t2w = 0, d = 0;
+      for (const m of rows) {
+        const w = (m.winner || "").toLowerCase();
+        if (!w || w.includes("draw") || w.includes("tie")) d++;
+        else if (w.includes(t1.toLowerCase())) t1w++;
+        else if (w.includes(t2.toLowerCase())) t2w++;
+      }
+      if (fmt === "TEST") {
+        return { t1: t1w * 12 + (t2w) * 6 + d * 4, t2: t2w * 12 + (t1w) * 6 + d * 4 };
+      } else { // ODI/T20
+        return { t1: t1w * 2 + d * 1, t2: t2w * 2 + d * 1 };
+      }
+    };
+
+    const pairWhere = `
+      (
+        (LOWER(TRIM(team1)) = LOWER($1) AND LOWER(TRIM(team2)) = LOWER($2))
+        OR
+        (LOWER(TRIM(team1)) = LOWER($2) AND LOWER(TRIM(team2)) = LOWER($1))
+      )
+    `;
+
+    let totals = { t1: 0, t2: 0 };
+
+    const up = String(type).toUpperCase();
+
+    const runOne = async (fmt) => {
+      if (fmt === "TEST") {
+        const r = await pool.query(
+          `SELECT winner FROM test_match_results WHERE ${pairWhere}`, [t1, t2]
+        );
+        const p = compute(r.rows || [], "TEST");
+        totals.t1 += p.t1; totals.t2 += p.t2;
+      } else {
+        const r = await pool.query(
+          `SELECT winner FROM match_history WHERE ${pairWhere} AND LOWER(TRIM(match_type))=LOWER($3)`,
+          [t1, t2, fmt]
+        );
+        const p = compute(r.rows || [], fmt.toUpperCase());
+        totals.t1 += p.t1; totals.t2 += p.t2;
+      }
+    };
+
+    if (up === "TEST") await runOne("TEST");
+    else if (up === "ODI") await runOne("odi");
+    else if (up === "T20") await runOne("t20");
+    else { await runOne("odi"); await runOne("t20"); await runOne("TEST"); }
+
+    return res.json({ t1_points: totals.t1, t2_points: totals.t2 });
+  } catch (e) {
+    console.error("❌ /points:", e);
+    return res.status(500).json({ error: "Failed to compute points" });
+  }
+});
+
+/** 5) Total runs by format (for the two teams only, vs each other) */
+router.get("/runs-by-format", async (req, res) => {
   const { team1, team2 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
 
   try {
     const t1 = team1.trim(), t2 = team2.trim();
-    const q = `
-      SELECT
-        SUM(CASE WHEN LOWER(TRIM(team1))=LOWER($1) THEN points ELSE 0 END) +
-        SUM(CASE WHEN LOWER(TRIM(team2))=LOWER($1) THEN points ELSE 0 END) AS t1_points,
-        SUM(CASE WHEN LOWER(TRIM(team1))=LOWER($2) THEN points ELSE 0 END) +
-        SUM(CASE WHEN LOWER(TRIM(team2))=LOWER($2) THEN points ELSE 0 END) AS t2_points
+
+    // Collect match names for pair from both tables
+    const mRes = await pool.query(`
+      SELECT match_name, LOWER(TRIM(match_type)) AS mt
+      FROM match_history
+      WHERE (
+        (LOWER(TRIM(team1))=LOWER($1) AND LOWER(TRIM(team2))=LOWER($2)) OR
+        (LOWER(TRIM(team1))=LOWER($2) AND LOWER(TRIM(team2))=LOWER($1))
+      ) AND LOWER(TRIM(match_type)) IN ('odi','t20')
+      UNION ALL
+      SELECT match_name, 'test' AS mt
       FROM test_match_results
       WHERE (
         (LOWER(TRIM(team1))=LOWER($1) AND LOWER(TRIM(team2))=LOWER($2)) OR
         (LOWER(TRIM(team1))=LOWER($2) AND LOWER(TRIM(team2))=LOWER($1))
-      );
-    `;
-    const r = await pool.query(q, [t1, t2]);
-    return res.json(r.rows[0] || { t1_points: 0, t2_points: 0 });
+      )
+    `, [t1, t2]);
+
+    const names = mRes.rows.map(r => r.match_name).filter(Boolean);
+    if (!names.length) return res.json([]);
+
+    const r = await pool.query(`
+      SELECT UPPER(TRIM(pp.match_type)) AS match_type,
+             LOWER(TRIM(pp.team_name)) AS team,
+             SUM(pp.run_scored) AS runs
+      FROM player_performance pp
+      WHERE pp.match_name = ANY($1)
+        AND LOWER(TRIM(pp.team_name)) IN (LOWER($2), LOWER($3))
+      GROUP BY match_type, team
+      ORDER BY match_type, team
+    `, [names, t1, t2]);
+
+    // Pivot to [{match_type, team1_runs, team2_runs}]
+    const out = {};
+    r.rows.forEach(row => {
+      const mt = row.match_type;
+      if (!out[mt]) out[mt] = { match_type: mt, [t1]: 0, [t2]: 0 };
+      const key = row.team.includes(t1.toLowerCase()) ? t1 : t2;
+      out[mt][key] = Number(row.runs || 0);
+    });
+
+    return res.json(Object.values(out));
   } catch (e) {
-    console.error("❌ /test-points:", e);
-    return res.status(500).json({ error: "Failed to compute points" });
+    console.error("❌ /runs-by-format:", e);
+    return res.status(500).json({ error: "Failed to compute runs by format" });
   }
 });
 
-/** 5) Top Batters (by runs) */
+/** 6) Top Batters (by runs) – both teams combined, filter by type (ALL/ODI/T20/TEST) */
 router.get("/top-batters", async (req, res) => {
   const { team1, team2, type = "ALL", limit = 5 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
@@ -296,7 +394,7 @@ router.get("/top-batters", async (req, res) => {
   }
 });
 
-/** 6) Top Bowlers (by bowling average; min wickets) */
+/** 7) Top Bowlers (by bowling average; min wickets) – both teams combined */
 router.get("/top-bowlers", async (req, res) => {
   const { team1, team2, type = "ALL", min_wkts = 3, limit = 5 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
@@ -331,7 +429,7 @@ router.get("/top-bowlers", async (req, res) => {
   }
 });
 
-/** 7) Recent Results (last N) */
+/** 8) Recent Results (last N) */
 router.get("/recent", async (req, res) => {
   const { team1, team2, type = "ALL", limit = 10 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
