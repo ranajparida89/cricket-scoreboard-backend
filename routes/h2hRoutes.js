@@ -191,53 +191,60 @@ router.get("/points", async (req, res) => {
 });
 
 /* ---------------- Runs by format ---------------- */
+/*
+ * IMPORTANT FIX:
+ * Earlier this endpoint compared pp.match_name with an array of exact strings.
+ * Because match_name strings differ in case/spacing across tables, ODI/TEST
+ * returned []. We now normalize and JOIN on LOWER(TRIM(match_name)) so all
+ * formats work reliably. Optional ?type=ODI|T20|TEST|ALL is honored.
+ */
 router.get("/runs-by-format", async (req, res) => {
   const { team1, team2 } = req.query;
-  const upType = String(req.query.type || "ALL").toUpperCase(); // honor requested format
+  const upType = String(req.query.type || "ALL").toUpperCase();
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
+
   try {
-    const t1 = team1.trim(), t2 = team2.trim();
+    const t1 = team1.trim();
+    const t2 = team2.trim();
 
-    // Collect match_names for this H2H across both tables
-    const m = await pool.query(`
-      SELECT match_name
-      FROM match_history
-      WHERE (
-        (LOWER(TRIM(team1))=LOWER($1) AND LOWER(TRIM(team2))=LOWER($2)) OR
-        (LOWER(TRIM(team1))=LOWER($2) AND LOWER(TRIM(team2))=LOWER($1))
-      ) AND LOWER(TRIM(match_type)) IN('odi','t20')
-      UNION ALL
-      SELECT match_name
-      FROM test_match_results
-      WHERE (
-        (LOWER(TRIM(team1))=LOWER($1) AND LOWER(TRIM(team2))=LOWER($2)) OR
-        (LOWER(TRIM(team1))=LOWER($2) AND LOWER(TRIM(team2))=LOWER($1))
+    const q = `
+      WITH m AS (
+        SELECT LOWER(TRIM(match_name)) AS match_name
+        FROM match_history
+        WHERE (
+          (LOWER(TRIM(team1)) = LOWER($1) AND LOWER(TRIM(team2)) = LOWER($2)) OR
+          (LOWER(TRIM(team1)) = LOWER($2) AND LOWER(TRIM(team2)) = LOWER($1))
+        )
+        UNION
+        SELECT LOWER(TRIM(match_name)) AS match_name
+        FROM test_match_results
+        WHERE (
+          (LOWER(TRIM(team1)) = LOWER($1) AND LOWER(TRIM(team2)) = LOWER($2)) OR
+          (LOWER(TRIM(team1)) = LOWER($2) AND LOWER(TRIM(team2)) = LOWER($1))
+        )
       )
-    `, [t1, t2]);
-
-    const names = m.rows.map(r => r.match_name).filter(Boolean);
-    if (!names.length) return res.json([]);
-
-    // Filter by requested match_type (or 'ALL' for no filter)
-    const r = await pool.query(`
-      SELECT UPPER(TRIM(pp.match_type)) AS match_type,
-             LOWER(TRIM(pp.team_name)) AS team,
-             SUM(pp.run_scored) AS runs
+      SELECT
+        UPPER(TRIM(pp.match_type)) AS match_type,
+        CASE WHEN LOWER(TRIM(pp.team_name)) = LOWER($1) THEN $1 ELSE $2 END AS team,
+        SUM(pp.run_scored) AS runs
       FROM player_performance pp
-      WHERE pp.match_name = ANY($1)
-        AND LOWER(TRIM(pp.team_name)) IN (LOWER($2), LOWER($3))
-        AND ($4 = 'ALL' OR UPPER(TRIM(pp.match_type)) = $4)
+      JOIN m ON LOWER(TRIM(pp.match_name)) = m.match_name
+      WHERE LOWER(TRIM(pp.team_name)) IN (LOWER($1), LOWER($2))
+        AND ($3 = 'ALL' OR UPPER(TRIM(pp.match_type)) = $3)
       GROUP BY match_type, team
-      ORDER BY match_type, team
-    `, [names, t1, t2, upType]);
+      ORDER BY match_type, team;
+    `;
 
+    const r = await pool.query(q, [t1, t2, upType]);
+
+    // Shape results into: [{ match_type, <team1>: n, <team2>: n }]
     const out = {};
-    r.rows.forEach(row => {
+    for (const row of r.rows) {
       const mt = row.match_type;
       if (!out[mt]) out[mt] = { match_type: mt, [t1]: 0, [t2]: 0 };
-      const key = row.team.includes(t1.toLowerCase()) ? t1 : t2;
-      out[mt][key] = nz(row.runs);
-    });
+      out[mt][row.team] = Number(row.runs || 0);
+    }
+
     res.json(Object.values(out));
   } catch (e) {
     console.error("runs-by-format:", e);
@@ -245,7 +252,7 @@ router.get("/runs-by-format", async (req, res) => {
   }
 });
 
-/* ---------------- NEW: Top Batters (paired-matches, case-insensitive types) ---------------- */
+/* ---------------- Top Batters (paired-matches, case-insensitive types) ---------------- */
 router.get("/top-batters", async (req, res) => {
   const { team1, team2, type = "ALL", limit = 8 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
@@ -289,7 +296,7 @@ router.get("/top-batters", async (req, res) => {
   }
 });
 
-/* ---------------- NEW: Top Bowlers (avg; min 3 wkts; paired-matches) ---------------- */
+/* ---------------- Top Bowlers (avg; min 3 wkts; paired-matches) ---------------- */
 router.get("/top-bowlers", async (req, res) => {
   const { team1, team2, type = "ALL", limit = 10, min_wkts = 3 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
@@ -320,7 +327,7 @@ router.get("/top-bowlers", async (req, res) => {
       ),
       agg AS (
         SELECT p.player_name,
-               SUM(pp.wkts)      AS wkts,
+               SUM(pp.wkts)       AS wkts,
                SUM(pp.runs_given) AS runs_given
         FROM pp
         JOIN paired_matches pm ON pm.match_name = pp.match_name
