@@ -1,4 +1,4 @@
-// ✅ src/routes/playerRoutes.js
+// src/routes/playerRoutes.js
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
@@ -8,35 +8,20 @@ const toInt = (v, d = 0) => {
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : d;
 };
-// DB allows 'ODI' | 'T20' | 'Test'  ← keep "Test" Cased
 const normType = (t) => {
   const x = String(t || "").toUpperCase();
-  if (x === "ODI" || x === "T20") return x;
-  if (x === "TEST") return "Test";
-  if (x === "TEST MATCH") return "Test";
+  if (x === "TEST" || x === "ODI" || x === "T20") return x;
+  // allow "Test"
+  if (String(t || "") === "Test") return "TEST";
   return "ODI";
 };
-// Try to discover user_id from request (optional)
-const pickUserId = (req) => {
-  // 1) middleware (if you have one)
-  if (req.user?.id) return toInt(req.user.id, null);
-  // 2) x-user-id header
-  const headerId = req.headers["x-user-id"];
-  if (headerId) return toInt(headerId, null);
-  // 3) body
-  if (req.body?.user_id != null) return toInt(req.body.user_id, null);
-  // 4) JWT in Authorization (optional)
-  const auth = req.headers.authorization || "";
-  if (auth.startsWith("Bearer ") && auth.split(".").length === 3) {
-    try {
-      const payload = JSON.parse(Buffer.from(auth.split(".")[1], "base64url").toString("utf8"));
-      return toInt(payload.id || payload.user_id || payload.sub, null);
-    } catch {}
-  }
-  return null;
-};
 
-// ✅ Add/Save Player Performance
+/**
+ * POST /api/player-performance
+ * - Derives user_id from the selected player row; if NULL, falls back to another
+ *   row with the same player_name that has a non-null user_id.
+ * - Inserts into player_performance (match_name, ... , dismissed, user_id).
+ */
 router.post("/player-performance", async (req, res) => {
   const {
     match_name,
@@ -54,28 +39,54 @@ router.post("/player-performance", async (req, res) => {
   } = req.body;
 
   try {
-    // Required fields
+    // 1) validate basic required fields
     if (!match_name || !player_id || !team_name || !match_type || !against_team) {
       return res.status(400).json({ message: "⚠️ Missing required fields." });
     }
 
-    // Player exists?
-    const playerCheck = await pool.query("SELECT 1 FROM players WHERE id = $1", [player_id]);
-    if (playerCheck.rowCount === 0) {
+    // 2) load the player row
+    const pRes = await pool.query(
+      `SELECT id, player_name, user_id
+         FROM players
+        WHERE id = $1`,
+      [player_id]
+    );
+    if (pRes.rows.length === 0) {
       return res.status(404).json({ message: "❌ Player not found." });
     }
+    const playerRow = pRes.rows[0];
 
-    // Optional current user
-    const user_id = pickUserId(req);
-    if (user_id != null) {
-      // Validate user exists
-      const userCheck = await pool.query("SELECT 1 FROM users WHERE id = $1", [user_id]);
-      if (userCheck.rowCount === 0) {
-        return res.status(400).json({ message: "❌ Invalid user_id." });
+    // 3) find user_id (prefer the selected row; if null, fall back by name)
+    let userId = playerRow.user_id;
+
+    if (userId == null) {
+      const fb = await pool.query(
+        `SELECT user_id
+           FROM players
+          WHERE player_name = $1
+            AND user_id IS NOT NULL
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [playerRow.player_name]
+      );
+      if (fb.rows.length) {
+        userId = fb.rows[0].user_id;
       }
     }
 
-    // Coerce + normalize
+    if (userId == null) {
+      return res
+        .status(404)
+        .json({ message: "User ID not found for this player." });
+    }
+
+    // 4) verify that user actually exists
+    const uRes = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
+    if (uRes.rows.length === 0) {
+      return res.status(404).json({ message: "Linked user does not exist." });
+    }
+
+    // 5) normalize payload
     const payload = {
       match_name: String(match_name).trim(),
       player_id: toInt(player_id),
@@ -88,51 +99,49 @@ router.post("/player-performance", async (req, res) => {
       runs_given: toInt(runs_given),
       fifties: toInt(fifties),
       hundreds: toInt(hundreds),
-      dismissed: (dismissed && String(dismissed).trim()) || "Out", // <- column name is 'dismissed'
-      user_id: user_id, // may be null
+      dismissed: (dismissed && String(dismissed).trim()) || "Out",
+      user_id: toInt(userId),
     };
 
-    // Insert: add user_id only when available
-    let insert;
-    if (payload.user_id != null) {
-      insert = await pool.query(
-        `INSERT INTO player_performance
-         (match_name, player_id, team_name, match_type, against_team,
-          run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds, dismissed, user_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-         RETURNING *`,
-        [
-          payload.match_name, payload.player_id, payload.team_name, payload.match_type,
-          payload.against_team, payload.run_scored, payload.balls_faced, payload.wickets_taken,
-          payload.runs_given, payload.fifties, payload.hundreds, payload.dismissed, payload.user_id
-        ]
-      );
-    } else {
-      insert = await pool.query(
-        `INSERT INTO player_performance
-         (match_name, player_id, team_name, match_type, against_team,
-          run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds, dismissed)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-         RETURNING *`,
-        [
-          payload.match_name, payload.player_id, payload.team_name, payload.match_type,
-          payload.against_team, payload.run_scored, payload.balls_faced, payload.wickets_taken,
-          payload.runs_given, payload.fifties, payload.hundreds, payload.dismissed
-        ]
-      );
-    }
+    // 6) insert (use correct column names; include user_id)
+    const insert = await pool.query(
+      `INSERT INTO player_performance
+        (match_name, player_id, team_name, match_type, against_team,
+         run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds,
+         dismissed, user_id)
+       VALUES
+        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       RETURNING *`,
+      [
+        payload.match_name,
+        payload.player_id,
+        payload.team_name,
+        payload.match_type,
+        payload.against_team,
+        payload.run_scored,
+        payload.balls_faced,
+        payload.wickets_taken,
+        payload.runs_given,
+        payload.fifties,
+        payload.hundreds,
+        payload.dismissed,
+        payload.user_id,
+      ]
+    );
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "✅ Player performance saved successfully.",
       data: insert.rows[0],
     });
   } catch (err) {
     console.error("❌ Server error while saving performance:", err);
-    res.status(500).json({ message: "❌ Server error occurred." });
+    return res.status(500).json({ message: "❌ Server error occurred." });
   }
 });
 
-// ✅ GET all player performance records for UI tables
+/**
+ * GET /api/player-performance
+ */
 router.get("/player-performance", async (_req, res) => {
   try {
     const result = await pool.query(`
@@ -149,7 +158,7 @@ router.get("/player-performance", async (_req, res) => {
         pp.runs_given,
         pp.fifties,
         pp.hundreds,
-        pp.dismissed,          -- <- real column name
+        pp.dismissed,
         pp.user_id
       FROM player_performance pp
       JOIN players p ON p.id = pp.player_id
