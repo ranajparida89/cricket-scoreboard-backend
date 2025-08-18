@@ -1,164 +1,201 @@
-// ✅ routes/playerRoutes.js (or your relevant filename)
+// ✅ routes/playerRoutes.js
+// Purpose: Player CRUD + stats endpoints (NO performance insert here)
+// ----------------------------------------------------------------------------------
+// CHANGES (Aug-2025):
+// [DISABLED-PP] Removed duplicate POST /api/player-performance (now lives in performanceRoutes.js)
+// [NORM-TEST]   normFormat now returns 'ODI' | 'T20' | 'Test' to match DB + performanceRoutes
+// ----------------------------------------------------------------------------------
+
 const router = require("express").Router();
 const pool = require("../db");
 
-// 🟢 Add Player (now supports user_id)
+/* ----------------- helpers ----------------- */
+const toInt = (v, d = 0) => {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : d;
+};
+
+// Normalize to DB’s expected casing: 'ODI' | 'T20' | 'Test'
+const normFormat = (t) => {
+  const raw = String(t || "");
+  const up = raw.toUpperCase();
+  if (up === "ODI") return "ODI";
+  if (up === "T20") return "T20";
+  if (up === "TEST" || raw === "Test") return "Test";
+  return "ODI";
+};
+
+/* =========================================================
+ * POST /api/add-player
+ * - Creates a player row WITH user_id
+ * - Enforces: max 15 per (team_name, lineup_type, user_id)
+ * - Enforces: CI duplicate on (team_name, lineup_type, lower(player_name), user_id)
+ * ======================================================= */
 router.post("/add-player", async (req, res) => {
   console.log("Received add-player req.body:", req.body);
-    const {
-      lineup_type,
-      player_name,
-      team_name,
-      skill_type,
-      bowling_type,
-      batting_style,
-      is_captain,
-      is_vice_captain,
-      user_id // 🟢 Added: user_id from frontend!
-    } = req.body;
 
-    try {
-      // Basic validations
-      if (!player_name || !team_name || !lineup_type || !skill_type) {
-        return res.status(400).json({ error: "Required fields missing" });
-      }
+  const {
+    lineup_type,
+    player_name,
+    team_name,
+    skill_type,
+    bowling_type,
+    batting_style,
+    is_captain,
+    is_vice_captain,
+    user_id, // from frontend
+  } = req.body;
 
-      // 🟢 Validate user_id presence
-      if (!user_id) {
-        return res.status(400).json({ error: "User not found. Please login again." });
-      }
-
-      // 🔒 Restrict to 15 players in same team + format (per user)
-      const checkCount = await pool.query(
-        `SELECT COUNT(*) FROM players WHERE team_name = $1 AND lineup_type = $2 AND user_id = $3`,
-        [team_name, lineup_type, user_id]
-      );
-
-      if (parseInt(checkCount.rows[0].count) >= 15) {
-        return res.status(400).json({ error: "Cannot add more than 15 players to this squad." });
-      }
-
-      // 🟢 Insert with user_id
-      const result = await pool.query(
-        `INSERT INTO players 
-          (lineup_type, player_name, team_name, skill_type, bowling_type, batting_style, is_captain, is_vice_captain, user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING *`,
-        [lineup_type, player_name, team_name, skill_type, bowling_type, batting_style, is_captain, is_vice_captain, user_id]
-      );
-
-      res.json({ message: "Player added successfully", player: result.rows[0] });
-    } catch (err) {
-      console.error("Add Player Error:", err.message);
-      res.status(500).json({ error: "Server error" });
+  try {
+    // Basic validations
+    if (!player_name || !team_name || !lineup_type || !skill_type) {
+      return res.status(400).json({ error: "Required fields missing" });
     }
-  });
+    if (!user_id) {
+      return res.status(400).json({ error: "User not found. Please login again." });
+    }
 
-// ✅ GET all players for SquadLineup view
+    const fmt = normFormat(lineup_type);
+
+    // CI duplicate check for same team + format + name + user
+    const dup = await pool.query(
+      `SELECT 1
+         FROM players
+        WHERE team_name = $1
+          AND lineup_type = $2
+          AND lower(player_name) = lower($3)
+          AND user_id = $4`,
+      [team_name, fmt, player_name, user_id]
+    );
+    if (dup.rows.length) {
+      return res.status(409).json({ error: "Player already exists in this squad for this user." });
+    }
+
+    // Limit 15 per team+format+user
+    const checkCount = await pool.query(
+      `SELECT COUNT(*)::int AS n
+         FROM players
+        WHERE team_name = $1
+          AND lineup_type = $2
+          AND user_id = $3`,
+      [team_name, fmt, user_id]
+    );
+    if (checkCount.rows[0].n >= 15) {
+      return res.status(400).json({ error: "Cannot add more than 15 players to this squad." });
+    }
+
+    // Insert
+    const result = await pool.query(
+      `INSERT INTO players
+        (lineup_type, player_name, team_name, skill_type,
+         bowling_type, batting_style, is_captain, is_vice_captain, user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING *`,
+      [
+        fmt,
+        player_name,
+        team_name,
+        skill_type,
+        bowling_type || null,
+        batting_style || null,
+        !!is_captain,
+        !!is_vice_captain,
+        user_id,
+      ]
+    );
+
+    return res.json({ message: "Player added successfully", player: result.rows[0] });
+  } catch (err) {
+    console.error("Add Player Error:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+/* =========================================================
+ * GET /api/players
+ * - Optional filters: user_id, team_name, lineup_type
+ * - Ordered by lower(player_name)
+ * ======================================================= */
 router.get("/players", async (req, res) => {
   try {
-    // Optionally filter by user_id if passed as query param
-    const { user_id } = req.query;
-    let query = "SELECT * FROM players";
-    let params = [];
+    const { user_id, team_name, lineup_type } = req.query;
 
-    // 🟢 Add user_id filter if present (optional)
+    const where = [];
+    const params = [];
+
     if (user_id) {
-      query += " WHERE user_id = $1";
       params.push(user_id);
+      where.push(`user_id = $${params.length}`);
+    }
+    if (team_name) {
+      params.push(team_name);
+      where.push(`team_name = $${params.length}`);
+    }
+    if (lineup_type) {
+      params.push(normFormat(lineup_type));
+      where.push(`lineup_type = $${params.length}`);
     }
 
-    query += " ORDER BY id DESC";
-    const result = await pool.query(query, params);
-    res.json(result.rows);
+    const sql = `
+      SELECT *
+        FROM players
+       ${where.length ? "WHERE " + where.join(" AND ") : ""}
+       ORDER BY lower(player_name), id DESC`;
+
+    const result = await pool.query(sql, params);
+    return res.json(result.rows);
   } catch (err) {
-    console.error("Fetch Players Error:", err.message);
-    res.status(500).json({ error: "Failed to fetch players" });
+    console.error("Fetch Players Error:", err);
+    return res.status(500).json({ error: "Failed to fetch players" });
   }
 });
 
-// ✅ POST Add Advanced Player Performance API (unchanged)
-router.post("/player-performance", async (req, res) => {
-  const {
-    match_name,
-    player_id,
-    team_name,
-    match_type,
-    against_team,
-    run_scored,
-    balls_faced,
-    wickets_taken,
-    runs_given,
-    fifties,
-    hundreds,
-    dismissed
-  } = req.body;
+/* =========================================================
+ * ❌ REMOVED: POST /api/player-performance
+ * Reason: Single source of truth is routes/performanceRoutes.js
+ * (Mounted BEFORE this router in server.js so it wins.)
+ * ======================================================= */
+// Do not add a handler here. If you want a guard instead, you could add:
+// router.post("/player-performance", (_req, res) =>
+//   res.status(410).json({ error: "Moved. Use /api/player-performance (performanceRoutes.js)" })
+// );
 
-   // --- ADD THIS: Fetch user_id for this player
-  const userIdResult = await pool.query(
-    `SELECT user_id FROM players WHERE id = $1`, [player_id]
-  );
-  const user_id = userIdResult.rows[0]?.user_id;
-  if (!user_id) {
-    return res.status(400).json({ message: "User ID not found for this player." });
-  }
-
-  try {
-    if (!player_id || !team_name || !match_type || !against_team) {
-      return res.status(400).json({ message: "⚠️ Missing required fields." });
-    }
-
-    const playerCheck = await pool.query(
-      `SELECT * FROM players WHERE id = $1`,
-      [player_id]
-    );
-    if (playerCheck.rows.length === 0) {
-      return res.status(404).json({ message: "❌ Player not found." });
-    }
-console.log("user_id for inserted player_performance:", user_id);
-  const insertResult = await pool.query(
-  `INSERT INTO player_performance 
-  (match_name, player_id, team_name, match_type, against_team, run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds, dismissed, user_id)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-  RETURNING *`,
-  [
-    match_name,
-    player_id,
-    team_name,
-    match_type,
-    against_team,
-    run_scored,
-    balls_faced,
-    wickets_taken,
-    runs_given,
-    fifties,
-    hundreds,
-    dismissed,
-    user_id
-  ]
-);
-
-    res.status(201).json({
-      message: "✅ Player performance saved successfully.",
-      data: insertResult.rows[0]
-    });
-
-  } catch (err) {
-    console.error("❌ Server error while saving performance:", err);
-    res.status(500).json({ message: "❌ Server error occurred." });
-  }
-});
-
-// ✅ PUT: Update Player by ID
-router.put('/players/:id', async (req, res) => {
+/* =========================================================
+ * PUT /api/players/:id
+ * ======================================================= */
+router.put("/players/:id", async (req, res) => {
   const { id } = req.params;
   const {
-    player_name, team_name, lineup_type,
-    skill_type, bowling_type, batting_style,
-    is_captain, is_vice_captain
+    player_name,
+    team_name,
+    lineup_type,
+    skill_type,
+    bowling_type,
+    batting_style,
+    is_captain,
+    is_vice_captain,
   } = req.body;
 
   try {
+    // Optional: avoid CI duplicate in same team+format (excluding self)
+    if (player_name && team_name && lineup_type) {
+      const fmt = normFormat(lineup_type);
+      const dup = await pool.query(
+        `SELECT 1
+           FROM players
+          WHERE team_name = $1
+            AND lineup_type = $2
+            AND lower(player_name) = lower($3)
+            AND id <> $4`,
+        [team_name, fmt, player_name, id]
+      );
+      if (dup.rows.length) {
+        return res.status(409).json({
+          error: "Another player with this name already exists in this team & format",
+        });
+      }
+    }
+
     const updateQuery = `
       UPDATE players SET
         player_name = $1,
@@ -169,121 +206,124 @@ router.put('/players/:id', async (req, res) => {
         batting_style = $6,
         is_captain = $7,
         is_vice_captain = $8
-      WHERE id = $9
-    `;
+      WHERE id = $9`;
+
     await pool.query(updateQuery, [
-      player_name, team_name, lineup_type,
-      skill_type, bowling_type, batting_style,
-      is_captain, is_vice_captain, id
+      player_name,
+      team_name,
+      normFormat(lineup_type),
+      skill_type,
+      bowling_type || null,
+      batting_style || null,
+      !!is_captain,
+      !!is_vice_captain,
+      id,
     ]);
 
-    res.json({ message: "Player updated successfully" });
+    return res.json({ message: "Player updated successfully" });
   } catch (err) {
     console.error("Update Player Error:", err);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
-// ✅ STEP 1: Backend API for Deleting a Player Ranaj Parida 24-04-2025
+/* =========================================================
+ * DELETE /api/delete-player/:id
+ * (kept as-is for existing frontend usage)
+ * ======================================================= */
 router.delete("/delete-player/:id", async (req, res) => {
   const playerId = req.params.id;
   try {
     await pool.query("DELETE FROM players WHERE id = $1", [playerId]);
-    res.json({ message: "Player deleted successfully" });
+    return res.json({ message: "Player deleted successfully" });
   } catch (err) {
     console.error("Delete Player Error:", err);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
-// ✅ PUT /api/update-player
+/* =========================================================
+ * PUT /api/update-player  (legacy helper)
+ * ======================================================= */
 router.put("/update-player", async (req, res) => {
-  const {
-    id,
-    player_name,
-    team_name,
-    skill_type,
-    lineup_type
-  } = req.body;
+  const { id, player_name, team_name, skill_type, lineup_type } = req.body;
 
   try {
     const result = await pool.query(
-      `UPDATE players 
-       SET player_name = $1, team_name = $2, skill_type = $3, lineup_type = $4
-       WHERE id = $5 RETURNING *`,
-      [player_name, team_name, skill_type, lineup_type, id]
+      `UPDATE players
+          SET player_name = $1,
+              team_name   = $2,
+              skill_type  = $3,
+              lineup_type = $4
+        WHERE id = $5
+      RETURNING *`,
+      [player_name, team_name, skill_type, normFormat(lineup_type), id]
     );
 
-    res.json({ message: "Player updated", player: result.rows[0] });
+    return res.json({ message: "Player updated", player: result.rows[0] });
   } catch (err) {
     console.error("Update Player Error:", err);
-    res.status(500).json({ error: "Failed to update player" });
+    return res.status(500).json({ error: "Failed to update player" });
   }
 });
 
-// fetching player performance data in playerperformace page -- Ranaj Parida 26-04-2025
-// ✅ GET Player Performances for Player Stats Page
+/* =========================================================
+ * GET /api/player-stats
+ * ======================================================= */
 router.get("/player-stats", async (req, res) => {
   try {
     const { playerName, teamName, matchType } = req.query;
 
     let baseQuery = `
- SELECT 
-  pp.*, 
-  p.player_name,
-  pp.balls_faced,  -- ✅ NEW: Ball Faced column
-  ROUND(CASE WHEN pp.balls_faced > 0 THEN (pp.run_scored::decimal / pp.balls_faced) * 100 ELSE 0 END, 2) AS strike_rate, -- ✅ NEW: Strike Rate
-  MAX(
-    CASE
-      WHEN LOWER(pp.dismissed) = 'not out' THEN pp.run_scored
-      ELSE pp.run_scored
-    END
-  ) OVER (PARTITION BY pp.player_id, pp.match_type) AS highest_score,
-  CASE
-    WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
-    ELSE pp.run_scored::text
-  END AS formatted_run_scored
-FROM 
-  player_performance pp
-JOIN 
-  players p 
-ON 
-  pp.player_id = p.id
-WHERE 1=1 
-`;
-    const queryParams = [];
+      SELECT
+        pp.*,
+        p.player_name,
+        pp.balls_faced,
+        ROUND(CASE WHEN pp.balls_faced > 0
+                   THEN (pp.run_scored::decimal / pp.balls_faced) * 100
+                   ELSE 0 END, 2) AS strike_rate,
+        MAX(CASE WHEN LOWER(pp.dismissed) = 'not out' THEN pp.run_scored ELSE pp.run_scored END)
+          OVER (PARTITION BY pp.player_id, pp.match_type) AS highest_score,
+        CASE WHEN LOWER(pp.dismissed) = 'not out'
+             THEN CONCAT(pp.run_scored, '*')
+             ELSE pp.run_scored::text
+        END AS formatted_run_scored
+      FROM player_performance pp
+      JOIN players p ON p.id = pp.player_id
+      WHERE 1=1
+    `;
 
+    const params = [];
     if (playerName) {
-      queryParams.push(`%${playerName}%`);
-      baseQuery += ` AND p.player_name ILIKE $${queryParams.length}`;
+      params.push(`%${playerName}%`);
+      baseQuery += ` AND p.player_name ILIKE $${params.length}`;
     }
-
     if (teamName) {
-      queryParams.push(`%${teamName}%`);
-      baseQuery += ` AND pp.team_name ILIKE $${queryParams.length}`;
+      params.push(`%${teamName}%`);
+      baseQuery += ` AND pp.team_name ILIKE $${params.length}`;
     }
-
     if (matchType && matchType !== "All") {
-      queryParams.push(matchType);
-      baseQuery += ` AND pp.match_type = $${queryParams.length}`;
+      params.push(normFormat(matchType)); // 'ODI' | 'T20' | 'Test'
+      baseQuery += ` AND pp.match_type = $${params.length}`;
     }
 
     baseQuery += ` ORDER BY pp.created_at DESC`;
 
-    const result = await pool.query(baseQuery, queryParams);
-
-    res.json(result.rows);
+    const result = await pool.query(baseQuery, params);
+    return res.json(result.rows);
   } catch (err) {
     console.error("❌ Error fetching player stats:", err);
-    res.status(500).json({ message: "❌ Server error while fetching player stats." });
+    return res.status(500).json({ message: "❌ Server error while fetching player stats." });
   }
 });
 
-// ✅ NEW API for Player Stats Summary Table (with Match Count per Player)
-router.get("/player-stats-summary", async (req, res) => {
+/* =========================================================
+ * GET /api/player-stats-summary
+ * ======================================================= */
+router.get("/player-stats-summary", async (_req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         pp.id,
         p.player_name,
         p.team_name,
@@ -297,75 +337,67 @@ router.get("/player-stats-summary", async (req, res) => {
         pp.fifties,
         pp.hundreds,
         pp.dismissed AS dismissed_status,
-
-        -- ✅ Strike Rate Calculation
-        ROUND(CASE 
-          WHEN pp.balls_faced > 0 THEN (pp.run_scored::decimal / pp.balls_faced) * 100 
-          ELSE 0 
-        END, 2) AS strike_rate,
-
-        -- ✅ Highest Score (with max logic)
-        MAX(
-          CASE 
-            WHEN LOWER(pp.dismissed) = 'not out' THEN pp.run_scored 
-            ELSE pp.run_scored 
-          END
-        ) OVER (PARTITION BY pp.player_id, pp.match_type) AS highest_score,
-
-        -- ✅ Formatted Score
-        CASE 
-          WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
-          ELSE pp.run_scored::text
+        ROUND(CASE WHEN pp.balls_faced > 0
+                   THEN (pp.run_scored::decimal / pp.balls_faced) * 100
+                   ELSE 0 END, 2) AS strike_rate,
+        MAX(CASE WHEN LOWER(pp.dismissed) = 'not out' THEN pp.run_scored ELSE pp.run_scored END)
+          OVER (PARTITION BY pp.player_id, pp.match_type) AS highest_score,
+        CASE WHEN LOWER(pp.dismissed) = 'not out'
+             THEN CONCAT(pp.run_scored, '*')
+             ELSE pp.run_scored::text
         END AS formatted_run_scored,
-
-        -- ✅ Match counts
         COUNT(*) OVER (PARTITION BY pp.player_id) AS total_matches,
         COUNT(*) OVER (PARTITION BY pp.player_id, pp.match_type) AS match_count
-
       FROM player_performance pp
       JOIN players p ON p.id = pp.player_id
-      ORDER BY pp.player_id, pp.id;
+      ORDER BY pp.player_id, pp.id
     `);
 
-    res.json(result.rows);
+    return res.json(result.rows);
   } catch (err) {
     console.error("❌ Error fetching player stats summary:", err);
-    res.status(500).json({ error: "Server error occurred while fetching stats." });
+    return res.status(500).json({ error: "Server error occurred while fetching stats." });
   }
 });
 
-// ✅ NEW: Get detailed match-wise stats for a player (for floating popup view)
+/* =========================================================
+ * GET /api/player-matches/:playerName
+ * ======================================================= */
 router.get("/player-matches/:playerName", async (req, res) => {
   const { playerName } = req.params;
 
   try {
-   const result = await pool.query(`
- SELECT 
-  pp.*,
-  p.player_name,
-  p.team_name,
-  pp.against_team,
-  pp.dismissed, -- Explicitly select dismissed
-  ROUND(CASE WHEN pp.balls_faced > 0 THEN (pp.run_scored::decimal / pp.balls_faced) * 100 ELSE 0 END, 2) AS strike_rate,
-  CASE
-    WHEN LOWER(pp.dismissed) = 'not out' THEN CONCAT(pp.run_scored, '*')
-    ELSE pp.run_scored::text
-  END AS formatted_run_scored,
-  TO_CHAR(pp.created_at, 'YYYY-MM-DD') AS match_display_date,
-  TRIM(TO_CHAR(pp.created_at, 'FMDay')) AS match_display_day,
-  TRIM(TO_CHAR(pp.created_at, 'HH12:MI AM')) AS match_display_time
-FROM player_performance pp
-JOIN players p ON p.id = pp.player_id
-WHERE LOWER(p.player_name) = LOWER($1)
-ORDER BY pp.created_at DESC;
-`, [playerName]);
+    const result = await pool.query(
+      `
+      SELECT
+        pp.*,
+        p.player_name,
+        p.team_name,
+        pp.against_team,
+        pp.dismissed,
+        ROUND(CASE WHEN pp.balls_faced > 0
+                   THEN (pp.run_scored::decimal / pp.balls_faced) * 100
+                   ELSE 0 END, 2) AS strike_rate,
+        CASE WHEN LOWER(pp.dismissed) = 'not out'
+             THEN CONCAT(pp.run_scored, '*')
+             ELSE pp.run_scored::text
+        END AS formatted_run_scored,
+        TO_CHAR(pp.created_at, 'YYYY-MM-DD')       AS match_display_date,
+        TRIM(TO_CHAR(pp.created_at, 'FMDay'))      AS match_display_day,
+        TRIM(TO_CHAR(pp.created_at, 'HH12:MI AM')) AS match_display_time
+      FROM player_performance pp
+      JOIN players p ON p.id = pp.player_id
+      WHERE LOWER(p.player_name) = LOWER($1)
+      ORDER BY pp.created_at DESC
+      `,
+      [playerName]
+    );
 
-    res.json(result.rows);
+    return res.json(result.rows);
   } catch (err) {
     console.error("❌ Error fetching player match stats:", err);
-    res.status(500).json({ error: "Server error occurred while fetching match data." });
+    return res.status(500).json({ error: "Server error occurred while fetching match data." });
   }
 });
 
-// Keep this at the very end
 module.exports = router;

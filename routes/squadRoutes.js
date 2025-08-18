@@ -1,17 +1,36 @@
 // C:\cricket-scoreboard-backend\routes\squadRoutes.js
 // 14-AUG-2025 — Squad + Lineup APIs with validations, per-format duplicate rule, and suggest fallback
 //
-// CHANGES (tagged below):
-// [CHANGED-1] POST /players duplicate check now enforces uniqueness on (team_name, lineup_type, lower(player_name))
-// [CHANGED-2] PUT  /players/:id duplicate check now enforces the same rule, excluding the record itself
+// FIXES IN THIS VERSION:
+// [USERID-1]  Persist user_id on POST /api/squads/players (read from X-User-Id header or body.user_id)
+// [USERID-2]  Backfill user_id on PUT /api/squads/players/:id if row has NULL user_id (non-destructive)
+// [SAFEFMT-1] Normalize lineup_type casing ("Test" -> "TEST")
+//
+// Existing CHANGES you already had are kept:
+// [CHANGED-1] POST /players duplicate check enforces uniqueness on (team_name, lineup_type, lower(player_name))
+// [CHANGED-2] PUT  /players/:id duplicate check enforces same, excluding the record itself
 // [NEW-1]     POST /lineup validates that all player_ids belong to the same team+format
-// [NEW-2]     GET  /suggest uses SIMILARITY when available, otherwise falls back to simple ILIKE ordering
+// [NEW-2]     GET  /suggest tries SIMILARITY first, falls back to ILIKE
 
 const express = require("express");
 const router = express.Router();
 const pool = require("../db"); // your pg Pool
 
 function ci(s) { return (s || "").trim(); }
+function normFormat(t) {
+  const x = String(t || "").toUpperCase();
+  if (x === "ODI" || x === "T20" || x === "TEST") return x;
+  if (String(t || "") === "Test") return "TEST";
+  return "ODI";
+}
+// Read user id from header or body (header takes precedence)
+function getUserId(req) {
+  const h = req.header("x-user-id") || req.header("X-User-Id");
+  if (h && /^\d+$/.test(String(h))) return parseInt(h, 10);
+  const b = req.body?.user_id;
+  if (b && /^\d+$/.test(String(b))) return parseInt(b, 10);
+  return null;
+}
 
 // ---------- PLAYERS ----------
 
@@ -22,11 +41,11 @@ router.get("/players", async (req, res) => {
     const fmt  = ci(req.query.format);
     const { rows } = await pool.query(
       `SELECT id, player_name, team_name, lineup_type, skill_type, bowling_type, batting_style,
-              is_captain, is_vice_captain, profile_url
-       FROM players
-       WHERE ($1 = '' OR team_name = $1)
-         AND ($2 = '' OR lineup_type = $2)
-       ORDER BY lower(player_name)`,
+              is_captain, is_vice_captain, profile_url, user_id
+         FROM players
+        WHERE ($1 = '' OR team_name = $1)
+          AND ($2 = '' OR lineup_type = $2)
+        ORDER BY lower(player_name)`,
       [team, fmt]
     );
     res.json(rows);
@@ -75,13 +94,25 @@ router.get("/suggest", async (req, res) => {
 });
 
 // POST /api/squads/players  (create)
+// [USERID-1] Persist user_id so later performance inserts can resolve it.
 router.post("/players", async (req, res) => {
   try {
-    const { player_name, team_name, lineup_type, skill_type, bowling_type, batting_style, profile_url } = req.body;
+    const {
+      player_name,
+      team_name,
+      lineup_type,
+      skill_type,
+      bowling_type,
+      batting_style,
+      profile_url
+    } = req.body;
 
     if (!player_name || !team_name || !lineup_type || !skill_type) {
       return res.status(400).json({ error: "Missing required fields" });
     }
+
+    const fmt = normFormat(lineup_type);
+    const userId = getUserId(req); // header or body; optional but preferred
 
     // [CHANGED-1] CI duplicate check now includes lineup_type (per-format uniqueness)
     const { rows: dup } = await pool.query(
@@ -90,17 +121,28 @@ router.post("/players", async (req, res) => {
         WHERE team_name   = $1
           AND lineup_type = $2
           AND lower(player_name) = lower($3)`,
-      [team_name, lineup_type, player_name]
+      [team_name, fmt, player_name]
     );
     if (dup.length) {
       return res.status(409).json({ error: "Player already exists in this team & format" });
     }
 
+    // Insert (now including user_id)
     const { rows } = await pool.query(
-      `INSERT INTO players (player_name, team_name, lineup_type, skill_type, bowling_type, batting_style, profile_url)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `INSERT INTO players
+        (player_name, team_name, lineup_type, skill_type, bowling_type, batting_style, profile_url, user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING *`,
-      [player_name, team_name, lineup_type, skill_type, bowling_type || null, batting_style || null, profile_url || null]
+      [
+        player_name,
+        team_name,
+        fmt,
+        skill_type,
+        bowling_type || null,
+        batting_style || null,
+        profile_url || null,
+        userId // may be null; but when UI is logged in we expect a value via X-User-Id
+      ]
     );
     res.status(201).json(rows[0]);
   } catch (e) {
@@ -110,10 +152,22 @@ router.post("/players", async (req, res) => {
 });
 
 // PUT /api/squads/players/:id
+// [USERID-2] Backfill user_id if the row currently has NULL user_id; do not overwrite a non-null value.
 router.put("/players/:id", async (req, res) => {
   try {
     const id = +req.params.id;
-    const { player_name, team_name, lineup_type, skill_type, bowling_type, batting_style, profile_url } = req.body;
+    const {
+      player_name,
+      team_name,
+      lineup_type,
+      skill_type,
+      bowling_type,
+      batting_style,
+      profile_url
+    } = req.body;
+
+    const fmt = normFormat(lineup_type);
+    const userId = getUserId(req); // header/body; optional
 
     // [CHANGED-2] CI duplicate check (team+format+name), excluding self
     const { rows: dup } = await pool.query(
@@ -123,19 +177,36 @@ router.put("/players/:id", async (req, res) => {
           AND lineup_type = $2
           AND lower(player_name) = lower($3)
           AND id <> $4`,
-      [team_name, lineup_type, player_name, id]
+      [team_name, fmt, player_name, id]
     );
     if (dup.length) {
       return res.status(409).json({ error: "Another player with this name already exists in this team & format" });
     }
 
+    // Update core fields; backfill user_id only if currently NULL
     const { rows } = await pool.query(
       `UPDATE players
-          SET player_name=$1, team_name=$2, lineup_type=$3, skill_type=$4,
-              bowling_type=$5, batting_style=$6, profile_url=$7
-        WHERE id=$8
+          SET player_name  = $1,
+              team_name    = $2,
+              lineup_type  = $3,
+              skill_type   = $4,
+              bowling_type = $5,
+              batting_style= $6,
+              profile_url  = $7,
+              user_id      = COALESCE(user_id, $8) -- backfill only when NULL
+        WHERE id = $9
       RETURNING *`,
-      [player_name, team_name, lineup_type, skill_type, bowling_type || null, batting_style || null, profile_url || null, id]
+      [
+        player_name,
+        team_name,
+        fmt,
+        skill_type,
+        bowling_type || null,
+        batting_style || null,
+        profile_url || null,
+        userId,  // if null, COALESCE(user_id, null) keeps as-is
+        id
+      ]
     );
     res.json(rows[0]);
   } catch (e) {
