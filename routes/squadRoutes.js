@@ -1,21 +1,28 @@
 // C:\cricket-scoreboard-backend\routes\squadRoutes.js
-// 14-AUG-2025 — Squad + Lineup APIs with validations, per-format duplicate rule, and suggest fallback
+// 19-AUG-2025 — Squad + Lineup APIs
 //
-// FIXES IN THIS VERSION:
+// FIXES CARRIED OVER FROM YOUR VERSION:
 // [USERID-1]  Persist user_id on POST /api/squads/players (read from X-User-Id header or body.user_id)
 // [USERID-2]  Backfill user_id on PUT /api/squads/players/:id if row has NULL user_id (non-destructive)
 // [SAFEFMT-1] Normalize lineup_type casing ("Test" -> "TEST")
-//
-// Existing CHANGES you already had are kept:
-// [CHANGED-1] POST /players duplicate check enforces uniqueness on (team_name, lineup_type, lower(player_name))
-// [CHANGED-2] PUT  /players/:id duplicate check enforces same, excluding the record itself
+// [CHANGED-1] POST /players duplicate check: (team_name, lineup_type, lower(player_name))
+// [CHANGED-2] PUT  /players/:id duplicate check: same rule, excluding self
 // [NEW-1]     POST /lineup validates that all player_ids belong to the same team+format
 // [NEW-2]     GET  /suggest tries SIMILARITY first, falls back to ILIKE
+//
+// NEW IN THIS BUILD (to support your requests):
+// [TEAMS-1]   GET  /api/squads/teams         → list teams from teams_master (if present) or fallback to DISTINCT players.team_name
+// [TEAMS-2]   POST /api/squads/teams        → add a custom team (auto-creates teams_master if missing). CI uniqueness.
+// [DELETE-1]  DELETE /api/squads/players/:id → now **safe**: removes lineup refs, clears C/VC, then deletes
+// [DELETE-2]  DELETE /api/squads/players/:id?all=true → delete the **same named player** in **all formats** of the same team, with safe cleanup
+//
+// NOTE: No server.js changes needed. These routes are still mounted under /api/squads
 
 const express = require("express");
 const router = express.Router();
-const pool = require("../db"); // your pg Pool
+const pool = require("../db"); // pg Pool
 
+/* ----------------- helpers ----------------- */
 function ci(s) { return (s || "").trim(); }
 function normFormat(t) {
   const x = String(t || "").toUpperCase();
@@ -32,7 +39,90 @@ function getUserId(req) {
   return null;
 }
 
-// ---------- PLAYERS ----------
+/* ============================================================================
+ * TEAMS MASTER
+ * ----------------------------------------------------------------------------
+ * We support custom teams via a small master list. If the table doesn't exist,
+ * we:
+ *   - auto-create it on POST,
+ *   - fall back to DISTINCT players.team_name on GET.
+ * ============================================================================
+ */
+
+// [TEAMS-1] GET /api/squads/teams
+router.get("/teams", async (_req, res) => {
+  try {
+    // try teams_master first
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, name
+           FROM teams_master
+          ORDER BY lower(name)`
+      );
+      return res.json(rows);
+    } catch (err) {
+      // undefined_table → fallback to distinct player team names
+      if (err?.code !== "42P01") throw err;
+      const { rows } = await pool.query(
+        `SELECT DISTINCT team_name AS name
+           FROM players
+          WHERE team_name IS NOT NULL AND team_name <> ''
+          ORDER BY lower(team_name)`
+      );
+      return res.json(rows.map(r => ({ id: null, name: r.name })));
+    }
+  } catch (e) {
+    console.error("[TEAMS-1] GET /teams error:", e);
+    res.status(500).json({ error: "Failed to load teams" });
+  }
+});
+
+// [TEAMS-2] POST /api/squads/teams  { name }
+router.post("/teams", async (req, res) => {
+  const raw = ci(req.body?.name);
+  const creatorId = getUserId(req); // optional "created_by"
+  if (!raw) return res.status(400).json({ error: "Team name is required" });
+
+  // create table if missing (id SERIAL ok for PG)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS teams_master (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        created_by INT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+  } catch (e) {
+    console.error("[TEAMS-2] ensure teams_master failed:", e);
+    return res.status(500).json({ error: "Failed to initialise team storage" });
+  }
+
+  // uniqueness (CI)
+  try {
+    const dupe = await pool.query(
+      `SELECT 1 FROM teams_master WHERE lower(name) = lower($1)`,
+      [raw]
+    );
+    if (dupe.rows.length) {
+      return res.status(409).json({ error: "Team already exists" });
+    }
+
+    const ins = await pool.query(
+      `INSERT INTO teams_master (name, created_by)
+       VALUES ($1, $2) RETURNING id, name`,
+      [raw, creatorId || null]
+    );
+    return res.status(201).json({ team: ins.rows[0] });
+  } catch (e) {
+    console.error("[TEAMS-2] POST /teams failed:", e);
+    return res.status(500).json({ error: "Failed to add team" });
+  }
+});
+
+/* ============================================================================
+ * PLAYERS
+ * ========================================================================== */
 
 // GET /api/squads/players?team=India&format=ODI
 router.get("/players", async (req, res) => {
@@ -62,7 +152,7 @@ router.get("/suggest", async (req, res) => {
     const q = (req.query.q || "").trim();
     if (!q) return res.json([]);
 
-    // [NEW-2] Try SIMILARITY first (pg_trgm), fallback to simple ILIKE if extension isn't enabled
+    // Try SIMILARITY first (pg_trgm), fallback to simple ILIKE
     try {
       const { rows } = await pool.query(
         `SELECT player_name, team_name
@@ -75,7 +165,6 @@ router.get("/suggest", async (req, res) => {
       );
       return res.json(rows.map(r => ({ name: r.player_name, team: r.team_name })));
     } catch (err) {
-      // Fallback when SIMILARITY() is missing
       const { rows } = await pool.query(
         `SELECT player_name, team_name
            FROM players
@@ -141,7 +230,7 @@ router.post("/players", async (req, res) => {
         bowling_type || null,
         batting_style || null,
         profile_url || null,
-        userId // may be null; but when UI is logged in we expect a value via X-User-Id
+        userId || null
       ]
     );
     res.status(201).json(rows[0]);
@@ -204,7 +293,7 @@ router.put("/players/:id", async (req, res) => {
         bowling_type || null,
         batting_style || null,
         profile_url || null,
-        userId,  // if null, COALESCE(user_id, null) keeps as-is
+        userId || null,
         id
       ]
     );
@@ -215,19 +304,88 @@ router.put("/players/:id", async (req, res) => {
   }
 });
 
-// DELETE /api/squads/players/:id
+/* ============================================================================
+ * SAFE DELETES
+ * - We remove lineup references and clear C/VC pointers before deleting.
+ * - "all=true" deletes the player's name across ALL formats for the SAME team.
+ * ========================================================================== */
+
+// internal helper: remove a single players.id safely from lineups
+async function safeRemoveSinglePlayer(client, playerId) {
+  // Clear captain/vice pointers where this player is referenced
+  await client.query(
+    `UPDATE team_lineups
+        SET captain_player_id = CASE WHEN captain_player_id = $1 THEN NULL ELSE captain_player_id END,
+            vice_captain_player_id = CASE WHEN vice_captain_player_id = $1 THEN NULL ELSE vice_captain_player_id END
+      WHERE captain_player_id = $1 OR vice_captain_player_id = $1`,
+    [playerId]
+  );
+
+  // Remove lineup rows that reference this player
+  await client.query(
+    `DELETE FROM team_lineup_players WHERE player_id = $1`,
+    [playerId]
+  );
+
+  // Finally delete the player membership row
+  await client.query(`DELETE FROM players WHERE id = $1`, [playerId]);
+}
+
+// [DELETE-1]/[DELETE-2] DELETE /api/squads/players/:id(?all=true)
 router.delete("/players/:id", async (req, res) => {
+  const id = +req.params.id;
+  const deleteEverywhere = String(req.query.all || "").toLowerCase() === "true";
+
+  const client = await pool.connect();
   try {
-    const id = +req.params.id;
-    await pool.query(`DELETE FROM players WHERE id=$1`, [id]);
-    res.json({ ok: true });
+    await client.query("BEGIN");
+
+    // First, load the target row (for deleteEverywhere scope)
+    const rowRes = await client.query(
+      `SELECT id, player_name, team_name FROM players WHERE id = $1`,
+      [id]
+    );
+    if (!rowRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Player not found" });
+    }
+
+    if (!deleteEverywhere) {
+      // single membership delete (safe)
+      await safeRemoveSinglePlayer(client, id);
+      await client.query("COMMIT");
+      return res.json({ ok: true, mode: "single", message: "Player removed from this format and lineup(s)" });
+    }
+
+    // delete everywhere (same team, same name, across all formats)
+    const { player_name, team_name } = rowRes.rows[0];
+    const all = await client.query(
+      `SELECT id FROM players WHERE lower(player_name) = lower($1) AND team_name = $2`,
+      [player_name, team_name]
+    );
+
+    for (const r of all.rows) {
+      await safeRemoveSinglePlayer(client, r.id);
+    }
+
+    await client.query("COMMIT");
+    return res.json({
+      ok: true,
+      mode: "all",
+      message: `Removed '${player_name}' from all ${team_name} squads and lineups`
+    });
   } catch (e) {
+    await client.query("ROLLBACK");
     console.error("DELETE /players/:id", e);
     res.status(500).json({ error: "Failed to delete player" });
+  } finally {
+    client.release();
   }
 });
 
-// ---------- LINEUPS ----------
+/* ============================================================================
+ * LINEUPS
+ * ========================================================================== */
 
 // GET /api/squads/lineup?team=India&format=ODI
 router.get("/lineup", async (req, res) => {
@@ -269,7 +427,7 @@ router.get("/lineup", async (req, res) => {
   }
 });
 
-// POST /api/squads/lineup  (upsert latest)
+// POST /api/squads/lineup  (insert a new "latest" lineup)
 router.post("/lineup", async (req, res) => {
   const client = await pool.connect();
   try {
@@ -296,7 +454,7 @@ router.post("/lineup", async (req, res) => {
         WHERE id = ANY($1)
           AND team_name   = $2
           AND lineup_type = $3`,
-      [ids, team_name, lineup_type]
+      [ids, team_name, normFormat(lineup_type)]
     );
     if (chk[0].n !== ids.length) {
       throw new Error("All players must belong to the same team and format");
@@ -306,7 +464,7 @@ router.post("/lineup", async (req, res) => {
       `INSERT INTO team_lineups (team_name, lineup_type, captain_player_id, vice_captain_player_id)
        VALUES ($1,$2,$3,$4)
        RETURNING id`,
-      [team_name, lineup_type, captain_player_id, vice_captain_player_id]
+      [team_name, normFormat(lineup_type), captain_player_id, vice_captain_player_id]
     );
     const lineupId = insHead.rows[0].id;
 
