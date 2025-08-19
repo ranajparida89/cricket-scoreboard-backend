@@ -11,12 +11,13 @@
 // [NEW-2]     GET  /suggest tries SIMILARITY first, falls back to ILIKE
 //
 // NEW IN THIS BUILD (to support your requests):
-// [TEAMS-1]   GET  /api/squads/teams         → list teams from teams_master (if present) or fallback to DISTINCT players.team_name
-// [TEAMS-2]   POST /api/squads/teams        → add a custom team (auto-creates teams_master if missing). CI uniqueness.
-// [DELETE-1]  DELETE /api/squads/players/:id → now **safe**: removes lineup refs, clears C/VC, then deletes
-// [DELETE-2]  DELETE /api/squads/players/:id?all=true → delete the **same named player** in **all formats** of the same team, with safe cleanup
+// [TEAMS-1]   GET    /api/squads/teams                   → list teams from teams_master (if present) or fallback to DISTINCT players.team_name
+// [TEAMS-2]   POST   /api/squads/teams                   → add a custom team (auto-creates teams_master if missing). CI uniqueness.
+// [DELETE-1]  DELETE /api/squads/players/:id             → now **safe**: removes lineup refs, clears C/VC, then deletes
+// [DELETE-2]  DELETE /api/squads/players/:id?all=true    → delete the **same named player** in **all formats** of the same team, safe cleanup
+// [DELETE-3]  (optional) add ?force=true to also delete player_performance rows referencing the player(s) to satisfy FK
 //
-// NOTE: No server.js changes needed. These routes are still mounted under /api/squads
+// NOTE: These routes are mounted at /api/squads in server.js (no change needed).
 
 const express = require("express");
 const router = express.Router();
@@ -83,7 +84,7 @@ router.post("/teams", async (req, res) => {
   const creatorId = getUserId(req); // optional "created_by"
   if (!raw) return res.status(400).json({ error: "Team name is required" });
 
-  // create table if missing (id SERIAL ok for PG)
+  // ensure table exists
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS teams_master (
@@ -128,7 +129,8 @@ router.post("/teams", async (req, res) => {
 router.get("/players", async (req, res) => {
   try {
     const team = ci(req.query.team);
-    const fmt  = ci(req.query.format);
+    // [SAFEFMT-1] normalize format filter but allow empty (no filter)
+    const fmt  = req.query.format ? normFormat(req.query.format) : "";
     const { rows } = await pool.query(
       `SELECT id, player_name, team_name, lineup_type, skill_type, bowling_type, batting_style,
               is_captain, is_vice_captain, profile_url, user_id
@@ -308,10 +310,12 @@ router.put("/players/:id", async (req, res) => {
  * SAFE DELETES
  * - We remove lineup references and clear C/VC pointers before deleting.
  * - "all=true" deletes the player's name across ALL formats for the SAME team.
+ * - "force=true" additionally deletes any player_performance rows referencing
+ *    the player(s) to satisfy FK constraints (use with care).
  * ========================================================================== */
 
-// internal helper: remove a single players.id safely from lineups
-async function safeRemoveSinglePlayer(client, playerId) {
+// internal helper: remove a single players.id safely from lineups (+ optional perf)
+async function safeRemoveSinglePlayer(client, playerId, { forcePerf = false } = {}) {
   // Clear captain/vice pointers where this player is referenced
   await client.query(
     `UPDATE team_lineups
@@ -327,14 +331,20 @@ async function safeRemoveSinglePlayer(client, playerId) {
     [playerId]
   );
 
+  // [DELETE-3] optionally remove performances that would block delete via FK
+  if (forcePerf) {
+    await client.query(`DELETE FROM player_performance WHERE player_id = $1`, [playerId]);
+  }
+
   // Finally delete the player membership row
   await client.query(`DELETE FROM players WHERE id = $1`, [playerId]);
 }
 
-// [DELETE-1]/[DELETE-2] DELETE /api/squads/players/:id(?all=true)
+// [DELETE-1]/[DELETE-2]/[DELETE-3] DELETE /api/squads/players/:id(?all=true&force=true)
 router.delete("/players/:id", async (req, res) => {
   const id = +req.params.id;
   const deleteEverywhere = String(req.query.all || "").toLowerCase() === "true";
+  const forcePerf       = String(req.query.force || "").toLowerCase() === "true";
 
   const client = await pool.connect();
   try {
@@ -352,9 +362,13 @@ router.delete("/players/:id", async (req, res) => {
 
     if (!deleteEverywhere) {
       // single membership delete (safe)
-      await safeRemoveSinglePlayer(client, id);
+      await safeRemoveSinglePlayer(client, id, { forcePerf });
       await client.query("COMMIT");
-      return res.json({ ok: true, mode: "single", message: "Player removed from this format and lineup(s)" });
+      return res.json({
+        ok: true,
+        mode: "single",
+        message: `Player removed from this format${forcePerf ? " (and performances deleted)" : ""}`
+      });
     }
 
     // delete everywhere (same team, same name, across all formats)
@@ -365,14 +379,14 @@ router.delete("/players/:id", async (req, res) => {
     );
 
     for (const r of all.rows) {
-      await safeRemoveSinglePlayer(client, r.id);
+      await safeRemoveSinglePlayer(client, r.id, { forcePerf });
     }
 
     await client.query("COMMIT");
     return res.json({
       ok: true,
       mode: "all",
-      message: `Removed '${player_name}' from all ${team_name} squads and lineups`
+      message: `Removed '${player_name}' from all ${team_name} squads and lineups${forcePerf ? " (and performances deleted)" : ""}`
     });
   } catch (e) {
     await client.query("ROLLBACK");
@@ -391,7 +405,7 @@ router.delete("/players/:id", async (req, res) => {
 router.get("/lineup", async (req, res) => {
   try {
     const team = ci(req.query.team);
-    const fmt  = ci(req.query.format);
+    const fmt  = req.query.format ? normFormat(req.query.format) : "";
 
     const { rows: heads } = await pool.query(
       `SELECT id, captain_player_id, vice_captain_player_id
@@ -448,13 +462,14 @@ router.post("/lineup", async (req, res) => {
 
     // [NEW-1] sanity check: all player_ids belong to the same team+format
     const ids = players.map(p => p.player_id);
+    const fmt = normFormat(lineup_type);
     const { rows: chk } = await client.query(
       `SELECT COUNT(*)::int AS n
          FROM players
         WHERE id = ANY($1)
           AND team_name   = $2
           AND lineup_type = $3`,
-      [ids, team_name, normFormat(lineup_type)]
+      [ids, team_name, fmt]
     );
     if (chk[0].n !== ids.length) {
       throw new Error("All players must belong to the same team and format");
@@ -464,7 +479,7 @@ router.post("/lineup", async (req, res) => {
       `INSERT INTO team_lineups (team_name, lineup_type, captain_player_id, vice_captain_player_id)
        VALUES ($1,$2,$3,$4)
        RETURNING id`,
-      [team_name, normFormat(lineup_type), captain_player_id, vice_captain_player_id]
+      [team_name, fmt, captain_player_id, vice_captain_player_id]
     );
     const lineupId = insHead.rows[0].id;
 
