@@ -50,7 +50,7 @@ const boardAnalyticsRoutes = require("./routes/boardAnalyticsRoutes");
 
 const squadRoutes = require("./routes/squadRoutes");
 const playerAnalyticsRoutes = require('./routes/playerAnalyticsRoutes');
-
+const squadImportRoutes = require("./routes/squadImportRoutes");
 
 const app = express();
 const server = http.createServer(app);
@@ -125,6 +125,7 @@ app.use("/api/boards", attachAdminIfPresent, boardRoutes);
 app.use("/api/boards/analytics", boardAnalyticsRoutes);
 app.use("/api/squads", attachAdminIfPresent, squadRoutes);
 app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespace
+app.use("/api/squads/ocr", squadImportRoutes);
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
 const io = socketIo(server, {
