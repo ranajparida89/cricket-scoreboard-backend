@@ -1,30 +1,32 @@
 // routes/squadImportRoutes.js
 // 19-AUG-2025 — Bulk OCR import (preview + commit) for Squad.
-// Safe addon: does not touch existing Squad/Lineup code.
+// Safe add-on: does not touch existing Squad/Lineup code.
 
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 const { createWorker } = require("tesseract.js");
 const { v4: uuidv4 } = require("uuid");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const pool = require("../db");
 
 // ---------------------- Config ----------------------
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024 } // 8MB
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
 });
 
-// CHANGE THIS IF YOUR TABLE NAME/ COLUMNS DIFFER:
-const TABLE = "players"; // must have columns shown below
-// Recommended unique index in DB (one-time):
+// DB table (matches your existing players table)
+const TABLE = "players";
+// Recommended one-time index in DB:
 // CREATE UNIQUE INDEX IF NOT EXISTS ux_players_team_fmt_name
 // ON players (LOWER(player_name), team_name, lineup_type);
 
 const ALLOWED_BAT = new Set(["RHB", "LHB"]);
 const ALLOWED_BOWL = new Set(["RM", "RFM", "RF", "LF", "LM", "LHM", "SLO", "OS", "LS"]);
 
-// Code → nice text
 const batMap = { RHB: "Right-hand Bat", LHB: "Left-hand Bat" };
 const bowlMap = {
   RM: "Right-arm Medium",
@@ -35,16 +37,10 @@ const bowlMap = {
   LHM: "Left-arm Medium",
   SLO: "Left-arm Orthodox",
   OS: "Off Spin",
-  LS: "Leg Spin"
+  LS: "Leg Spin",
 };
 
-// Role resolved from icons (stubbed to null for now; user can fix in preview)
-const ROLE_LIST = [
-  "Batsman",
-  "Wicketkeeper/Batsman",
-  "All Rounder",
-  "Bowler"
-];
+const ROLE_LIST = ["Batsman", "Wicketkeeper/Batsman", "All Rounder", "Bowler"];
 
 // ---------------------- Helpers ----------------------
 const toTitle = (s = "") =>
@@ -91,10 +87,10 @@ const parseRows = (plain) => {
       normalized: {
         batting_style: batMap[bat] || null,
         bowling_type: bowlMap[bowl] || null,
-        skill_type: null // from role
+        skill_type: null, // from role
       },
-      conf: { name: 0.9, bat: 0.98, bowl: 0.96, role: 0.0 }, // basic confidences
-      status: "FIX" // missing role -> FIX by default
+      conf: { name: 0.9, bat: 0.98, bowl: 0.96, role: 0.0 },
+      status: "FIX", // missing role -> FIX by default
     });
   }
 
@@ -123,11 +119,10 @@ const statusFrom = (row, duplicateSet) => {
 };
 
 // ---------------------- OCR worker ----------------------
-const ocrWorker = createWorker({
-  logger: () => {} // silence; add logs if needed
-});
+// IMPORTANT for Render: use file-path input to avoid Node 22 DataCloneError
+// and pin Node 20 in package.json (see below).
+const ocrWorker = createWorker({ logger: () => {} });
 
-// Ensure Tesseract is ready once
 let ocrReady = false;
 async function ensureOcr() {
   if (ocrReady) return;
@@ -153,7 +148,12 @@ router.post("/preview", upload.single("image"), async (req, res) => {
 
     await ensureOcr();
 
-    const { data } = await ocrWorker.recognize(req.file.buffer);
+    // --- Write image to a temp file & pass PATH to tesseract (fixes DataCloneError) ---
+    const tmpPath = path.join(os.tmpdir(), `ocr-${Date.now()}-${uuidv4()}.png`);
+    await fs.promises.writeFile(tmpPath, req.file.buffer);
+
+    const { data } = await ocrWorker.recognize(tmpPath);
+    await fs.promises.unlink(tmpPath).catch(() => {});
     const plain = (data && data.text) || "";
 
     if (!team_name) {
@@ -189,7 +189,7 @@ router.post("/preview", upload.single("image"), async (req, res) => {
       preview_id,
       rows,
       duplicates: [...duplicateSet],
-      errors: []
+      errors: [],
     });
   } catch (err) {
     console.error("OCR preview error:", err);
@@ -215,7 +215,7 @@ router.post("/commit", async (req, res) => {
     player_name: toTitle(r.player_name || ""),
     role: r.role || null,
     bat: (r.bat || "").toUpperCase(),
-    bowl: (r.bowl || "").toUpperCase()
+    bowl: (r.bowl || "").toUpperCase(),
   }));
 
   const created = [];
@@ -252,7 +252,7 @@ router.post("/commit", async (req, res) => {
         skill_type,
         bowling_type,
         batting_style,
-        userId
+        userId,
       ];
       const rs = await client.query(sql, vals);
       if (rs.rowCount === 1) {
