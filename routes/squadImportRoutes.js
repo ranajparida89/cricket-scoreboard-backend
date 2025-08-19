@@ -121,7 +121,8 @@ const statusFrom = (row, duplicateSet) => {
 // ---------------------- OCR worker ----------------------
 // IMPORTANT for Render: use file-path input to avoid Node 22 DataCloneError
 // and pin Node 20 in package.json (see below).
-const ocrWorker = createWorker({ logger: () => {} });
+// ✅ fix: don't pass a function to the worker
+const ocrWorker = createWorker();
 
 let ocrReady = false;
 async function ensureOcr() {
