@@ -1,8 +1,6 @@
 // routes/squadImportRoutes.js
 // 19-AUG-2025 — Bulk OCR import (preview + commit) for Squad.
-// Safe addon: does not touch existing Squad/Lineup code.
-
-// ✅ FIX: removed logger option (caused DataCloneError in Node workers)
+// Adds: default role inference so preview rows are OK by default.
 
 const express = require("express");
 const router = express.Router();
@@ -17,16 +15,16 @@ const upload = multer({
   limits: { fileSize: 8 * 1024 * 1024 } // 8MB
 });
 
-// CHANGE THIS IF YOUR TABLE NAME/ COLUMNS DIFFER:
-const TABLE = "players"; // must have columns shown below
-// Recommended unique index in DB (one-time):
+// DB table used for squad members
+const TABLE = "players";
+// Recommended once in DB:
 // CREATE UNIQUE INDEX IF NOT EXISTS ux_players_team_fmt_name
 // ON players (LOWER(player_name), team_name, lineup_type);
 
 const ALLOWED_BAT = new Set(["RHB", "LHB"]);
 const ALLOWED_BOWL = new Set(["RM", "RFM", "RF", "LF", "LM", "LHM", "SLO", "OS", "LS"]);
 
-// Code → nice text
+// Shorthand -> nice text
 const batMap = { RHB: "Right-hand Bat", LHB: "Left-hand Bat" };
 const bowlMap = {
   RM: "Right-arm Medium",
@@ -40,6 +38,7 @@ const bowlMap = {
   LS: "Leg Spin"
 };
 
+// Role values we store
 const ROLE_LIST = ["Batsman", "Wicketkeeper/Batsman", "All Rounder", "Bowler"];
 
 // ---------------------- Helpers ----------------------
@@ -48,6 +47,14 @@ const toTitle = (s = "") =>
 
 const nor = (s) => (s || "").trim();
 
+function guessRole(bat, bowl) {
+  const b = (bowl || "").toUpperCase();
+  if (ALLOWED_BOWL.has(b)) return "Bowler";
+  // can’t detect WK from the image reliably; user can edit after import
+  return "Batsman";
+}
+
+// Top uppercase word on the page (AFGHANISTAN, etc.)
 const guessTeamFromText = (plain) => {
   const lines = plain.split(/\r?\n/).map((x) => x.trim());
   let best = "";
@@ -58,11 +65,12 @@ const guessTeamFromText = (plain) => {
   return best || null;
 };
 
-// Extract rows by regex looking for "... NAME ...  RHB/LHB  RM|RFM|...”
+// Extract lines like:   1  RAHMAN GALLA   RHB   RM
 const parseRows = (plain) => {
   const rows = [];
   const seen = new Set();
-  const lineRx = /^\s*(\d{1,2})?\s*([A-Z' .-]+?)\s+(RHB|LHB)\s+(RM|RFM|RF|LF|LM|LHM|SLO|OS|LS)\b/gi;
+  const lineRx =
+    /^\s*(\d{1,2})?\s*([A-Z' .-]+?)\s+(RHB|LHB)\s+(RM|RFM|RF|LF|LM|LHM|SLO|OS|LS)\b/gi;
 
   let m;
   while ((m = lineRx.exec(plain)) !== null) {
@@ -73,18 +81,20 @@ const parseRows = (plain) => {
     if (seen.has(key)) continue;
     seen.add(key);
 
+    const role = guessRole(bat, bowl);
+
     rows.push({
       player_name: name,
-      role: null,
+      role,                  // <-- defaulted now
       bat,
       bowl,
       normalized: {
         batting_style: batMap[bat] || null,
         bowling_type: bowlMap[bowl] || null,
-        skill_type: null
+        skill_type: role
       },
-      conf: { name: 0.9, bat: 0.98, bowl: 0.96, role: 0.0 },
-      status: "FIX"
+      conf: { name: 0.9, bat: 0.98, bowl: 0.96, role: 0.65 },
+      status: "OK"           // will be recomputed with DUP check
     });
   }
   return rows;
@@ -111,28 +121,25 @@ const statusFrom = (row, duplicateSet) => {
 };
 
 // ---------------------- OCR worker ----------------------
-// ❗ DO NOT pass {logger: fn} to createWorker in Node — causes DataCloneError
-const ocrWorker = createWorker();
+const ocrWorker = createWorker({
+  // keep logs off
+  logger: () => {},
+  // explicit paths make it stable on Render
+  corePath: require.resolve("tesseract.js-core/tesseract-core.wasm.js"),
+  workerPath: require.resolve("tesseract.js/src/node/worker.js"),
+});
 
-// Ensure Tesseract is ready once
+// Warm once
 let ocrReady = false;
 async function ensureOcr() {
   if (ocrReady) return;
   await ocrWorker.load();
   await ocrWorker.loadLanguage("eng");
   await ocrWorker.initialize("eng");
-  // modest whitelist to help accuracy for roster tables
-  await ocrWorker.setParameters({
-    tessedit_char_whitelist:
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz .-'RHLMBFOS0123456789"
-  });
   ocrReady = true;
 }
 
 // ---------------------- Routes ----------------------
-
-/** Health check */
-router.get("/health", (_req, res) => res.json({ ok: true, workerReady: ocrReady }));
 
 /**
  * POST /api/squads/ocr/preview
@@ -144,8 +151,7 @@ router.post("/preview", upload.single("image"), async (req, res) => {
     let team_name = nor(req.body.team_name);
 
     if (!req.file) return res.status(400).json({ error: "Image is required" });
-    if (!lineup_type)
-      return res.status(400).json({ error: "lineup_type is required (ODI/T20/TEST)" });
+    if (!lineup_type) return res.status(400).json({ error: "lineup_type is required (ODI/T20/TEST)" });
 
     await ensureOcr();
 
@@ -158,9 +164,10 @@ router.post("/preview", upload.single("image"), async (req, res) => {
     }
     if (!team_name) team_name = "Unknown";
 
+    // Parse candidate rows
     const rows = parseRows(plain);
 
-    // Check DB for duplicates (by name under team+format)
+    // DB duplicates under same team+format
     const dupSql = `
       SELECT LOWER(player_name) AS name
       FROM ${TABLE}
@@ -169,11 +176,11 @@ router.post("/preview", upload.single("image"), async (req, res) => {
     const dupRs = await pool.query(dupSql, [team_name, lineup_type]);
     const duplicateSet = new Set(dupRs.rows.map((r) => r.name));
 
-    // Build preview rows with statuses
+    // Finalize row statuses + normalized fields
     for (const r of rows) {
       r.normalized.batting_style = batMap[r.bat] || null;
       r.normalized.bowling_type = bowlMap[r.bowl] || null;
-      r.normalized.skill_type = r.role || null;
+      r.normalized.skill_type = r.role || guessRole(r.bat, r.bowl);
       r.status = statusFrom(r, duplicateSet);
     }
 
@@ -188,9 +195,7 @@ router.post("/preview", upload.single("image"), async (req, res) => {
     });
   } catch (err) {
     console.error("OCR preview error:", err);
-    return res
-      .status(500)
-      .json({ error: "OCR_PREVIEW_FAILED", detail: String(err && err.message || err) });
+    return res.status(500).json({ error: "Failed to process image" });
   }
 });
 
@@ -207,13 +212,18 @@ router.post("/commit", async (req, res) => {
   if (!team_name || !lineup_type)
     return res.status(400).json({ error: "team_name and lineup_type are required" });
 
-  // Normalize & validate rows
-  rows = rows.map((r) => ({
-    player_name: toTitle(r.player_name || ""),
-    role: r.role || null,
-    bat: (r.bat || "").toUpperCase(),
-    bowl: (r.bowl || "").toUpperCase()
-  }));
+  // Normalize & validate rows; fill default role if missing
+  rows = rows.map((r) => {
+    const bat = (r.bat || "").toUpperCase();
+    const bowl = (r.bowl || "").toUpperCase();
+    const role = r.role || guessRole(bat, bowl);
+    return {
+      player_name: toTitle(r.player_name || ""),
+      role,
+      bat,
+      bowl
+    };
+  });
 
   const created = [];
   const skipped = [];
@@ -234,7 +244,6 @@ router.post("/commit", async (req, res) => {
       const bowling_type = bowlMap[r.bowl] || null;
       const skill_type = r.role;
 
-      // Try insert; rely on unique index to skip duplicates
       const sql = `
         INSERT INTO ${TABLE}
           (player_name, team_name, lineup_type, skill_type, bowling_type, batting_style, is_captain, is_vice_captain, user_id)
