@@ -1,5 +1,6 @@
 // ✅ server.js (CrickEdge Backend - FIXED CORS)
 // ✅ [Updated by Ranaj Parida | 15-April-2025 15:06 pm IST | CORS support for custom domains crickedge.in]
+// ✅ [2025-08-21 | Tournaments] Persist tournament fields in match_history + mount tournamentRoutes
 
 require("dotenv").config();
 const express = require("express");
@@ -43,7 +44,6 @@ const adminRoutes = require('./routes/admin');  // ✅ At the top with your othe
 const galleryRoutes = require("./routes/gallery"); // for gallary
 const schedulerRoutes = require("./routes/scheduler"); // ✅ Match Scheduler API
 const boardRoutes = require('./routes/boardRoutes'); // ✅ Board Registration APIs
-//const { attachAdminIfPresent } = require("./middleware/auth");
 // 🔁 moved to routes folder (Linux is case-sensitive, file must be exactly routes/auth.js)
 const { attachAdminIfPresent, requireAdminAuth } = require('./routes/auth');
 const boardAnalyticsRoutes = require("./routes/boardAnalyticsRoutes");
@@ -51,7 +51,9 @@ const boardAnalyticsRoutes = require("./routes/boardAnalyticsRoutes");
 const squadRoutes = require("./routes/squadRoutes");
 const playerAnalyticsRoutes = require('./routes/playerAnalyticsRoutes');
 // const squadImportRoutes = require("./routes/squadImportRoutes");  -- disbaled 
-const tournamentsRoutes = require("./routes/tournaments");
+
+// ✅ NEW (tournaments API powering UI /api.js)
+const tournamentRoutes = require("./routes/tournamentRoutes");
 
 const app = express();
 const server = http.createServer(app);
@@ -118,6 +120,9 @@ app.use('/api/admin', adminRoutes);              // ✅ With your other app.use(
 console.log("[ADMIN] adminRoutes mounted at /api/admin");
 app.use('/api/match', require('./routes/match')); // added for automated approval.
 
+// ✅ Mount tournaments API (NEW)
+app.use("/api/tournaments", tournamentRoutes);
+
 app.use('/uploads/gallery', express.static(path.join(__dirname, 'uploads/gallery'))); // serve images
 app.use("/api/gallery", galleryRoutes);
 app.use("/api/scheduler", schedulerRoutes); // ✅ /api/scheduler/*
@@ -127,7 +132,6 @@ app.use("/api/boards/analytics", boardAnalyticsRoutes);
 app.use("/api/squads", attachAdminIfPresent, squadRoutes);
 app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespace
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
-app.use("/api/tournaments", tournamentsRoutes);
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
 const io = socketIo(server, {
@@ -189,95 +193,98 @@ app.post("/api/match", async (req, res) => {
 });
 
 // ✅ Match Result Submission (T20/ODI)
-// ✅ Match Result Submission (T20/ODI)
 app.post("/api/submit-result", async (req, res) => {
   try {
     const {
       match_id, team1, team2,
       runs1, overs1, wickets1,
       runs2, overs2, wickets2,
-      user_id
+      user_id,
+      // ✅ [TOURNAMENT] new fields
+      tournament_name = null,
+      season_year = null,
+      match_date = null
     } = req.body;
 
     const matchResult = await pool.query("SELECT * FROM matches WHERE id = $1", [match_id]);
     if (matchResult.rows.length === 0) return res.status(400).json({ error: "Invalid match_id" });
 
     const { match_name, match_type } = matchResult.rows[0];
-const maxOvers = match_type === "T20" ? 20 : 50;
+    const maxOvers = match_type === "T20" ? 20 : 50;
 
-const overs1DecimalRaw = sanitizeOversInput(overs1);
-const overs2DecimalRaw = sanitizeOversInput(overs2);
+    const overs1DecimalRaw = sanitizeOversInput(overs1);
+    const overs2DecimalRaw = sanitizeOversInput(overs2);
 
-// ✅ Use maxOvers if team is all out, otherwise actual overs used
-const actualOvers1 = (wickets1 === 10) ? maxOvers : overs1DecimalRaw;
-const actualOvers2 = (wickets2 === 10) ? maxOvers : overs2DecimalRaw;
+    // ✅ Use maxOvers if team is all out, otherwise actual overs used
+    const actualOvers1 = (wickets1 === 10) ? maxOvers : overs1DecimalRaw;
+    const actualOvers2 = (wickets2 === 10) ? maxOvers : overs2DecimalRaw;
 
-let winner = "Match Draw";
-let points1 = 1, points2 = 1;
-if (runs1 > runs2) { winner = `${team1} won the match!`; points1 = 2; points2 = 0; }
-else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; points2 = 2; }
+    let winner = "Match Draw";
+    let points1 = 1, points2 = 1;
+    if (runs1 > runs2) { winner = `${team1} won the match!`; points1 = 2; points2 = 0; }
+    else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; points2 = 2; }
 
     // ✅ Insert team1 stats
     await pool.query(`
-  INSERT INTO teams (
-    match_id, name, matches_played, wins, losses, points,
-    total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id
-  ) VALUES (
-    $1, $2, 1, $3, $4, $5,
-    $6, $7, $8, $9, $10
-  )
-  ON CONFLICT (match_id, name) DO UPDATE SET
-    wins = EXCLUDED.wins,
-    losses = EXCLUDED.losses,
-    points = EXCLUDED.points,
-    total_runs = EXCLUDED.total_runs,
-    total_overs = EXCLUDED.total_overs,
-    total_runs_conceded = EXCLUDED.total_runs_conceded,
-    total_overs_bowled = EXCLUDED.total_overs_bowled,
-    user_id = EXCLUDED.user_id
-`, [
-  match_id,
-  team1,
-  points1 === 2 ? 1 : 0,
-  points2 === 2 ? 1 : 0,
-  points1,
-  runs1,                // ✅ team1's own runs
-  actualOvers1,     // ✅ team1's own overs faced (regardless of all out)
-  runs2,                // ✅ runs conceded
-  actualOvers2,         // ✅ actual overs bowled by team1 (based on opponent innings)
-  user_id
-]);
+      INSERT INTO teams (
+        match_id, name, matches_played, wins, losses, points,
+        total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id
+      ) VALUES (
+        $1, $2, 1, $3, $4, $5,
+        $6, $7, $8, $9, $10
+      )
+      ON CONFLICT (match_id, name) DO UPDATE SET
+        wins = EXCLUDED.wins,
+        losses = EXCLUDED.losses,
+        points = EXCLUDED.points,
+        total_runs = EXCLUDED.total_runs,
+        total_overs = EXCLUDED.total_overs,
+        total_runs_conceded = EXCLUDED.total_runs_conceded,
+        total_overs_bowled = EXCLUDED.total_overs_bowled,
+        user_id = EXCLUDED.user_id
+    `, [
+      match_id,
+      team1,
+      points1 === 2 ? 1 : 0,
+      points2 === 2 ? 1 : 0,
+      points1,
+      runs1,
+      actualOvers1,
+      runs2,
+      actualOvers2,
+      user_id
+    ]);
 
     // ✅ Insert team2 stats
     await pool.query(`
-  INSERT INTO teams (
-    match_id, name, matches_played, wins, losses, points,
-    total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id
-  ) VALUES (
-    $1, $2, 1, $3, $4, $5,
-    $6, $7, $8, $9, $10
-  )
-  ON CONFLICT (match_id, name) DO UPDATE SET
-    wins = EXCLUDED.wins,
-    losses = EXCLUDED.losses,
-    points = EXCLUDED.points,
-    total_runs = EXCLUDED.total_runs,
-    total_overs = EXCLUDED.total_overs,
-    total_runs_conceded = EXCLUDED.total_runs_conceded,
-    total_overs_bowled = EXCLUDED.total_overs_bowled,
-    user_id = EXCLUDED.user_id
-`, [
-  match_id,
-  team2,
-  points2 === 2 ? 1 : 0,
-  points1 === 2 ? 1 : 0,
-  points2,
-  runs2,                // ✅ team2's own runs
-  actualOvers2,     // ✅ team2's overs faced
-  runs1,                // ✅ runs conceded
-  actualOvers1,         // ✅ actual overs bowled by team2
-  user_id
-]);
+      INSERT INTO teams (
+        match_id, name, matches_played, wins, losses, points,
+        total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id
+      ) VALUES (
+        $1, $2, 1, $3, $4, $5,
+        $6, $7, $8, $9, $10
+      )
+      ON CONFLICT (match_id, name) DO UPDATE SET
+        wins = EXCLUDED.wins,
+        losses = EXCLUDED.losses,
+        points = EXCLUDED.points,
+        total_runs = EXCLUDED.total_runs,
+        total_overs = EXCLUDED.total_overs,
+        total_runs_conceded = EXCLUDED.total_runs_conceded,
+        total_overs_bowled = EXCLUDED.total_overs_bowled,
+        user_id = EXCLUDED.user_id
+    `, [
+      match_id,
+      team2,
+      points2 === 2 ? 1 : 0,
+      points1 === 2 ? 1 : 0,
+      points2,
+      runs2,
+      actualOvers2,
+      runs1,
+      actualOvers1,
+      user_id
+    ]);
 
     // ✅ [NRR FIX | 17-July-2025 | by Ranaj Parida] Recalculate correct NRR for each team
     for (const team of [team1, team2]) {
@@ -310,31 +317,20 @@ else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; point
       `, [team, match_id]);
     }
 
-    // ✅ Save to match_history
-    const { tournament_name = null, season_year = null } = req.body;
-
-await pool.query(`
-  INSERT INTO match_history(
-    match_name, match_type,
-    team1, runs1, overs1, wickets1,
-    team2, runs2, overs2, wickets2,
-    winner, user_id,
-    tournament_name, season_year
-  ) VALUES (
-    $1,$2,
-    $3,$4,$5,$6,
-    $7,$8,$9,$10,
-    $11,$12,
-    $13,$14
-  )
-`, [
-  match_name, match_type,
-  team1, runs1, actualOvers1, wickets1,
-  team2, runs2, actualOvers2, wickets2,
-  winner, user_id,
-  tournament_name, season_year
-]);
-
+    // ✅ Save to match_history  (NOW includes tournament fields)
+    const matchDateSafe = match_date || new Date().toISOString().slice(0,10);
+    await pool.query(`
+      INSERT INTO match_history 
+        (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner, user_id, match_date, tournament_name, season_year)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    `, [
+      match_name, match_type,
+      team1, runs1, actualOvers1, wickets1,
+      team2, runs2, actualOvers2, wickets2,
+      winner, user_id,
+      matchDateSafe,
+      tournament_name, season_year
+    ]);
 
     io.emit("matchUpdate", { match_id, winner });
     res.json({ message: winner });

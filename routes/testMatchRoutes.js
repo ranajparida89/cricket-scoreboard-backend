@@ -1,5 +1,6 @@
 // ✅ testMatchRoutes.js (Final Fix for Test Rankings)
 // ✅ [Ranaj Parida - 2025-04-15 | 11:55 PM] Ensures Test match inserts are visible in `teams` & `/ranking`
+// ✅ [2025-08-21 | Tournaments] Persist tournament_name, season_year, match_date into test_match_results
 
 const express = require("express");
 const router = express.Router();
@@ -27,7 +28,11 @@ router.post("/test-match", async (req, res) => {
       runs2_2, overs2_2, wickets2_2,
       total_overs_used,
       match_name,
-      user_id
+      user_id,
+      // ✅ [TOURNAMENT] new fields (optional)
+      tournament_name = null,
+      season_year = null,
+      match_date = null
     } = req.body;
 
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
@@ -62,49 +67,57 @@ router.post("/test-match", async (req, res) => {
     const totalOvers2 = convertOversToDecimal(overs2) + convertOversToDecimal(overs2_2);
     const totalWickets2 = wickets2 + wickets2_2;
 
-    // ✅ 3. Insert into test_match_results
-if (winner === "Draw") {
-  await pool.query(`
-    INSERT INTO test_match_results (
-      match_id, match_type, team1, team2, winner, points,
-      runs1, overs1, wickets1,
-      runs2, overs2, wickets2,
-      runs1_2, overs1_2, wickets1_2,
-      runs2_2, overs2_2, wickets2_2,
-      total_overs_used, match_name, user_id    -- <== Add user_id here
-    ) VALUES
-    ($1, $2, $3, $4, $5, 2, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20),
-    ($1, $2, $4, $3, $5, 2, $9, $10, $11, $6, $7, $8, $15, $16, $17, $12, $13, $14, $18, $19, $20)
-  `, [
-    match_id, match_type, team1, team2, winner,
-    runs1, overs1, wickets1,
-    runs2, overs2, wickets2,
-    runs1_2, overs1_2, wickets1_2,
-    runs2_2, overs2_2, wickets2_2,
-    total_overs_used, match_name?.toUpperCase(), user_id // <== Add user_id at end
-  ]);
-} else {
-  await pool.query(`
-    INSERT INTO test_match_results (
-      match_id, match_type, team1, team2, winner, points,
-      runs1, overs1, wickets1,
-      runs2, overs2, wickets2,
-      runs1_2, overs1_2, wickets1_2,
-      runs2_2, overs2_2, wickets2_2,
-      total_overs_used, match_name, user_id    -- <== Add user_id here
-    ) VALUES (
-      $1, $2, $3, $4, $5, $6,
-      $7, $8, $9, $10, $11, $12,
-      $13, $14, $15, $16, $17, $18,
-      $19, $20, $21                         -- <== Add $21 for user_id
-    )
-  `, [
-    match_id, match_type, team1, team2, winner, points,
-    runs1, overs1, wickets1, runs2, overs2, wickets2,
-    runs1_2, overs1_2, wickets1_2, runs2_2, overs2_2, wickets2_2,
-    total_overs_used, match_name?.toUpperCase(), user_id // <== Add user_id at end
-  ]);
+    // ✅ 3. Insert into test_match_results (NOW including tournament fields)
+    const matchDateSafe = match_date || new Date().toISOString().slice(0,10);
+
+    if (winner === "Draw") {
+      await pool.query(`
+        INSERT INTO test_match_results (
+          match_id, match_type, team1, team2, winner, points,
+          runs1, overs1, wickets1,
+          runs2, overs2, wickets2,
+          runs1_2, overs1_2, wickets1_2,
+          runs2_2, overs2_2, wickets2_2,
+          total_overs_used, match_name, user_id,
+          tournament_name, season_year, match_date
+        ) VALUES
+        ($1, $2, $3, $4, $5, 2, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23),
+        ($1, $2, $4, $3, $5, 2, $9, $10, $11, $6, $7, $8, $15, $16, $17, $12, $13, $14, $18, $19, $20, $21, $22, $23)
+      `, [
+        match_id, match_type, team1, team2, winner,
+        runs1, overs1, wickets1,
+        runs2, overs2, wickets2,
+        runs1_2, overs1_2, wickets1_2,
+        runs2_2, overs2_2, wickets2_2,
+        total_overs_used, match_name?.toUpperCase(), user_id,
+        tournament_name, season_year, matchDateSafe
+      ]);
+    } else {
+      await pool.query(`
+        INSERT INTO test_match_results (
+          match_id, match_type, team1, team2, winner, points,
+          runs1, overs1, wickets1,
+          runs2, overs2, wickets2,
+          runs1_2, overs1_2, wickets1_2,
+          runs2_2, overs2_2, wickets2_2,
+          total_overs_used, match_name, user_id,
+          tournament_name, season_year, match_date
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6,
+          $7, $8, $9, $10, $11, $12,
+          $13, $14, $15, $16, $17, $18,
+          $19, $20, $21,
+          $22, $23, $24
+        )
+      `, [
+        match_id, match_type, team1, team2, winner, points,
+        runs1, overs1, wickets1, runs2, overs2, wickets2,
+        runs1_2, overs1_2, wickets1_2, runs2_2, overs2_2, wickets2_2,
+        total_overs_used, match_name?.toUpperCase(), user_id,
+        tournament_name, season_year, matchDateSafe
+      ]);
     }
+
     const message = winner === "Draw"
       ? "🤝 The match ended in a draw!"
       : `✅ ${winner} won the test match!`;
@@ -128,10 +141,15 @@ router.get("/test-matches", async (req, res) => {
   }
 });
 
-// ✅ GET: History of Test Matches
+// ✅ GET: History of Test Matches (prefer match_date; fallback created_at)
 router.get("/test-match-history", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM test_match_results ORDER BY created_at DESC");
+    const result = await pool.query(`
+      SELECT *,
+             COALESCE(match_date::timestamp, created_at) AS sort_ts
+      FROM test_match_results
+      ORDER BY sort_ts DESC
+    `);
     res.json(result.rows);
   } catch (error) {
     console.error("❌ Error fetching Test match history:", error);
@@ -139,8 +157,7 @@ router.get("/test-match-history", async (req, res) => {
   }
 });
 
-// ✅ [Added by Ranaj Parida | 20-April-2025] API to return accurate Test rankings
-// ✅ GET: Accurate Test rankings from test_match_results table
+// ✅ Accurate Test rankings from test_match_results table
 router.get("/rankings/test", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -174,8 +191,7 @@ router.get("/rankings/test", async (req, res) => {
   }
 });
 
-// routes/testMatchRoutes.js or routes/leaderboardRoutes.js
-// Added this below API for test match leaderboard.
+// ✅ Test leaderboard (dense rank)
 router.get("/leaderboard/test", async (req, res) => {
   try {
     const result = await pool.query(`
