@@ -316,11 +316,14 @@ app.post("/api/submit-result", async (req, res) => {
     }
 
     // ✅ Save to match_history
-    await pool.query(`
-      INSERT INTO match_history 
-        (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner, user_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-    `, [match_name, match_type, team1, runs1, actualOvers1, wickets1, team2, runs2, actualOvers2, wickets2, winner, user_id]);
+    const { tournament_name = null, season_year = null } = req.body;
+
+await pool.query(`
+  INSERT INTO match_history 
+    (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner, user_id, tournament_name, season_year)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+`, [match_name, match_type, team1, runs1, actualOvers1, wickets1, team2, runs2, actualOvers2, wickets2, winner, user_id, tournament_name, season_year]);
+
 
     io.emit("matchUpdate", { match_id, winner });
     res.json({ message: winner });

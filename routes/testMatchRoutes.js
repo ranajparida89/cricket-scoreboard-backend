@@ -43,6 +43,9 @@ router.post("/test-match", async (req, res) => {
       user_id
     } = req.body;
 
+    // ✅ ADD THESE TWO LINES RIGHT AFTER THE MAIN DESTRUCTURE:
+    const { tournament_name = null, season_year = null } = req.body;
+
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
       return res.status(400).json({ error: "Missing required fields." });
     }
@@ -87,10 +90,11 @@ router.post("/test-match", async (req, res) => {
           runs2, overs2, wickets2,
           runs1_2, overs1_2, wickets1_2,
           runs2_2, overs2_2, wickets2_2,
-          total_overs_used, match_name, user_id
+          total_overs_used, match_name, user_id,
+          tournament_name, season_year
         ) VALUES
-        ($1, $2, $3, $4, $5, 2, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20),
-        ($1, $2, $4, $3, $5, 2, $9, $10, $11, $6, $7, $8, $15, $16, $17, $12, $13, $14, $18, $19, $20)
+        ($1, $2, $3, $4, $5, 2, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22),
+        ($1, $2, $4, $3, $5, 2, $9, $10, $11, $6, $7, $8, $15, $16, $17, $12, $13, $14, $18, $19, $20, $21, $22)
         `,
         [
           match_id, match_type, team1, team2, winner,
@@ -98,7 +102,8 @@ router.post("/test-match", async (req, res) => {
           runs2, overs2, wickets2,
           runs1_2, overs1_2, wickets1_2,
           runs2_2, overs2_2, wickets2_2,
-          total_overs_used, norm(match_name).toUpperCase(), user_id
+          total_overs_used, norm(match_name).toUpperCase(), user_id,
+          tournament_name, season_year
         ]
       );
     } else {
@@ -110,19 +115,22 @@ router.post("/test-match", async (req, res) => {
           runs2, overs2, wickets2,
           runs1_2, overs1_2, wickets1_2,
           runs2_2, overs2_2, wickets2_2,
-          total_overs_used, match_name, user_id
+          total_overs_used, match_name, user_id,
+          tournament_name, season_year
         ) VALUES (
           $1, $2, $3, $4, $5, $6,
           $7, $8, $9, $10, $11, $12,
           $13, $14, $15, $16, $17, $18,
-          $19, $20, $21
+          $19, $20, $21,
+          $22, $23
         )
         `,
         [
           match_id, match_type, team1, team2, winner, points,
           runs1, overs1, wickets1, runs2, overs2, wickets2,
           runs1_2, overs1_2, wickets1_2, runs2_2, overs2_2, wickets2_2,
-          total_overs_used, norm(match_name).toUpperCase(), user_id
+          total_overs_used, norm(match_name).toUpperCase(), user_id,
+          tournament_name, season_year
         ]
       );
     }
