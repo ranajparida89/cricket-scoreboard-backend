@@ -51,6 +51,7 @@ const boardAnalyticsRoutes = require("./routes/boardAnalyticsRoutes");
 const squadRoutes = require("./routes/squadRoutes");
 const playerAnalyticsRoutes = require('./routes/playerAnalyticsRoutes');
 // const squadImportRoutes = require("./routes/squadImportRoutes");  -- disbaled 
+const tournamentsRoutes = require("./routes/tournaments");
 
 const app = express();
 const server = http.createServer(app);
@@ -126,6 +127,7 @@ app.use("/api/boards/analytics", boardAnalyticsRoutes);
 app.use("/api/squads", attachAdminIfPresent, squadRoutes);
 app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespace
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
+app.use("/api/tournaments", tournamentsRoutes);
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
 const io = socketIo(server, {
@@ -309,11 +311,30 @@ else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; point
     }
 
     // ✅ Save to match_history
-    await pool.query(`
-      INSERT INTO match_history 
-        (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner, user_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-    `, [match_name, match_type, team1, runs1, actualOvers1, wickets1, team2, runs2, actualOvers2, wickets2, winner, user_id]);
+    const { tournament_name = null, season_year = null } = req.body;
+
+await pool.query(`
+  INSERT INTO match_history(
+    match_name, match_type,
+    team1, runs1, overs1, wickets1,
+    team2, runs2, overs2, wickets2,
+    winner, user_id,
+    tournament_name, season_year
+  ) VALUES (
+    $1,$2,
+    $3,$4,$5,$6,
+    $7,$8,$9,$10,
+    $11,$12,
+    $13,$14
+  )
+`, [
+  match_name, match_type,
+  team1, runs1, actualOvers1, wickets1,
+  team2, runs2, actualOvers2, wickets2,
+  winner, user_id,
+  tournament_name, season_year
+]);
+
 
     io.emit("matchUpdate", { match_id, winner });
     res.json({ message: winner });
