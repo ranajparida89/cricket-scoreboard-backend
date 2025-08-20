@@ -1,5 +1,6 @@
 // ✅ server.js (CrickEdge Backend - FIXED CORS)
 // ✅ [Updated by Ranaj Parida | 15-April-2025 15:06 pm IST | CORS support for custom domains crickedge.in]
+// ✅ [Maintained by ChatGPT | 20-Aug-2025] Keep endpoints & count, align /api/rankings/test with testMatchRoutes, safe-approved filter for history
 
 require("dotenv").config();
 const express = require("express");
@@ -43,20 +44,19 @@ const adminRoutes = require('./routes/admin');  // ✅ At the top with your othe
 const galleryRoutes = require("./routes/gallery"); // for gallary
 const schedulerRoutes = require("./routes/scheduler"); // ✅ Match Scheduler API
 const boardRoutes = require('./routes/boardRoutes'); // ✅ Board Registration APIs
-//const { attachAdminIfPresent } = require("./middleware/auth");
 // 🔁 moved to routes folder (Linux is case-sensitive, file must be exactly routes/auth.js)
 const { attachAdminIfPresent, requireAdminAuth } = require('./routes/auth');
 const boardAnalyticsRoutes = require("./routes/boardAnalyticsRoutes");
 
 const squadRoutes = require("./routes/squadRoutes");
 const playerAnalyticsRoutes = require('./routes/playerAnalyticsRoutes');
-const squadImportRoutes = require("./routes/squadImportRoutes");
+// const squadImportRoutes = require("./routes/squadImportRoutes");  -- disbaled 
+const tournamentRoutes = require("./routes/tournamentRoutes");
 
 const app = express();
 const server = http.createServer(app);
 startRatingScheduler();
 app.set("db", pool); // ✅ make pg pool available to scheduler router
-
 
 // ✅ Enable CORS for Vercel + Custom Domains (Updated by Ranaj Parida | 15-April-2025)
 const allowedOrigins = [
@@ -64,6 +64,13 @@ const allowedOrigins = [
   "https://crickedge.in",
   "https://www.crickedge.in"
 ];
+
+// (Optional) allow extra origins via env without code edits (keeps behavior identical if unset)
+if (process.env.CORS_EXTRA_ORIGINS) {
+  process.env.CORS_EXTRA_ORIGINS.split(",").map(s => s.trim()).filter(Boolean).forEach(o => {
+    if (!allowedOrigins.includes(o)) allowedOrigins.push(o);
+  });
+}
 
 app.use(
   cors({
@@ -78,7 +85,6 @@ app.use(
     credentials: true,
   })
 );
-
 
 // ✅ Allow JSON requests
 app.use(express.json());
@@ -125,7 +131,8 @@ app.use("/api/boards", attachAdminIfPresent, boardRoutes);
 app.use("/api/boards/analytics", boardAnalyticsRoutes);
 app.use("/api/squads", attachAdminIfPresent, squadRoutes);
 app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespace
-app.use("/api/squads/ocr", squadImportRoutes);
+// app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
+app.use("/api", tournamentRoutes);
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
 const io = socketIo(server, {
@@ -201,19 +208,19 @@ app.post("/api/submit-result", async (req, res) => {
     if (matchResult.rows.length === 0) return res.status(400).json({ error: "Invalid match_id" });
 
     const { match_name, match_type } = matchResult.rows[0];
-const maxOvers = match_type === "T20" ? 20 : 50;
+    const maxOvers = match_type === "T20" ? 20 : 50;
 
-const overs1DecimalRaw = sanitizeOversInput(overs1);
-const overs2DecimalRaw = sanitizeOversInput(overs2);
+    const overs1DecimalRaw = sanitizeOversInput(overs1);
+    const overs2DecimalRaw = sanitizeOversInput(overs2);
 
-// ✅ Use maxOvers if team is all out, otherwise actual overs used
-const actualOvers1 = (wickets1 === 10) ? maxOvers : overs1DecimalRaw;
-const actualOvers2 = (wickets2 === 10) ? maxOvers : overs2DecimalRaw;
+    // ✅ Use maxOvers if team is all out, otherwise actual overs used
+    const actualOvers1 = (wickets1 === 10) ? maxOvers : overs1DecimalRaw;
+    const actualOvers2 = (wickets2 === 10) ? maxOvers : overs2DecimalRaw;
 
-let winner = "Match Draw";
-let points1 = 1, points2 = 1;
-if (runs1 > runs2) { winner = `${team1} won the match!`; points1 = 2; points2 = 0; }
-else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; points2 = 2; }
+    let winner = "Match Draw";
+    let points1 = 1, points2 = 1;
+    if (runs1 > runs2) { winner = `${team1} won the match!`; points1 = 2; points2 = 0; }
+    else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; points2 = 2; }
 
     // ✅ Insert team1 stats
     await pool.query(`
@@ -384,35 +391,40 @@ app.get("/api/points", async (req, res) => {
 });
 
 
-// ✅ Test Match Ranking - Manual Calculation (Win=12, Loss=6, Draw=4) [Ranaj Parida - 19-April-2025]
+// ✅ Test Match Ranking - Manual Calculation (Win=12, Loss=6, Draw=4) [Kept endpoint, aligned to test_match_results]
+// NOTE: We keep this endpoint here to preserve your file shape & routes; logic is aligned to testMatchRoutes.
 app.get("/api/rankings/test", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        t.name AS team_name,
-        COUNT(DISTINCT t.match_id) AS matches,
-        SUM(t.wins) AS wins,
-        SUM(t.losses) AS losses,
-        COUNT(DISTINCT t.match_id) - SUM(t.wins) - SUM(t.losses) AS draws,
-        (SUM(t.wins) * 12 + SUM(t.losses) * 6 + 
-         (COUNT(DISTINCT t.match_id) - SUM(t.wins) - SUM(t.losses)) * 4) AS points,
+        team AS team_name,
+        COUNT(*) AS matches,
+        SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) AS losses,
+        SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) AS draws,
+        (SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) * 12 +
+         SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) * 6 +
+         SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) * 4) AS points,
         ROUND(
-          (SUM(t.wins) * 12 + SUM(t.losses) * 6 + 
-          (COUNT(DISTINCT t.match_id) - SUM(t.wins) - SUM(t.losses)) * 4)::decimal 
-          / NULLIF(COUNT(DISTINCT t.match_id), 0),
+          (SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) * 12 +
+           SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) * 6 +
+           SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) * 4)::decimal / NULLIF(COUNT(*),0),
           2
         ) AS rating
-      FROM teams t
-      JOIN matches m ON t.match_id = m.id
-      WHERE m.match_type = 'Test'
-      GROUP BY t.name
-      ORDER BY rating DESC;
+      FROM (
+        SELECT team1 AS team, winner FROM test_match_results
+        UNION ALL
+        SELECT team2 AS team, winner FROM test_match_results
+      ) AS all_teams
+      GROUP BY team
+      ORDER BY points DESC
     `);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch Test match rankings" });
   }
 });
+
 
 // ✅ Match History
 app.get("/api/match-history", async (req, res) => {
@@ -434,9 +446,15 @@ app.get("/api/match-history", async (req, res) => {
       query += ` AND winner ILIKE $${params.length}`;
     }
 
-    query += ` ORDER BY match_time DESC`;
-    const result = await pool.query(query, params);
-    res.json(result.rows);
+    // Prefer approved/published rows if the column exists; otherwise fall back silently.
+    const withStatus = `${query} AND (status IS NULL OR status = 'approved') ORDER BY match_time DESC`;
+    try {
+      const r1 = await pool.query(withStatus, params);
+      return res.json(r1.rows);
+    } catch {
+      const r2 = await pool.query(`${query} ORDER BY match_time DESC`, params);
+      return res.json(r2.rows);
+    }
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch match history" });
   }
@@ -447,3 +465,5 @@ app.get("/api/match-history", async (req, res) => {
 server.listen(5000, () => {
   console.log("✅ Server running on port 5000");
 });
+
+
