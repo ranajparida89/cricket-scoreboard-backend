@@ -1,23 +1,24 @@
 // routes/squadImportRoutes.js
-// OCR import (preview + commit) for Squad
-// - Robust parser: accepts R H B / RHB, R F M / RFM, S L O / SL0, etc.
-// - No custom worker paths, no logger → works on Render Node workers
+// Bulk OCR import (preview + commit) for Squad — using hosted OCR API (no tesseract workers)
 
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const { createWorker } = require("tesseract.js");
+const axios = require("axios");
+const FormData = require("form-data");
 const { v4: uuidv4 } = require("uuid");
 const pool = require("../db");
 
-/* ---------- config ---------- */
+// ---------- Upload config ----------
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
 });
 
+// ---------- DB table / maps ----------
 const TABLE = "players";
-// Recommended once in DB:
+
+// Create once in DB (recommended):
 // CREATE UNIQUE INDEX IF NOT EXISTS ux_players_team_fmt_name
 //   ON players (LOWER(player_name), team_name, lineup_type);
 
@@ -37,35 +38,32 @@ const bowlMap = {
   LS: "Leg Spin",
 };
 
-const ROLE_LIST = ["Batsman", "Wicketkeeper/Batsman", "All Rounder", "Bowler"];
+// Role short codes → skill_type used in your app
+function normalizeRole(raw) {
+  const s = (raw || "").trim();
+  if (!s) return "Batsman"; // sensible default so import never becomes 0
+  const up = s.toUpperCase();
+  if (up === "AR") return "All Rounder";
+  if (up === "BAT") return "Batsman";
+  if (up === "BWL") return "Bowler";
+  if (up === "WK") return "Wicketkeeper/Batsman";
+  // full names
+  const full = ["Batsman", "Bowler", "All Rounder", "Wicketkeeper/Batsman"].find(
+    (x) => x.toLowerCase() === s.toLowerCase()
+  );
+  return full || "Batsman";
+}
 
-/* ---------- helpers ---------- */
 const toTitle = (s = "") =>
-  s.toLowerCase().replace(/\b([a-z])/g, (_, c) => c.toUpperCase()).replace(/\s+/g, " ").trim();
+  s
+    .toLowerCase()
+    .replace(/\b([a-z])/g, (m, c) => c.toUpperCase())
+    .replace(/\s+/g, " ")
+    .trim();
 
 const nor = (s) => (s || "").trim();
 
-// Guess a role if user doesn't provide: any valid bowl code → Bowler, else Batsman
-function guessRole(bat, bowl) {
-  return ALLOWED_BOWL.has((bowl || "").toUpperCase()) ? "Bowler" : "Batsman";
-}
-
-// Build a regex that matches codes with optional spaces between letters, and O/0 tolerance
-function looseCodeRx(code) {
-  const letters = code.split("").map((ch) => {
-    if (ch === "O") return "[O0]";         // tolerate O ↔ 0
-    return ch;
-  });
-  return new RegExp(letters.join("\\s*"), "i");
-}
-
-const RX_BAT_RHB = looseCodeRx("RHB");
-const RX_BAT_LHB = looseCodeRx("LHB");
-
-const BOWL_CODES = ["RFM", "RM", "RF", "LF", "LM", "LHM", "SLO", "OS", "LS"];
-const RX_BOWL = BOWL_CODES.map((c) => [c, looseCodeRx(c)]);
-
-// Greedy team guess (largest all-caps token)
+// Try to guess team name from big ALL CAPS header line in OCR text
 const guessTeamFromText = (plain) => {
   const lines = plain.split(/\r?\n/).map((x) => x.trim());
   let best = "";
@@ -76,106 +74,62 @@ const guessTeamFromText = (plain) => {
   return best || null;
 };
 
-/**
- * Robust line parser:
- *  - Find BAT matcher and BOWL matcher anywhere in the line (with spaces allowed).
- *  - The player name is the uppercase segment before the BAT match start.
- */
-function parseRows(plain) {
+// Parse rows like: (index)? NAME  RHB|LHB  RM|RFM|RF|LF|LM|LHM|SLO|OS|LS
+// Role is *optional* here; user may add later, but we default to Batsman on commit
+const parseRows = (plain) => {
   const out = [];
-  const seenKeys = new Set();
+  const seen = new Set();
+  const rx =
+    /^\s*(\d{1,2})?\s*([A-Z' .-]+?)\s+(RHB|LHB)\s+(RM|RFM|RF|LF|LM|LHM|SLO|OS|LS)\b/gi;
 
-  const lines = plain.split(/\r?\n/);
-  for (let raw of lines) {
-    if (!raw || raw.trim().length < 5) continue;
-    const line = raw.replace(/[|]+/g, " ").replace(/\s+/g, " ").trim();
-    const u = line.toUpperCase();
-
-    // find BAT
-    let bat = null, batIdx = -1;
-    const mRHB = u.match(RX_BAT_RHB);
-    const mLHB = u.match(RX_BAT_LHB);
-    if (mRHB) { bat = "RHB"; batIdx = mRHB.index; }
-    else if (mLHB) { bat = "LHB"; batIdx = mLHB.index; }
-
-    // find BOWL
-    let bowl = null;
-    for (const [code, rx] of RX_BOWL) {
-      const m = u.match(rx);
-      if (m) { bowl = code; break; }
-    }
-
-    // need both to form a valid row
-    if (!bat || !bowl) continue;
-
-    // name = everything before bat match; strip leading #/digits/icons; keep A-Z, spaces, apostrophes, dots, hyphens
-    let namePart = u.slice(0, batIdx)
-      .replace(/^[^A-Z]+/, "")
-      .replace(/[^A-Z' .-]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (!namePart || namePart.length < 3) continue;
-
-    const player_name = toTitle(namePart);
-    const key = `${player_name}|${bat}|${bowl}`;
-    if (seenKeys.has(key)) continue;
-    seenKeys.add(key);
-
-    const role = guessRole(bat, bowl);
+  let m;
+  while ((m = rx.exec(plain)) !== null) {
+    const name = toTitle(m[2]);
+    const bat = m[3].toUpperCase();
+    const bowl = m[4].toUpperCase();
+    const key = `${name}|${bat}|${bowl}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
 
     out.push({
-      player_name,
-      role,
+      player_name: name,
+      role: null, // not detected from icons; UI may set, commit defaults later
       bat,
       bowl,
       normalized: {
         batting_style: batMap[bat] || null,
         bowling_type: bowlMap[bowl] || null,
-        skill_type: role,
+        skill_type: null,
       },
-      conf: { name: 0.88, bat: 0.98, bowl: 0.96, role: 0.65 },
-      status: "OK",
+      conf: { name: 0.9, bat: 0.98, bowl: 0.96, role: 0.0 },
+      status: "FIX", // shown as FIX in preview if role is missing
     });
   }
-
   return out;
-}
+};
 
-const validateRow = (row) => {
-  const nameOk = !!nor(row.player_name);
-  const batOk = ALLOWED_BAT.has((row.bat || "").toUpperCase());
-  const bowlOk = ALLOWED_BOWL.has((row.bowl || "").toUpperCase());
-  const roleOk = ROLE_LIST.includes(row.role);
-  const missing = [];
-  if (!nameOk) missing.push("name");
-  if (!batOk) missing.push("bat");
-  if (!bowlOk) missing.push("bowl");
-  if (!roleOk) missing.push("role");
-  return { ok: missing.length === 0, missing };
+const validateBasic = (row) => {
+  const ok =
+    !!nor(row.player_name) &&
+    ALLOWED_BAT.has((row.bat || "").toUpperCase()) &&
+    ALLOWED_BOWL.has((row.bowl || "").toUpperCase());
+  return ok;
 };
 
 const statusFrom = (row, duplicateSet) => {
-  const v = validateRow(row);
-  if (!v.ok) return "FIX";
+  if (!validateBasic(row)) return "FIX";
   if (duplicateSet && duplicateSet.has(row.player_name.toLowerCase())) return "DUP";
   return "OK";
 };
 
-/* ---------- Tesseract worker (safe defaults) ---------- */
-const ocrWorker = createWorker(); // no custom paths, no logger
-let ocrReady = false;
-async function ensureOcr() {
-  if (ocrReady) return;
-  await ocrWorker.load();
-  await ocrWorker.loadLanguage("eng");
-  await ocrWorker.initialize("eng");
-  ocrReady = true;
-}
-
-/* ---------- Routes ---------- */
-
-// POST /api/squads/ocr/preview
+// ---------- PREVIEW (uses hosted OCR API) ----------
+/**
+ * POST /api/squads/ocr/preview
+ * form-data: image, team_name?(string), lineup_type(string)
+ *
+ * OCR provider: OCR.Space (free key works for testing)
+ * Set env OCR_SPACE_KEY for your account; falls back to "helloworld".
+ */
 router.post("/preview", upload.single("image"), async (req, res) => {
   try {
     const lineup_type = nor(req.body.lineup_type);
@@ -184,20 +138,38 @@ router.post("/preview", upload.single("image"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "Image is required" });
     if (!lineup_type) return res.status(400).json({ error: "lineup_type is required (ODI/T20/TEST)" });
 
-    await ensureOcr();
+    const apikey = process.env.OCR_SPACE_KEY || "helloworld";
 
-    const { data } = await ocrWorker.recognize(req.file.buffer);
-    const plain = (data && data.text) || "";
+    const fd = new FormData();
+    fd.append("apikey", apikey);
+    fd.append("language", "eng");
+    fd.append("isTable", "true");
+    fd.append("OCREngine", "2");
+    // pass the image buffer
+    fd.append("file", req.file.buffer, {
+      filename: req.file.originalname || "roster.jpg",
+      contentType: req.file.mimetype || "image/jpeg",
+    });
 
+    const ocrResp = await axios.post("https://api.ocr.space/parse/image", fd, {
+      headers: fd.getHeaders(),
+      maxBodyLength: Infinity,
+    });
+
+    const plain =
+      ocrResp?.data?.ParsedResults?.[0]?.ParsedText?.toString() || "";
+
+    // Team guess if not supplied
     if (!team_name) {
       const guess = guessTeamFromText(plain);
       if (guess) team_name = toTitle(guess);
     }
     if (!team_name) team_name = "Unknown";
 
+    // Extract rows
     const rows = parseRows(plain);
 
-    // duplicates in DB for the same team+format
+    // Existing names in DB to mark DUP
     const dupSql = `
       SELECT LOWER(player_name) AS name
       FROM ${TABLE}
@@ -209,19 +181,31 @@ router.post("/preview", upload.single("image"), async (req, res) => {
     for (const r of rows) {
       r.normalized.batting_style = batMap[r.bat] || null;
       r.normalized.bowling_type = bowlMap[r.bowl] || null;
-      r.normalized.skill_type = r.role;
+      r.normalized.skill_type = r.role || null;
       r.status = statusFrom(r, duplicateSet);
     }
 
     const preview_id = uuidv4();
-    return res.json({ team_name, lineup_type, preview_id, rows, duplicates: [...duplicateSet], errors: [] });
+    return res.json({
+      team_name,
+      lineup_type,
+      preview_id,
+      rows,
+      duplicates: [...duplicateSet],
+      errors: [],
+    });
   } catch (err) {
-    console.error("OCR preview error:", err);
+    console.error("OCR preview error:", err?.response?.data || err);
     return res.status(500).json({ error: "Failed to process image" });
   }
 });
 
-// POST /api/squads/ocr/commit
+// ---------- COMMIT ----------
+/**
+ * POST /api/squads/ocr/commit
+ * JSON: { preview_id?, team_name, lineup_type, rows: [ {player_name, role?, bat, bowl} ] }
+ * Header (optional): X-User-Id
+ */
 router.post("/commit", async (req, res) => {
   const { team_name, lineup_type } = req.body || {};
   let rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
@@ -230,12 +214,13 @@ router.post("/commit", async (req, res) => {
   if (!team_name || !lineup_type)
     return res.status(400).json({ error: "team_name and lineup_type are required" });
 
-  rows = rows.map((r) => {
-    const bat = (r.bat || "").toUpperCase().replace(/\s+/g, "");
-    const bowl = (r.bowl || "").toUpperCase().replace(/\s+/g, "").replace(/0/g, "O");
-    const role = r.role || guessRole(bat, bowl);
-    return { player_name: toTitle(r.player_name || ""), role, bat, bowl };
-  });
+  // Normalize incoming rows
+  rows = rows.map((r) => ({
+    player_name: toTitle(r.player_name || ""),
+    role: normalizeRole(r.role),
+    bat: (r.bat || "").toUpperCase(),
+    bowl: (r.bowl || "").toUpperCase(),
+  }));
 
   const created = [];
   const skipped = [];
@@ -246,15 +231,15 @@ router.post("/commit", async (req, res) => {
     await client.query("BEGIN");
 
     for (const r of rows) {
-      const v = validateRow(r);
-      if (!v.ok) {
-        skipped.push({ name: r.player_name, reason: `missing: ${v.missing.join(",")}` });
+      // only basic validation; role already defaulted
+      if (!validateBasic(r)) {
+        skipped.push({ name: r.player_name, reason: "invalid bat/bowl/name" });
         continue;
       }
 
       const batting_style = batMap[r.bat] || null;
       const bowling_type = bowlMap[r.bowl] || null;
-      const skill_type = r.role;
+      const skill_type = r.role; // already normalized
 
       const sql = `
         INSERT INTO ${TABLE}
@@ -263,10 +248,21 @@ router.post("/commit", async (req, res) => {
         ON CONFLICT DO NOTHING
         RETURNING player_name
       `;
-      const vals = [r.player_name, team_name, lineup_type, skill_type, bowling_type, batting_style, userId];
+      const vals = [
+        r.player_name,
+        team_name,
+        lineup_type,
+        skill_type,
+        bowling_type,
+        batting_style,
+        userId,
+      ];
       const rs = await client.query(sql, vals);
-      if (rs.rowCount === 1) created.push(r.player_name);
-      else skipped.push({ name: r.player_name, reason: "duplicate" });
+      if (rs.rowCount === 1) {
+        created.push(r.player_name);
+      } else {
+        skipped.push({ name: r.player_name, reason: "duplicate" });
+      }
     }
 
     await client.query("COMMIT");

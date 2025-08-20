@@ -4,9 +4,7 @@
   "description": "CrickEdge Backend",
   "main": "server.js",
   "type": "commonjs",
-  "engines": {
-    "node": "20.x"
-  },
+  "engines": { "node": "20.x" },
   "scripts": {
     "start": "node server.js",
     "postinstall": "echo Using Node $NODE_VERSION"
@@ -19,13 +17,13 @@
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
+    "form-data": "^4.0.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
     "nodemailer": "^6.10.1",
     "openai": "^4.98.0",
     "pg": "^8.16.3",
     "socket.io": "^4.8.1",
-    "tesseract.js": "^6.0.1",
     "uuid": "^11.1.0"
   }
 }
