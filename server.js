@@ -54,6 +54,7 @@ const playerAnalyticsRoutes = require('./routes/playerAnalyticsRoutes');
 
 // ✅ NEW (tournaments API powering UI /api.js)
 const tournamentRoutes = require("./routes/tournamentRoutes");
+const teamLeaderboardRoutes = require("./routes/teamLeaderboardRoutes");
 
 const app = express();
 const server = http.createServer(app);
@@ -131,6 +132,7 @@ app.use("/api/boards", attachAdminIfPresent, boardRoutes);
 app.use("/api/boards/analytics", boardAnalyticsRoutes);
 app.use("/api/squads", attachAdminIfPresent, squadRoutes);
 app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespace
+app.use("/api", teamLeaderboardRoutes);
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
