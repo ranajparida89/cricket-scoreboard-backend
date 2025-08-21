@@ -1,10 +1,8 @@
 // routes/boardAnalyticsRoutes.js
-// 08-AUG-2025 — CrickEdge Board Analytics (schema-aligned)
+// 08-AUG-2025 — CrickEdge Board Analytics (schema-aligned, updated rules + parsing)
 
 const express = require("express");
 const router = express.Router();
-
-// ✅ UPDATED: reuse your shared pool (same as your other routes)
 const pool = require("../db");
 
 // ---------- Helpers ----------
@@ -18,14 +16,21 @@ const toIntArray = (csv) =>
     .map((s) => (isInt(s) ? Number(s) : NaN))
     .filter((n) => Number.isInteger(n));
 
+// 🔁 New points as per your rule
+// ODI/T20: Win=10, Draw=5, Loss=2
+// TEST:    Win=18, Draw=9, Loss=4
 function pointsForFormat(fmt, outcome) {
   const f = String(fmt || "").toUpperCase();
-  if (f === "ODI")  return outcome === "win" ? 8 : outcome === "draw" ? 2 : 0;
-  if (f === "T20")  return outcome === "win" ? 5 : outcome === "draw" ? 2 : 0;
-  if (f === "TEST") return outcome === "win" ? 12 : outcome === "draw" ? 4 : outcome === "loss" ? 6 : 0;
+  if (f === "ODI" || f === "T20") {
+    return outcome === "win" ? 10 : outcome === "draw" ? 5 : outcome === "loss" ? 2 : 0;
+  }
+  if (f === "TEST") {
+    return outcome === "win" ? 18 : outcome === "draw" ? 9 : outcome === "loss" ? 4 : 0;
+  }
   return 0;
 }
 
+// date range helper
 function addDateRange(whereCol, from, to) {
   const parts = [], params = [];
   if (from) { parts.push(`${whereCol} >= $${params.length + 1}`); params.push(from); }
@@ -39,18 +44,27 @@ function send500(res, req, tag, err, msg) {
   return res.status(500).json({ error: msg });
 }
 
+// Winner parsing helpers
+const reEsc = (s) => String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const wordHit = (text, needle) => {
+  if (!text || !needle) return false;
+  const re = new RegExp(`\\b${reEsc(String(needle).trim())}\\b`, "i");
+  return re.test(String(text));
+};
+const isDrawish = (w) => /\b(draw|tie|tied|no\s*result|abandon)/i.test(String(w || "").trim());
+
 // ---------- GET /boards ----------
-router.get("/boards", async (req, res) => {
+router.get("/boards", async (_req, res) => {
   try {
     const q = `
       SELECT b.id AS board_id, b.registration_id, b.board_name
-      FROM public.board_registration b       -- ✅ UPDATED: schema-qualified
+      FROM public.board_registration b
       ORDER BY b.board_name;
     `;
     const { rows } = await pool.query(q);
     res.json({ boards: rows });
   } catch (err) {
-    return send500(res, req, "analytics/boards:", err, "Failed to fetch boards");
+    return send500(res, _req, "analytics/boards:", err, "Failed to fetch boards");
   }
 });
 
@@ -94,7 +108,7 @@ router.get("/summary", async (req, res) => {
     });
     boardIds.forEach(id => { if (!boardTeams.has(id)) boardTeams.set(id, new Set()); });
 
-    // ODI/T20 matches
+    // ODI/T20 matches (date-safe)
     const mhRange = addDateRange("COALESCE(mh.match_date, mh.match_time::date)", from, to);
     const mhQ = `
       SELECT
@@ -113,7 +127,7 @@ router.get("/summary", async (req, res) => {
     `;
     const { rows: mhRows } = await pool.query(mhQ, mhRange.params);
 
-    // Test matches
+    // Test matches (date-safe)
     const tRange = addDateRange("COALESCE(tm.match_date, tm.created_at::date)", from, to);
     const tQ = `
       SELECT
@@ -123,7 +137,7 @@ router.get("/summary", async (req, res) => {
         LOWER(TRIM(tm.team2)) AS team2,
         tm.runs2, tm.runs2_2,
         LOWER(TRIM(tm.winner)) AS winner,
-        tm.created_at::date AS d
+        COALESCE(tm.match_date, tm.created_at::date) AS d
       FROM public.test_match_results tm
       WHERE tm.status = 'approved'
         ${tRange.sql}
@@ -172,7 +186,7 @@ router.get("/summary", async (req, res) => {
     }
 
     function finalizeBoard(b) {
-      Object.entries(b.formats).forEach(([fmt, f]) => {
+      Object.entries(b.formats).forEach(([, f]) => {
         f.win_pct = f.matches ? Number(((f.wins / f.matches) * 100).toFixed(2)) : 0;
         f.avg_run_margin = f.avg_run_margin_n
           ? Number((f.avg_run_margin_acc / f.avg_run_margin_n).toFixed(2)) : 0;
@@ -187,7 +201,7 @@ router.get("/summary", async (req, res) => {
         ? Number(((b.totals.wins / b.totals.matches) * 100).toFixed(2)) : 0;
     }
 
-    // ODI/T20 aggregation
+    // ---------- ODI/T20 aggregation with robust winner parsing ----------
     mhRows.forEach(m => {
       const fmt = m.match_type;
       const t1 = m.team1 || "", t2 = m.team2 || "", w = m.winner || "";
@@ -203,6 +217,10 @@ router.get("/summary", async (req, res) => {
       const margin = (Number.isFinite(m.runs1) && Number.isFinite(m.runs2)) ? Math.abs(m.runs1 - m.runs2) : 0;
       const totalRuns = (Number(m.runs1) || 0) + (Number(m.runs2) || 0);
 
+      const isDraw = isDrawish(w);
+      const winnerIsT1 = wordHit(w, t1);
+      const winnerIsT2 = wordHit(w, t2);
+
       participants.forEach(bid => {
         const b = ensureBoard(bid);
         bumpFormat(b, fmt, {
@@ -214,8 +232,9 @@ router.get("/summary", async (req, res) => {
         });
 
         const set = boardTeams.get(bid);
-        const isDraw = w === "draw";
-        const weWon = w && set.has(w);
+        const weWon =
+          (winnerIsT1 && set.has(t1)) ||
+          (winnerIsT2 && set.has(t2));
 
         if (isDraw)       bumpFormat(b, fmt, { draws: 1,  points: pointsForFormat(fmt, "draw") });
         else if (weWon)   bumpFormat(b, fmt, { wins: 1,   points: pointsForFormat(fmt, "win") });
@@ -223,7 +242,7 @@ router.get("/summary", async (req, res) => {
       });
     });
 
-    // Test aggregation
+    // ---------- Test aggregation ----------
     testRows.forEach(m => {
       const fmt = "TEST";
       const t1 = m.team1 || "", t2 = m.team2 || "", w = m.winner || "";
@@ -241,7 +260,10 @@ router.get("/summary", async (req, res) => {
       const lo = safeVals.length ? Math.min(...safeVals) : null;
       const margin = Math.abs(t1Total - t2Total);
       const totalRuns = t1Total + t2Total;
-      const isDraw = w === "draw";
+
+      const isDraw = isDrawish(w);          // in TEST table, winner is plain team or 'draw'
+      const winnerIsT1 = wordHit(w, t1);
+      const winnerIsT2 = wordHit(w, t2);
 
       participants.forEach(bid => {
         const b = ensureBoard(bid);
@@ -254,7 +276,9 @@ router.get("/summary", async (req, res) => {
         });
 
         const set = boardTeams.get(bid);
-        const weWon = w && set.has(w);
+        const weWon =
+          (winnerIsT1 && set.has(t1)) ||
+          (winnerIsT2 && set.has(t2));
 
         if (isDraw)       bumpFormat(b, fmt, { draws: 1,  points: pointsForFormat(fmt, "draw") });
         else if (weWon)   bumpFormat(b, fmt, { wins: 1,   points: pointsForFormat(fmt, "win") });
@@ -265,7 +289,14 @@ router.get("/summary", async (req, res) => {
     // finalize
     const out = Object.values(byBoard).map(b => { finalizeBoard(b); return b; });
     let top = null; out.forEach(o => { if (!top || o.totals.points > top.totals.points) top = o; });
-    boardIds.forEach(bid => { if (!byBoard[bid]) out.push({ board_id: bid, board_name: nameMap.get(bid) || String(bid), formats: {}, totals: { matches:0, wins:0, draws:0, losses:0, points:0, win_pct:0 } }); });
+    boardIds.forEach(bid => {
+      if (!byBoard[bid]) out.push({
+        board_id: bid,
+        board_name: nameMap.get(bid) || String(bid),
+        formats: {},
+        totals: { matches:0, wins:0, draws:0, losses:0, points:0, win_pct:0 }
+      });
+    });
     out.sort((a,b) => b.totals.points - a.totals.points);
 
     res.json({ data: out, top_board: top || null });
@@ -299,7 +330,7 @@ router.get("/timeline", async (req, res) => {
       teamToBoards.get(r.team_name).add(r.board_id);
     });
 
-     const mhRange = addDateRange("COALESCE(mh.match_date, mh.match_time::date)", from, to);
+    const mhRange = addDateRange("COALESCE(mh.match_date, mh.match_time::date)", from, to);
     const tRange  = addDateRange("COALESCE(tm.match_date, tm.created_at::date)", from, to);
 
     const mhQ = `
@@ -322,7 +353,7 @@ router.get("/timeline", async (req, res) => {
         LOWER(TRIM(tm.team2)) AS team2,
         LOWER(TRIM(tm.winner)) AS winner,
         'TEST'::text AS fmt,
-        tm.created_at::date AS d
+        COALESCE(tm.match_date, tm.created_at::date) AS d
       FROM public.test_match_results tm
       WHERE tm.status = 'approved'
         ${tRange.sql}
@@ -348,12 +379,14 @@ router.get("/timeline", async (req, res) => {
       }
       if (!involved.size) return;
 
-      const isDraw = w === "draw";
+      const draw = isDrawish(w);
+      const winnerIsT1 = wordHit(w, t1);
+      const winnerIsT2 = wordHit(w, t2);
+
       for (const bid of involved) {
-        const winnerBoards = teamToBoards.get(w) || new Set();
-        const boardHasWinner = w && winnerBoards.has(bid);
-        if (isDraw) addPoints(d, bid, pointsForFormat(fmt, "draw"));
-        else if (boardHasWinner) addPoints(d, bid, pointsForFormat(fmt, "win"));
+        const won = (winnerIsT1 && boardsT1.has(bid)) || (winnerIsT2 && boardsT2.has(bid));
+        if (draw) addPoints(d, bid, pointsForFormat(fmt, "draw"));
+        else if (won) addPoints(d, bid, pointsForFormat(fmt, "win"));
         else if (w) addPoints(d, bid, pointsForFormat(fmt, "loss"));
       }
     }
