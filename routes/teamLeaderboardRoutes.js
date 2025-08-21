@@ -1,8 +1,7 @@
 // routes/teamLeaderboardRoutes.js
 // Filterable leaderboard with the SAME maths as /api/teams.
-// We aggregate from TEAMS and filter via MATCHES,
-// and we use EXISTS against MATCH_HISTORY for tournament/year
-// so we do NOT multiply rows (no buggy joins).
+// Aggregate from TEAMS; filter with MATCHES + EXISTS on MATCH_HISTORY
+// (no row multiplication). Also echo back tournament/year so UI can show them.
 
 const express = require("express");
 const router = express.Router();
@@ -14,7 +13,7 @@ router.get("/teams/leaderboard", async (req, res) => {
   try {
     const { match_type = "All", tournament_name = null, season_year = null } = req.query;
 
-    // Accept "All" (ODI + T20) or a single type
+    // "All" (ODI+T20) or a single type
     const mtArr =
       match_type === "All"
         ? ["ODI", "T20"]
@@ -22,23 +21,22 @@ router.get("/teams/leaderboard", async (req, res) => {
         ? [match_type]
         : ["ODI", "T20"];
 
-    // NOTE:
-    //  - Aggregate only from TEAMS (same as /api/teams).
-    //  - Filter by MATCHES.match_type and (optionally) by a matching row
-    //    in MATCH_HISTORY using EXISTS. This avoids row multiplication.
     const sql = `
       SELECT
         t.name AS team_name,
-        COUNT(DISTINCT t.match_id)                           AS matches_played,
-        SUM(t.wins)                                          AS wins,
-        SUM(t.losses)                                        AS losses,
-        COUNT(DISTINCT t.match_id) - SUM(t.wins) - SUM(t.losses) AS draws,
+        COUNT(DISTINCT t.match_id)                                AS matches_played,
+        SUM(t.wins)                                               AS wins,
+        SUM(t.losses)                                             AS losses,
+        COUNT(DISTINCT t.match_id) - SUM(t.wins) - SUM(t.losses)  AS draws,
         (SUM(t.wins) * 2 + (COUNT(DISTINCT t.match_id) - SUM(t.wins) - SUM(t.losses))) AS points,
         ROUND(
           (SUM(t.total_runs)::decimal          / NULLIF(SUM(t.total_overs), 0))
           -
           (SUM(t.total_runs_conceded)::decimal / NULLIF(SUM(t.total_overs_bowled), 0))
-        , 2) AS nrr
+        , 2) AS nrr,
+        /* Echo selected filters so UI can display them deterministically */
+        $2::text AS tournament_name,
+        $3::int  AS season_year
       FROM teams t
       JOIN matches m ON m.id = t.match_id
       WHERE m.match_type = ANY($1)
@@ -53,7 +51,7 @@ router.get("/teams/leaderboard", async (req, res) => {
               AND ($3::int  IS NULL OR h.season_year = $3::int)
           )
         )
-      GROUP BY t.name
+      GROUP BY t.name, tournament_name, season_year
       ORDER BY points DESC, nrr DESC, team_name ASC
     `;
 
