@@ -95,7 +95,7 @@ router.get("/summary", async (req, res) => {
     boardIds.forEach(id => { if (!boardTeams.has(id)) boardTeams.set(id, new Set()); });
 
     // ODI/T20 matches
-    const mhRange = addDateRange("mh.match_time::date", from, to);
+    const mhRange = addDateRange("COALESCE(mh.match_date, mh.match_time::date)", from, to);
     const mhQ = `
       SELECT
         mh.id,
@@ -105,7 +105,7 @@ router.get("/summary", async (req, res) => {
         LOWER(TRIM(mh.team2)) AS team2,
         mh.runs2, mh.wickets2, mh.runs2_2, mh.wickets2_2,
         LOWER(TRIM(mh.winner)) AS winner,
-        mh.match_time::date AS d
+        COALESCE(mh.match_date, mh.match_time::date) AS d
       FROM public.match_history mh
       WHERE mh.status = 'approved'
         AND (UPPER(mh.match_type) = 'ODI' OR UPPER(mh.match_type) = 'T20')
@@ -114,7 +114,7 @@ router.get("/summary", async (req, res) => {
     const { rows: mhRows } = await pool.query(mhQ, mhRange.params);
 
     // Test matches
-    const tRange = addDateRange("tm.created_at::date", from, to);
+    const tRange = addDateRange("COALESCE(tm.match_date, tm.created_at::date)", from, to);
     const tQ = `
       SELECT
         tm.id,
@@ -299,8 +299,8 @@ router.get("/timeline", async (req, res) => {
       teamToBoards.get(r.team_name).add(r.board_id);
     });
 
-    const mhRange = addDateRange("mh.match_time::date", from, to);
-    const tRange  = addDateRange("tm.created_at::date", from, to);
+     const mhRange = addDateRange("COALESCE(mh.match_date, mh.match_time::date)", from, to);
+    const tRange  = addDateRange("COALESCE(tm.match_date, tm.created_at::date)", from, to);
 
     const mhQ = `
       SELECT
@@ -308,7 +308,7 @@ router.get("/timeline", async (req, res) => {
         LOWER(TRIM(mh.team2)) AS team2,
         LOWER(TRIM(mh.winner)) AS winner,
         UPPER(mh.match_type) AS fmt,
-        mh.match_time::date AS d
+        COALESCE(mh.match_date, mh.match_time::date) AS d
       FROM public.match_history mh
       WHERE mh.status = 'approved'
         AND (UPPER(mh.match_type) = 'ODI' OR UPPER(mh.match_type) = 'T20')
