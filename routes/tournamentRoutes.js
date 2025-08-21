@@ -1,27 +1,25 @@
-// ✅ routes/tournamentRoutes.js
-// Tournament-aware endpoints backed by match_history (ODI/T20) and optional Test in future
-// Endpoints used by src/services/api.js:
-//  - GET /api/tournaments                 → catalog (name + editions)
-//  - GET /api/tournaments/leaderboard     → per-tournament season table (ODI/T20; Test ignored for NRR)
-//  - GET /api/tournaments/matches         → raw matches for that tournament season
+// routes/tournamentRoutes.js
+// Tournament endpoints backed by match_history (ODI/T20). Robust winner parsing.
 
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
-// Lower-trim helper
-const norm = (s) => (s ?? "").toString().trim();
+// helpers
+const norm  = (s) => (s ?? "").toString().trim();
 const canon = (s) => norm(s).toLowerCase();
 
 /**
- * GET /api/tournaments?match_type=ODI|T20|Test
- * Returns: [{ name, editions: [{season_year, match_type, matches}] }]
- * Uses match_history (ODI/T20). Test can be added later if needed.
+ * GET /api/tournaments?match_type=All|ODI|T20
+ * Returns [{ name, editions:[{season_year, match_type, matches}] }]
  */
 router.get("/", async (req, res) => {
   try {
-    const { match_type } = req.query;
-    const mtFilter = match_type && ["ODI", "T20"].includes(match_type) ? match_type : null;
+    const { match_type = "All" } = req.query;
+    const mtArr =
+      match_type === "All" ? ["ODI", "T20"] :
+      ["ODI", "T20"].includes(match_type) ? [match_type] :
+      ["ODI", "T20"];
 
     const result = await pool.query(
       `
@@ -33,26 +31,24 @@ router.get("/", async (req, res) => {
         COUNT(*) AS matches
       FROM match_history
       WHERE tournament_name IS NOT NULL AND tournament_name <> ''
-        ${mtFilter ? "AND match_type = $1" : ""}
+        AND match_type = ANY($1)
       GROUP BY LOWER(TRIM(tournament_name)), season_year, match_type
       ORDER BY MIN(tournament_name), season_year DESC
       `,
-      mtFilter ? [match_type] : []
+      [mtArr]
     );
 
     const map = new Map();
     for (const r of result.rows) {
-      const key = r.key_name;
-      if (!map.has(key)) {
-        map.set(key, { name: r.display_name, editions: [] });
+      if (!map.has(r.key_name)) {
+        map.set(r.key_name, { name: r.display_name, editions: [] });
       }
-      map.get(key).editions.push({
+      map.get(r.key_name).editions.push({
         season_year: Number(r.season_year),
         match_type: r.match_type,
         matches: Number(r.matches),
       });
     }
-
     res.json(Array.from(map.values()));
   } catch (err) {
     console.error("❌ tournaments catalog error:", err);
@@ -61,134 +57,132 @@ router.get("/", async (req, res) => {
 });
 
 /**
- * GET /api/tournaments/leaderboard?tournament_name=...&season_year=...&match_type=All|ODI|T20
- * Returns aggregated table:
- *  team_name, matches, wins, losses, draws, points, nrr, tournament_name, season_year, match_type
- * Only ODI/T20 (NRR) for now.
+ * GET /api/tournaments/leaderboard
+ * Query: tournament_name? (optional), season_year? (optional), match_type=All|ODI|T20
+ * Aggregates by team from match_history and computes Points + NRR.
+ * Winner parsing: "<team> won the match!" (case/! tolerant). Draws handled.
  */
 router.get("/leaderboard", async (req, res) => {
   try {
     const { tournament_name, season_year, match_type = "All" } = req.query;
-    if (!tournament_name || !season_year) {
-      return res.status(400).json({ error: "tournament_name and season_year are required" });
+
+    const mtArr =
+      match_type === "All" ? ["ODI", "T20"] :
+      ["ODI", "T20"].includes(match_type) ? [match_type] :
+      ["ODI", "T20"];
+
+    const cond = [];
+    const vals = [];
+
+    // match_type filter
+    vals.push(mtArr);
+    cond.push(`match_type = ANY($${vals.length})`);
+
+    // tournament filter (optional)
+    if (tournament_name) {
+      vals.push(tournament_name);
+      cond.push(`LOWER(TRIM(tournament_name)) = LOWER(TRIM($${vals.length}))`);
     }
 
-    const mtClause =
-      match_type === "All" ? "IN ('ODI','T20')" :
-      ["ODI","T20"].includes(match_type) ? `= '${match_type}'` :
-      "IN ('ODI','T20')"; // ignore Test here by design
+    // season filter (optional)
+    if (season_year) {
+      vals.push(Number(season_year));
+      cond.push(`season_year = $${vals.length}`);
+    }
 
+    const where = cond.length ? `WHERE ${cond.join(" AND ")}` : "";
+
+    // Note the LIKE pattern to be tolerant to optional "!" or extra suffix
+    // and explicit draw aliases.
     const sql = `
       WITH base AS (
         SELECT *
         FROM match_history
-        WHERE tournament_name IS NOT NULL AND tournament_name <> ''
-          AND LOWER(TRIM(tournament_name)) = LOWER(TRIM($1))
-          AND season_year = $2
-          AND match_type ${mtClause}
+        ${where}
       ),
-      per_team AS (
-        -- perspective for team1
+      t1 AS (
         SELECT
           LOWER(TRIM(team1)) AS team_key,
-          team1 AS team_name,
-          1 AS matches,
-          CASE WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team1)) || ' won the match!' THEN 1 ELSE 0 END AS wins,
-          CASE WHEN LOWER(TRIM(winner)) IN ('draw','match draw') THEN 1 ELSE 0 END AS draws,
-          CASE 
-            WHEN winner IS NOT NULL AND winner <> '' 
-              AND LOWER(TRIM(winner)) NOT IN (
-                LOWER(TRIM(team1)) || ' won the match!', 'draw','match draw'
-              ) 
-            THEN 1 ELSE 0 
-          END AS losses,
-          runs1::int AS runs_for,
-          overs1::decimal AS overs_faced,
-          runs2::int AS runs_against,
-          overs2::decimal AS overs_bowled
+          MIN(team1)        AS team_name,
+          COUNT(*)          AS matches,
+          SUM(CASE
+                WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team1)) || ' won the match!'
+                  OR LOWER(TRIM(winner)) LIKE LOWER(TRIM(team1)) || ' won the match%' THEN 1
+                ELSE 0
+              END)           AS wins,
+          SUM(CASE WHEN LOWER(TRIM(winner)) IN ('draw','match draw','match drawn') THEN 1 ELSE 0 END) AS draws,
+          SUM(CASE
+                WHEN winner IS NOT NULL AND winner <> '' AND
+                     LOWER(TRIM(winner)) NOT IN (
+                       LOWER(TRIM(team1)) || ' won the match!',
+                       'draw','match draw','match drawn'
+                     )
+                THEN 1 ELSE 0
+              END)           AS losses,
+          SUM(runs1)::int   AS runs_for,
+          SUM(overs1)::decimal AS overs_faced,
+          SUM(runs2)::int   AS runs_against,
+          SUM(overs2)::decimal AS overs_bowled
         FROM base
-        UNION ALL
-        -- perspective for team2
+        GROUP BY LOWER(TRIM(team1))
+      ),
+      t2 AS (
         SELECT
           LOWER(TRIM(team2)) AS team_key,
-          team2 AS team_name,
-          1 AS matches,
-          CASE WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team2)) || ' won the match!' THEN 1 ELSE 0 END AS wins,
-          CASE WHEN LOWER(TRIM(winner)) IN ('draw','match draw') THEN 1 ELSE 0 END AS draws,
-          CASE 
-            WHEN winner IS NOT NULL AND winner <> '' 
-              AND LOWER(TRIM(winner)) NOT IN (
-                LOWER(TRIM(team2)) || ' won the match!', 'draw','match draw'
-              ) 
-            THEN 1 ELSE 0 
-          END AS losses,
-          runs2::int AS runs_for,
-          overs2::decimal AS overs_faced,
-          runs1::int AS runs_against,
-          overs1::decimal AS overs_bowled
+          MIN(team2)        AS team_name,
+          COUNT(*)          AS matches,
+          SUM(CASE
+                WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team2)) || ' won the match!'
+                  OR LOWER(TRIM(winner)) LIKE LOWER(TRIM(team2)) || ' won the match%' THEN 1
+                ELSE 0
+              END)           AS wins,
+          SUM(CASE WHEN LOWER(TRIM(winner)) IN ('draw','match draw','match drawn') THEN 1 ELSE 0 END) AS draws,
+          SUM(CASE
+                WHEN winner IS NOT NULL AND winner <> '' AND
+                     LOWER(TRIM(winner)) NOT IN (
+                       LOWER(TRIM(team2)) || ' won the match!',
+                       'draw','match draw','match drawn'
+                     )
+                THEN 1 ELSE 0
+              END)           AS losses,
+          SUM(runs2)::int   AS runs_for,
+          SUM(overs2)::decimal AS overs_faced,
+          SUM(runs1)::int   AS runs_against,
+          SUM(overs1)::decimal AS overs_bowled
         FROM base
+        GROUP BY LOWER(TRIM(team2))
+      ),
+      per_team AS (
+        SELECT * FROM t1
+        UNION ALL
+        SELECT * FROM t2
       )
       SELECT
         MIN(team_name) AS team_name,
-        SUM(matches) AS matches,
-        SUM(wins) AS wins,
-        SUM(losses) AS losses,
-        SUM(draws) AS draws,
-        (SUM(wins) * 2 + SUM(draws) * 1) AS points,
+        SUM(matches)   AS matches,
+        SUM(wins)      AS wins,
+        SUM(losses)    AS losses,
+        SUM(draws)     AS draws,
+        (SUM(wins)*2 + SUM(draws)*1) AS points,
         ROUND(
           (SUM(runs_for)::decimal / NULLIF(SUM(overs_faced),0))
           -
           (SUM(runs_against)::decimal / NULLIF(SUM(overs_bowled),0))
-          , 2
-        ) AS nrr,
-        MIN($1) AS tournament_name,
-        MIN($2::int) AS season_year,
-        ${match_type === "All" ? ` 'All' ` : ` '${match_type}' `} AS match_type
+        , 2) AS nrr,
+        MIN(COALESCE(tournament_name,'')) AS tournament_name,
+        MIN(COALESCE(season_year::int,0)) AS season_year,
+        CASE WHEN $1::text[] = ARRAY['ODI','T20'] THEN 'All' ELSE (SELECT $1::text[])[1] END AS match_type
       FROM per_team
+      LEFT JOIN base b ON (b.team1 = per_team.team_name OR b.team2 = per_team.team_name)
       GROUP BY team_key
       ORDER BY points DESC, nrr DESC, team_name ASC
     `;
 
-    const result = await pool.query(sql, [tournament_name, Number(season_year)]);
+    const result = await pool.query(sql, vals);
     res.json(result.rows);
   } catch (err) {
     console.error("❌ tournaments leaderboard error:", err);
     res.status(500).json({ error: "Failed to load tournament leaderboard" });
-  }
-});
-
-/**
- * GET /api/tournaments/matches?tournament_name=...&season_year=...&match_type=All|ODI|T20
- * Raw matches for that tournament season (ODI/T20 only for now).
- */
-router.get("/matches", async (req, res) => {
-  try {
-    const { tournament_name, season_year, match_type = "All" } = req.query;
-    if (!tournament_name || !season_year) {
-      return res.status(400).json({ error: "tournament_name and season_year are required" });
-    }
-
-    const mtFilter =
-      match_type === "All" ? ["ODI", "T20"] :
-      ["ODI", "T20"].includes(match_type) ? [match_type] : ["ODI", "T20"];
-
-    const result = await pool.query(
-      `
-      SELECT *
-      FROM match_history
-      WHERE tournament_name IS NOT NULL AND tournament_name <> ''
-        AND LOWER(TRIM(tournament_name)) = LOWER(TRIM($1))
-        AND season_year = $2
-        AND match_type = ANY($3)
-      ORDER BY COALESCE(match_date::timestamp, match_time, created_at) DESC
-      `,
-      [tournament_name, Number(season_year), mtFilter]
-    );
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error("❌ tournaments matches error:", err);
-    res.status(500).json({ error: "Failed to load tournament matches" });
   }
 });
 
