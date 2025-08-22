@@ -261,7 +261,7 @@ router.get("/summary", async (req, res) => {
       const margin = Math.abs(t1Total - t2Total);
       const totalRuns = t1Total + t2Total;
 
-      const isDraw = isDrawish(w);          // in TEST table, winner is plain team or 'draw'
+      const isDraw = isDrawish(w);
       const winnerIsT1 = wordHit(w, t1);
       const winnerIsT2 = wordHit(w, t2);
 

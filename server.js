@@ -56,6 +56,7 @@ const playerAnalyticsRoutes = require('./routes/playerAnalyticsRoutes');
 const tournamentRoutes = require("./routes/tournamentRoutes");
 //const teamLeaderboardRoutes = require("./routes/teamLeaderboardRoutes");
 const teamLeaderboardRoutes = require("./routes/teamLeaderboardRoutes");  // ✅ NEW
+const hallOfFameRoutes = require("./routes/hallOfFameRoutes");
 
 const app = express();
 const server = http.createServer(app);
@@ -135,6 +136,7 @@ app.use("/api/squads", attachAdminIfPresent, squadRoutes);
 app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespace
 app.use("/api/tournaments", tournamentRoutes);
 app.use("/api", teamLeaderboardRoutes);
+app.use("/api/boards/hof", hallOfFameRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
