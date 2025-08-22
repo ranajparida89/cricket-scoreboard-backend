@@ -1,6 +1,8 @@
 // routes/boardAnalyticsRoutes.js
-// 08-AUG-2025 — CrickEdge Board Analytics
-// Adds Hall-of-Fame championship bonus points (ODI/T20 +25, TEST +50)
+// 10-AUG-2025 — CrickEdge Board Analytics (schema-aligned)
+// - Outcome points: ODI/T20 win/draw/loss = 10/5/2; TEST = 18/9/4
+// - Championship bonus via Hall of Fame: ODI/T20 +25, TEST +50
+// - Date-safe windows, robust winner parsing, graceful fallbacks
 
 const express = require("express");
 const router = express.Router();
@@ -9,15 +11,14 @@ const pool = require("../db");
 // ---------- Helpers ----------
 const isInt = (v) => /^\d+$/.test(String(v));
 const isISODate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v));
-const toIntArray = (csv) =>
-  (csv || "")
+const toIntArray = (csv = "") =>
+  csv
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)
     .map((s) => (isInt(s) ? Number(s) : NaN))
     .filter((n) => Number.isInteger(n));
 
-// Core match points (per match outcome)
 function pointsForFormat(fmt, outcome) {
   const f = String(fmt || "").toUpperCase();
   if (f === "ODI" || f === "T20") {
@@ -29,7 +30,6 @@ function pointsForFormat(fmt, outcome) {
   return 0;
 }
 
-// Championship bonus (Hall of Fame)
 function championshipBonus(fmt) {
   const f = String(fmt || "").toUpperCase();
   if (f === "TEST") return 50;
@@ -37,7 +37,7 @@ function championshipBonus(fmt) {
   return 0;
 }
 
-// date range helper
+// WHERE date helper
 function addDateRange(whereCol, from, to) {
   const parts = [], params = [];
   if (from) { parts.push(`${whereCol} >= $${params.length + 1}`); params.push(from); }
@@ -47,7 +47,9 @@ function addDateRange(whereCol, from, to) {
 
 function send500(res, req, tag, err, msg) {
   console.error(tag, err);
-  if (req.query.debug === "1") return res.status(500).json({ error: err?.message || String(err) });
+  if (req.query?.debug === "1") {
+    return res.status(500).json({ error: err?.message || String(err), stack: err?.stack });
+  }
   return res.status(500).json({ error: msg });
 }
 
@@ -58,7 +60,7 @@ const wordHit = (text, needle) => {
   const re = new RegExp(`\\b${reEsc(String(needle).trim())}\\b`, "i");
   return re.test(String(text));
 };
-const isDrawish = (w) => /\b(draw|tie|tied|no\s*result|abandon)/i.test(String(w || "").trim());
+const isDrawish = (w) => /\b(draw|tie|tied|no\s*result|abandon|abandoned)/i.test(String(w || "").trim());
 
 // ---------- GET /boards ----------
 router.get("/boards", async (_req, res) => {
@@ -78,10 +80,11 @@ router.get("/boards", async (_req, res) => {
 // ---------- GET /summary ----------
 router.get("/summary", async (req, res) => {
   try {
-    const boardIds = toIntArray(req.query.board_ids);
+    const boardIds = toIntArray(req.query.board_ids || "");
     if (!boardIds.length) {
       return res.status(400).json({ error: "board_ids (comma-separated integers) is required" });
     }
+
     const from = req.query.from ? String(req.query.from) : null;
     const to   = req.query.to   ? String(req.query.to)   : null;
 
@@ -151,7 +154,7 @@ router.get("/summary", async (req, res) => {
     `;
     const { rows: testRows } = await pool.query(tQ, tRange.params);
 
-    // Aggregate
+    // Aggregate container
     const byBoard = {};
     const ensureBoard = (id) => {
       if (!byBoard[id]) {
@@ -208,23 +211,30 @@ router.get("/summary", async (req, res) => {
         ? Number(((b.totals.wins / b.totals.matches) * 100).toFixed(2)) : 0;
     }
 
-    // ---------- ODI/T20 aggregation with robust winner parsing ----------
+    // ---------- ODI/T20 aggregation ----------
     mhRows.forEach(m => {
       const fmt = m.match_type;
       const t1 = m.team1 || "", t2 = m.team2 || "", w = m.winner || "";
 
+      // Which boards participated?
       const participants = [];
       boardIds.forEach(bid => {
         const set = boardTeams.get(bid);
         if (set.has(t1) || set.has(t2)) participants.push(bid);
       });
 
-      const hi = Math.max(Number.isFinite(m.runs1) ? m.runs1 : -Infinity, Number.isFinite(m.runs2) ? m.runs2 : -Infinity);
-      const lo = Math.min(Number.isFinite(m.runs1) ? m.runs1 : Infinity,   Number.isFinite(m.runs2) ? m.runs2 : Infinity);
+      const hi = Math.max(
+        Number.isFinite(m.runs1) ? m.runs1 : -Infinity,
+        Number.isFinite(m.runs2) ? m.runs2 : -Infinity
+      );
+      const lo = Math.min(
+        Number.isFinite(m.runs1) ? m.runs1 : Infinity,
+        Number.isFinite(m.runs2) ? m.runs2 : Infinity
+      );
       const margin = (Number.isFinite(m.runs1) && Number.isFinite(m.runs2)) ? Math.abs(m.runs1 - m.runs2) : 0;
       const totalRuns = (Number(m.runs1) || 0) + (Number(m.runs2) || 0);
 
-      const isDraw = isDrawish(w);
+      const draw = isDrawish(w);
       const winnerIsT1 = wordHit(w, t1);
       const winnerIsT2 = wordHit(w, t2);
 
@@ -243,13 +253,13 @@ router.get("/summary", async (req, res) => {
           (winnerIsT1 && set.has(t1)) ||
           (winnerIsT2 && set.has(t2));
 
-        if (isDraw)       bumpFormat(b, fmt, { draws: 1,  points: pointsForFormat(fmt, "draw") });
-        else if (weWon)   bumpFormat(b, fmt, { wins: 1,   points: pointsForFormat(fmt, "win") });
-        else if (w)       bumpFormat(b, fmt, { losses: 1, points: pointsForFormat(fmt, "loss") });
+        if (draw)       bumpFormat(b, fmt, { draws: 1,  points: pointsForFormat(fmt, "draw") });
+        else if (weWon) bumpFormat(b, fmt, { wins: 1,   points: pointsForFormat(fmt, "win") });
+        else if (w)     bumpFormat(b, fmt, { losses: 1, points: pointsForFormat(fmt, "loss") });
       });
     });
 
-    // ---------- Test aggregation ----------
+    // ---------- TEST aggregation ----------
     testRows.forEach(m => {
       const fmt = "TEST";
       const t1 = m.team1 || "", t2 = m.team2 || "", w = m.winner || "";
@@ -268,7 +278,7 @@ router.get("/summary", async (req, res) => {
       const margin = Math.abs(t1Total - t2Total);
       const totalRuns = t1Total + t2Total;
 
-      const isDraw = isDrawish(w);
+      const draw = isDrawish(w);
       const winnerIsT1 = wordHit(w, t1);
       const winnerIsT2 = wordHit(w, t2);
 
@@ -287,14 +297,14 @@ router.get("/summary", async (req, res) => {
           (winnerIsT1 && set.has(t1)) ||
           (winnerIsT2 && set.has(t2));
 
-        if (isDraw)       bumpFormat(b, fmt, { draws: 1,  points: pointsForFormat(fmt, "draw") });
-        else if (weWon)   bumpFormat(b, fmt, { wins: 1,   points: pointsForFormat(fmt, "win") });
-        else if (w)       bumpFormat(b, fmt, { losses: 1, points: pointsForFormat(fmt, "loss") });
+        if (draw)       bumpFormat(b, fmt, { draws: 1,  points: pointsForFormat(fmt, "draw") });
+        else if (weWon) bumpFormat(b, fmt, { wins: 1,   points: pointsForFormat(fmt, "win") });
+        else if (w)     bumpFormat(b, fmt, { losses: 1, points: pointsForFormat(fmt, "loss") });
       });
     });
 
     // ---------- Championship bonus from Hall of Fame ----------
-    // Apply using th.board_id (historical ownership), within date window.
+    // Apply using th.board_id on award date (final_date, fallback to 31-Dec of season_year)
     const dExpr = `COALESCE(th.final_date, to_date(th.season_year::text||'-12-31','YYYY-MM-DD'))`;
     const wh = [`th.board_id = ANY($1::int[])`];
     const params = [boardIds];
@@ -315,7 +325,24 @@ router.get("/summary", async (req, res) => {
       if (bonus > 0) bumpFormat(b, fmt, { points: bonus });
     });
 
-    // finalize
+    // Optional backward-compat: include any explicit award table rows (if table exists)
+    try {
+      const apWh = [`ap.board_id = ANY($1::int[])`];
+      const apParams = [boardIds];
+      if (from) { apWh.push(`ap.award_date >= $${apParams.length + 1}`); apParams.push(from); }
+      if (to)   { apWh.push(`ap.award_date <= $${apParams.length + 1}`); apParams.push(to); }
+      const apQ = `
+        SELECT ap.board_id, UPPER(ap.match_type) AS match_type, ap.points::int
+        FROM public.board_award_points ap
+        WHERE ${apWh.join(" AND ")}
+      `;
+      const { rows: apRows } = await pool.query(apQ, apParams);
+      apRows.forEach(r => { const b = ensureBoard(r.board_id); bumpFormat(b, r.match_type, { points: Number(r.points)||0 }); });
+    } catch (_) {
+      // ignore if table missing
+    }
+
+    // finalize & sort
     const out = Object.values(byBoard).map(b => { finalizeBoard(b); return b; });
     let top = null; out.forEach(o => { if (!top || o.totals.points > top.totals.points) top = o; });
     boardIds.forEach(bid => {
@@ -347,6 +374,7 @@ router.get("/timeline", async (req, res) => {
 
     const boardIdsFilter = toIntArray(req.query.board_ids || "");
 
+    // map team -> boards
     const teamQ = `
       SELECT bt.board_id, LOWER(TRIM(bt.team_name)) AS team_name
       FROM public.board_teams bt
@@ -423,7 +451,7 @@ router.get("/timeline", async (req, res) => {
     mhRows.forEach(processMatch);
     tRows.forEach(processMatch);
 
-    // ---- Championship bonus applied on final_date/season_year-end ----
+    // ---- Championship bonus on award date (final_date or year-end) ----
     const dExpr = `COALESCE(th.final_date, to_date(th.season_year::text||'-12-31','YYYY-MM-DD'))`;
     const wh = [];
     const params = [];
@@ -437,6 +465,24 @@ router.get("/timeline", async (req, res) => {
     `;
     const { rows: bonusRows } = await pool.query(hofQ, params);
     bonusRows.forEach(r => addPoints(r.d, r.board_id, championshipBonus(r.match_type)));
+
+    // Optional: also include any explicit board_award_points rows (if exist)
+    try {
+      const apWh = [];
+      const apParams = [];
+      if (boardIdsFilter.length) { apWh.push(`ap.board_id = ANY($${apParams.length + 1}::int[])`); apParams.push(boardIdsFilter); }
+      if (from)                  { apWh.push(`ap.award_date >= $${apParams.length + 1}`); apParams.push(from); }
+      if (to)                    { apWh.push(`ap.award_date <= $${apParams.length + 1}`); apParams.push(to); }
+      const apQ = `
+        SELECT ap.board_id, UPPER(ap.match_type) AS match_type, ap.award_date AS d, ap.points::int
+        FROM public.board_award_points ap
+        ${apWh.length ? `WHERE ${apWh.join(" AND ")}` : ""}
+      `;
+      const { rows: apRows } = await pool.query(apQ, apParams);
+      apRows.forEach(r => addPoints(r.d, r.board_id, Number(r.points)||0));
+    } catch (_) {
+      // ignore if table missing
+    }
 
     // Build cumulative timeline
     const dates = [...daily.keys()].sort((a,b)=> new Date(a)-new Date(b));

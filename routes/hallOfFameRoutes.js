@@ -1,4 +1,4 @@
-// Hall of Fame API: list, stats, filters, meta, upsert with champion bonus
+// Hall of Fame API: list, stats, filters, meta, upsert with champion bonus (schema-aligned)
 
 const express = require("express");
 const router = express.Router();
@@ -25,14 +25,11 @@ function mkOrderBy(sort = "chron") {
 function normalizeDate(v) {
   if (!v) return null;
   const s = String(v).trim();
-  // YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  // YYYY/MM/DD
-  if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) return s.replace(/\//g, "-");
-  // DD-MM-YYYY or DD/MM/YYYY
-  const m = s.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})$/);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;                 // YYYY-MM-DD
+  if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) return s.replace(/\//g, "-"); // YYYY/MM/DD
+  const m = s.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})$/);      // DD-MM-YYYY
   if (m) return `${m[3]}-${m[2]}-${m[1]}`;
-  return null; // let DB handle if something else
+  return null;
 }
 
 // ---------------- LIST ----------------
@@ -59,10 +56,8 @@ router.get("/list", async (req, res) => {
 
     const q = `
       SELECT id, board_id, match_name, upper(match_type) AS match_type,
-             tournament_name, season_year, season_month,
-             champion_team, champion_team_id,
-             champion_board_id, runner_up_board_id,
-             runner_up_team, final_date, remarks, created_at
+             tournament_name, season_year,
+             champion_team, runner_up_team, final_date, remarks, created_at
       FROM public.tournament_hall_of_fame
       WHERE ${where.join(" AND ")}
       ${mkOrderBy(sort)};
@@ -133,7 +128,14 @@ router.get("/meta", async (_req, res) => {
       WHERE tournament_name IS NOT NULL AND btrim(tournament_name) <> ''
       ORDER BY tournament_name;
     `;
-    const teamsQ = `SELECT id, name FROM public.teams WHERE name IS NOT NULL ORDER BY name;`;
+    /* DISTINCT teams by name (case-insensitive) -> single id per name */
+    const teamsQ = `
+      SELECT MIN(id) AS id, MAX(name) AS name
+      FROM public.teams
+      WHERE name IS NOT NULL AND btrim(name) <> ''
+      GROUP BY lower(btrim(name))
+      ORDER BY MAX(name);
+    `;
     const boardsQ = `SELECT id, board_name FROM public.board_registration ORDER BY board_name;`;
 
     const [tRes, teamRes, boardRes] = await Promise.all([
@@ -144,8 +146,8 @@ router.get("/meta", async (_req, res) => {
 
     res.json({
       tournaments: tRes.rows.map(r => r.tournament_name),
-      teams: teamRes.rows,          // [{id, name}]
-      boards: boardRes.rows         // [{id, board_name}]
+      teams: teamRes.rows.map(r => ({ id: Number(r.id), name: r.name })),   // [{id, name}] (distinct by name)
+      boards: boardRes.rows                                                // [{id, board_name}]
     });
   } catch (e) {
     console.error("hof/meta", e);
@@ -183,13 +185,14 @@ router.get("/stats", async (req, res) => {
   }
 });
 
-// ---------------- UPSERT (with normalized date + bonus award) ----------------
+// ---------------- UPSERT (normalized date + robust upsert, schema-aligned) ----------------
 router.post("/upsert", async (req, res) => {
   try {
     let {
       board_id, match_name, match_type, tournament_name, season_year,
-      season_month, champion_team, champion_team_id,
-      champion_board_id, runner_up_board_id,
+      /* season_month (ignored in DB schema) */ season_month,
+      champion_team, champion_team_id,            // id ignored (stored name only)
+      /* champion_board_id, runner_up_board_id ignored in schema */
       runner_up_team, final_date, remarks
     } = req.body || {};
 
@@ -202,62 +205,65 @@ router.post("/upsert", async (req, res) => {
 
     const fmt = String(match_type).toUpperCase();
     const yr = Number(season_year);
-    const mo = season_month && isInt(season_month) ? Number(season_month) : null;
     const fd = normalizeDate(final_date);
-    const champBoard = toInt(champion_board_id) || bid; // default to the selected board
-    const runnerBoard = toInt(runner_up_board_id) || null;
-    const champTeamId = toInt(champion_team_id) || null;
 
-    // prevent “same team” and “same board” on both sides
+    // prevent “same team” both sides
     if (runner_up_team && champion_team &&
         runner_up_team.trim().toLowerCase() === champion_team.trim().toLowerCase()) {
       return bad(res, "Runner-up team cannot be the same as Champion team");
     }
-    if (runnerBoard && champBoard && runnerBoard === champBoard) {
-      return bad(res, "Runner-up board cannot be the same as Champion board");
-    }
+
+    // Update-then-insert pattern (works even with functional unique index)
+    const params = [
+      bid,
+      match_name || null,
+      fmt,
+      tournament_name,
+      yr,
+      champion_team,
+      runner_up_team || null,
+      fd,
+      remarks || null
+    ];
 
     const upsertQ = `
+      WITH upd AS (
+        UPDATE public.tournament_hall_of_fame AS t
+        SET match_name = $2,
+            champion_team = $6,
+            runner_up_team = $7,
+            final_date = $8,
+            remarks = $9,
+            updated_at = now()
+        WHERE t.board_id = $1
+          AND lower(btrim(t.tournament_name)) = lower(btrim($4))
+          AND t.season_year = $5
+          AND upper(btrim(t.match_type)) = upper(btrim($3))
+        RETURNING t.*
+      )
       INSERT INTO public.tournament_hall_of_fame
-        (board_id, match_name, match_type, tournament_name, season_year, season_month,
-         champion_team, champion_team_id, champion_board_id, runner_up_board_id,
-         runner_up_team, final_date, remarks)
-      VALUES ($1,$2,upper($3),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-      ON CONFLICT ON CONSTRAINT uq_hof_unique
-      DO UPDATE SET
-        match_name        = EXCLUDED.match_name,
-        season_month      = EXCLUDED.season_month,
-        champion_team     = EXCLUDED.champion_team,
-        champion_team_id  = EXCLUDED.champion_team_id,
-        champion_board_id = EXCLUDED.champion_board_id,
-        runner_up_board_id= EXCLUDED.runner_up_board_id,
-        runner_up_team    = EXCLUDED.runner_up_team,
-        final_date        = EXCLUDED.final_date,
-        remarks           = EXCLUDED.remarks,
-        updated_at        = now()
+        (board_id, match_name, match_type, tournament_name, season_year, champion_team, runner_up_team, final_date, remarks)
+      SELECT $1, $2, upper($3), $4, $5, $6, $7, $8, $9
+      WHERE NOT EXISTS (SELECT 1 FROM upd)
       RETURNING *;
     `;
-    const { rows } = await pool.query(upsertQ, [
-      bid, match_name || null, fmt, tournament_name, yr, mo,
-      champion_team, champTeamId, champBoard, runnerBoard,
-      runner_up_team || null, fd, remarks || null
-    ]);
+    const { rows } = await pool.query(upsertQ, params);
     const saved = rows[0];
 
-    // bonus: 25 (ODI/T20) or 50 (TEST)
-    const bonus = fmt === "TEST" ? 50 : 25;
-    const awardDate = fd || `${yr}-12-31`;
-    const awardQ = `
-      INSERT INTO public.board_award_points (board_id, match_type, points, award_date, reason, hof_id)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (hof_id) DO UPDATE
-      SET board_id = EXCLUDED.board_id,
-          match_type = EXCLUDED.match_type,
-          points = EXCLUDED.points,
-          award_date = EXCLUDED.award_date,
-          reason = EXCLUDED.reason;
-    `;
-    await pool.query(awardQ, [champBoard, fmt, bonus, awardDate, "HOF Champion Bonus", saved.id]);
+    // Award champion bonus (do not fail if table/constraint is missing)
+    try {
+      const bonus = fmt === "TEST" ? 50 : 25;
+      const awardDate = fd || `${yr}-12-31`;
+      // remove old award for this HOF (if any), then insert
+      try { await pool.query(`DELETE FROM public.board_award_points WHERE hof_id = $1`, [saved.id]); } catch (_) {}
+      await pool.query(
+        `INSERT INTO public.board_award_points (board_id, match_type, points, award_date, reason, hof_id)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [bid, fmt, bonus, awardDate, "HOF Champion Bonus", saved.id]
+      );
+    } catch (_) {
+      // ignore bonus write errors to avoid blocking HOF save
+    }
 
     res.json({ ok: true, item: saved });
   } catch (e) {
@@ -272,7 +278,7 @@ router.delete("/:id", async (req, res) => {
     const id = toInt(req.params.id);
     if (!id) return bad(res, "valid id required");
     await pool.query(`DELETE FROM public.tournament_hall_of_fame WHERE id=$1`, [id]);
-    // board_award_points row is removed by FK on hof_id (ON DELETE CASCADE)
+    // any linked award points will be removed by FK if defined; otherwise harmless
     res.json({ ok: true });
   } catch (e) {
     console.error("hof/delete", e);
