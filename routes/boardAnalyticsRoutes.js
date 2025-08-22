@@ -1,5 +1,6 @@
 // routes/boardAnalyticsRoutes.js
-// 08-AUG-2025 — CrickEdge Board Analytics (schema-aligned, updated rules + parsing)
+// 08-AUG-2025 — CrickEdge Board Analytics
+// Adds Hall-of-Fame championship bonus points (ODI/T20 +25, TEST +50)
 
 const express = require("express");
 const router = express.Router();
@@ -16,9 +17,7 @@ const toIntArray = (csv) =>
     .map((s) => (isInt(s) ? Number(s) : NaN))
     .filter((n) => Number.isInteger(n));
 
-// 🔁 New points as per your rule
-// ODI/T20: Win=10, Draw=5, Loss=2
-// TEST:    Win=18, Draw=9, Loss=4
+// Core match points (per match outcome)
 function pointsForFormat(fmt, outcome) {
   const f = String(fmt || "").toUpperCase();
   if (f === "ODI" || f === "T20") {
@@ -27,6 +26,14 @@ function pointsForFormat(fmt, outcome) {
   if (f === "TEST") {
     return outcome === "win" ? 18 : outcome === "draw" ? 9 : outcome === "loss" ? 4 : 0;
   }
+  return 0;
+}
+
+// Championship bonus (Hall of Fame)
+function championshipBonus(fmt) {
+  const f = String(fmt || "").toUpperCase();
+  if (f === "TEST") return 50;
+  if (f === "ODI" || f === "T20") return 25;
   return 0;
 }
 
@@ -286,6 +293,28 @@ router.get("/summary", async (req, res) => {
       });
     });
 
+    // ---------- Championship bonus from Hall of Fame ----------
+    // Apply using th.board_id (historical ownership), within date window.
+    const dExpr = `COALESCE(th.final_date, to_date(th.season_year::text||'-12-31','YYYY-MM-DD'))`;
+    const wh = [`th.board_id = ANY($1::int[])`];
+    const params = [boardIds];
+    if (from) { wh.push(`${dExpr} >= $${params.length + 1}`); params.push(from); }
+    if (to)   { wh.push(`${dExpr} <= $${params.length + 1}`); params.push(to); }
+
+    const hofQ = `
+      SELECT th.board_id, UPPER(th.match_type) AS match_type, ${dExpr} AS d
+      FROM public.tournament_hall_of_fame th
+      WHERE ${wh.join(" AND ")}
+    `;
+    const { rows: bonusRows } = await pool.query(hofQ, params);
+
+    bonusRows.forEach(r => {
+      const b = ensureBoard(r.board_id);
+      const fmt = String(r.match_type || "").toUpperCase();
+      const bonus = championshipBonus(fmt);
+      if (bonus > 0) bumpFormat(b, fmt, { points: bonus });
+    });
+
     // finalize
     const out = Object.values(byBoard).map(b => { finalizeBoard(b); return b; });
     let top = null; out.forEach(o => { if (!top || o.totals.points > top.totals.points) top = o; });
@@ -394,6 +423,22 @@ router.get("/timeline", async (req, res) => {
     mhRows.forEach(processMatch);
     tRows.forEach(processMatch);
 
+    // ---- Championship bonus applied on final_date/season_year-end ----
+    const dExpr = `COALESCE(th.final_date, to_date(th.season_year::text||'-12-31','YYYY-MM-DD'))`;
+    const wh = [];
+    const params = [];
+    if (boardIdsFilter.length) { wh.push(`th.board_id = ANY($${params.length + 1}::int[])`); params.push(boardIdsFilter); }
+    if (from)                { wh.push(`${dExpr} >= $${params.length + 1}`); params.push(from); }
+    if (to)                  { wh.push(`${dExpr} <= $${params.length + 1}`); params.push(to); }
+    const hofQ = `
+      SELECT th.board_id, UPPER(th.match_type) AS match_type, ${dExpr} AS d
+      FROM public.tournament_hall_of_fame th
+      ${wh.length ? `WHERE ${wh.join(" AND ")}` : ""}
+    `;
+    const { rows: bonusRows } = await pool.query(hofQ, params);
+    bonusRows.forEach(r => addPoints(r.d, r.board_id, championshipBonus(r.match_type)));
+
+    // Build cumulative timeline
     const dates = [...daily.keys()].sort((a,b)=> new Date(a)-new Date(b));
     const boardsSet = new Set(); daily.forEach(m => m.forEach((_, bid)=> boardsSet.add(bid)));
     const cum = new Map([...boardsSet].map(bid => [bid, 0]));
