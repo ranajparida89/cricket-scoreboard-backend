@@ -266,6 +266,7 @@ router.get("/summary", async (req, res) => {
 
       const participants = [];
       boardIds.forEach(bid => {
+        theSet = boardTeams.get(bid);
         const set = boardTeams.get(bid);
         if (set.has(t1) || set.has(t2)) participants.push(bid);
       });
@@ -387,16 +388,19 @@ router.get("/timeline", async (req, res) => {
       teamToBoards.get(r.team_name).add(r.board_id);
     });
 
-    const mhRange = addDateRange("COALESCE(mh.match_date, mh.match_time::date)", from, to);
-    const tRange  = addDateRange("COALESCE(tm.match_date, tm.created_at::date)", from, to);
+    const mhWhereDate = "COALESCE(mh.match_date, mh.match_time::date)"; // DATE-type for WHERE
+    const mhRange = addDateRange(mhWhereDate, from, to);
+    const tWhereDate = "COALESCE(tm.match_date, tm.created_at::date)";
+    const tRange  = addDateRange(tWhereDate, from, to);
 
+    // Clean date string in SELECT using to_char(...,'YYYY-MM-DD') as d
     const mhQ = `
       SELECT
         LOWER(TRIM(mh.team1)) AS team1,
         LOWER(TRIM(mh.team2)) AS team2,
         LOWER(TRIM(mh.winner)) AS winner,
         UPPER(mh.match_type) AS fmt,
-        COALESCE(mh.match_date, mh.match_time::date) AS d
+        to_char(${mhWhereDate}, 'YYYY-MM-DD') AS d
       FROM public.match_history mh
       WHERE mh.status = 'approved'
         AND (UPPER(mh.match_type) = 'ODI' OR UPPER(mh.match_type) = 'T20')
@@ -410,14 +414,14 @@ router.get("/timeline", async (req, res) => {
         LOWER(TRIM(tm.team2)) AS team2,
         LOWER(TRIM(tm.winner)) AS winner,
         'TEST'::text AS fmt,
-        COALESCE(tm.match_date, tm.created_at::date) AS d
+        to_char(${tWhereDate}, 'YYYY-MM-DD') AS d
       FROM public.test_match_results tm
       WHERE tm.status = 'approved'
         ${tRange.sql}
     `;
     const { rows: tRows } = await pool.query(tQ, tRange.params);
 
-    const daily = new Map(); // date -> Map(boardId->points)
+    const daily = new Map(); // date(string 'YYYY-MM-DD') -> Map(boardId->points)
     function addPoints(date, bid, pts) {
       if (!daily.has(date)) daily.set(date, new Map());
       const m = daily.get(date);
@@ -452,14 +456,16 @@ router.get("/timeline", async (req, res) => {
     tRows.forEach(processMatch);
 
     // ---- Championship bonus on award date (final_date or year-end) ----
-    const dExpr = `COALESCE(th.final_date, to_date(th.season_year::text||'-12-31','YYYY-MM-DD'))`;
+    const hofDateExpr = `COALESCE(th.final_date, to_date(th.season_year::text||'-12-31','YYYY-MM-DD'))`;
     const wh = [];
     const params = [];
     if (boardIdsFilter.length) { wh.push(`th.board_id = ANY($${params.length + 1}::int[])`); params.push(boardIdsFilter); }
-    if (from)                { wh.push(`${dExpr} >= $${params.length + 1}`); params.push(from); }
-    if (to)                  { wh.push(`${dExpr} <= $${params.length + 1}`); params.push(to); }
+    if (from)                { wh.push(`${hofDateExpr} >= $${params.length + 1}`); params.push(from); }
+    if (to)                  { wh.push(`${hofDateExpr} <= $${params.length + 1}`); params.push(to); }
     const hofQ = `
-      SELECT th.board_id, UPPER(th.match_type) AS match_type, ${dExpr} AS d
+      SELECT th.board_id,
+             UPPER(th.match_type) AS match_type,
+             to_char(${hofDateExpr}, 'YYYY-MM-DD') AS d
       FROM public.tournament_hall_of_fame th
       ${wh.length ? `WHERE ${wh.join(" AND ")}` : ""}
     `;
@@ -474,7 +480,9 @@ router.get("/timeline", async (req, res) => {
       if (from)                  { apWh.push(`ap.award_date >= $${apParams.length + 1}`); apParams.push(from); }
       if (to)                    { apWh.push(`ap.award_date <= $${apParams.length + 1}`); apParams.push(to); }
       const apQ = `
-        SELECT ap.board_id, UPPER(ap.match_type) AS match_type, ap.award_date AS d, ap.points::int
+        SELECT ap.board_id, UPPER(ap.match_type) AS match_type,
+               to_char(ap.award_date, 'YYYY-MM-DD') AS d,
+               ap.points::int
         FROM public.board_award_points ap
         ${apWh.length ? `WHERE ${apWh.join(" AND ")}` : ""}
       `;
@@ -500,7 +508,7 @@ router.get("/timeline", async (req, res) => {
       cum.forEach((val, bid) => { if (val > topPts) { topPts = val; topBid = bid; } });
 
       if (topBid != null) {
-        timeline.push({ date: d, board_id: topBid, points: topPts });
+        timeline.push({ date: d, board_id: topBid, points: topPts }); // date is 'YYYY-MM-DD'
         days_held[topBid] = (days_held[topBid] || 0) + 1;
         if (prevTop == null || prevTop !== topBid) { switches[topBid] = (switches[topBid] || 0) + 1; prevTop = topBid; }
       }

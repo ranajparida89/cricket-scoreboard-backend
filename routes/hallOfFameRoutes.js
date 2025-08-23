@@ -122,12 +122,39 @@ router.get("/filters", async (req, res) => {
 // ---------------- META (for Add-Entry dropdowns) ----------------
 router.get("/meta", async (_req, res) => {
   try {
+    // Build tournaments list from match_history + test_match_results + existing HOF,
+    // case-insensitive, trimmed, DISTINCT.
     const tournamentsQ = `
-      SELECT DISTINCT tournament_name
-      FROM public.match_history
-      WHERE tournament_name IS NOT NULL AND btrim(tournament_name) <> ''
-      ORDER BY tournament_name;
+      WITH mh AS (
+        SELECT btrim(tournament_name) AS t
+        FROM public.match_history
+        WHERE status = 'approved'
+          AND tournament_name IS NOT NULL AND btrim(tournament_name) <> ''
+      ),
+      tm AS (
+        SELECT btrim(tournament_name) AS t
+        FROM public.test_match_results
+        WHERE status = 'approved'
+          AND tournament_name IS NOT NULL AND btrim(tournament_name) <> ''
+      ),
+      th AS (
+        SELECT btrim(tournament_name) AS t
+        FROM public.tournament_hall_of_fame
+        WHERE tournament_name IS NOT NULL AND btrim(tournament_name) <> ''
+      ),
+      all_t AS (
+        SELECT t FROM mh
+        UNION ALL
+        SELECT t FROM tm
+        UNION ALL
+        SELECT t FROM th
+      )
+      SELECT MAX(t) AS tournament_name
+      FROM all_t
+      GROUP BY lower(t)
+      ORDER BY MAX(t);
     `;
+
     /* DISTINCT teams by name (case-insensitive) -> single id per name */
     const teamsQ = `
       SELECT MIN(id) AS id, MAX(name) AS name
@@ -145,9 +172,9 @@ router.get("/meta", async (_req, res) => {
     ]);
 
     res.json({
-      tournaments: tRes.rows.map(r => r.tournament_name),
-      teams: teamRes.rows.map(r => ({ id: Number(r.id), name: r.name })),   // [{id, name}] (distinct by name)
-      boards: boardRes.rows                                                // [{id, board_name}]
+      tournaments: tRes.rows.map(r => r.tournament_name), // clean, distinct, includes Tests
+      teams: teamRes.rows.map(r => ({ id: Number(r.id), name: r.name })), // [{id, name}]
+      boards: boardRes.rows
     });
   } catch (e) {
     console.error("hof/meta", e);
