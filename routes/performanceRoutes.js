@@ -1,35 +1,23 @@
 // src/routes/performanceRoutes.js
-// FINAL — Robust user_id resolution for player performance inserts
-//
-// FIXES:
-// [UID-1] Resolve user_id from selected player row; if NULL, fallback by (player_name + team_name).
-// [UID-2] If still NULL, read X-User-Id header and BACKFILL players.user_id (only when currently NULL), then use it.
-// [TYPE-1] Normalize match_type to exactly: 'ODI' | 'T20' | 'Test' (matches DB constraint).
-// [DBG-1] Add X-Handler response header so you can confirm which router handled the request.
-//
+// FINAL — Robust user_id resolution + server-side 50s/100s derivation
 // IMPORTANT: Ensure there is only ONE POST /api/player-performance route registered.
-
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-
 // ---- helpers ----
 const toInt = (v, d = 0) => {
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : d;
 };
-
 // DB constraint expects: 'ODI' | 'T20' | 'Test'
 const normType = (t) => {
   const raw = String(t || "");
   const up = raw.toUpperCase();
   if (up === "ODI") return "ODI";
   if (up === "T20") return "T20";
-  // accept "TEST" or "Test" and normalize to "Test"
-  if (up === "TEST" || raw === "Test") return "Test";
+  if (up === "TEST" || raw === "Test") return "Test"; // accept "TEST" or "Test"
   return "ODI";
 };
-
 // read user id from header or (less preferred) body
 const getUserIdFromReq = (req) => {
   const h = req.header("x-user-id") || req.header("X-User-Id");
@@ -38,7 +26,15 @@ const getUserIdFromReq = (req) => {
   if (b && /^\d+$/.test(String(b))) return parseInt(b, 10);
   return null;
 };
-
+// Single source of truth for milestones based on run_scored
+function deriveMilestones(score) {
+  const s = Number.isFinite(score) ? score : 0;
+  if (s >= 50 && s < 100) return { fifties: 1, hundreds: 0 };
+  if (s >= 100 && s < 200) return { fifties: 0, hundreds: 1 };
+  if (s >= 200 && s < 300) return { fifties: 0, hundreds: 2 };
+  if (s >= 300)           return { fifties: 0, hundreds: Math.floor(s / 100) };
+  return { fifties: 0, hundreds: 0 };
+}
 /**
  * POST /api/player-performance
  * - Finds user_id via:
@@ -46,12 +42,11 @@ const getUserIdFromReq = (req) => {
  *    b) fallback by (player_name + team_name) with non-null user_id
  *    c) header X-User-Id backfill (for legacy rows with NULL user_id)
  * - Inserts into player_performance with user_id.
+ * - Ignores client-sent fifties/hundreds and derives from run_scored.
  */
 router.post("/player-performance", async (req, res) => {
-  // [DBG-1] mark which file handled the request
   res.set("X-Handler", "performanceRoutes");
   console.log("[performanceRoutes] handling POST /player-performance");
-
   const {
     match_name,
     player_id,
@@ -62,17 +57,15 @@ router.post("/player-performance", async (req, res) => {
     balls_faced,
     wickets_taken,
     runs_given,
-    fifties,
-    hundreds,
+    fifties,   // ignored; server derives
+    hundreds,  // ignored; server derives
     dismissed, // "Out" | "Not Out"
   } = req.body;
-
   try {
     // 1) validate basics
     if (!match_name || !player_id || !team_name || !match_type || !against_team) {
       return res.status(400).json({ message: "⚠️ Missing required fields." });
     }
-
     // 2) load selected player row
     const pRes = await pool.query(
       `SELECT id, player_name, team_name, user_id
@@ -84,10 +77,8 @@ router.post("/player-performance", async (req, res) => {
       return res.status(404).json({ message: "❌ Player not found." });
     }
     const playerRow = pRes.rows[0];
-
     // 3) resolve user_id
     let userId = playerRow.user_id;
-
     // 3a) fallback by (name + team) to avoid cross-team same-name collisions
     if (userId == null) {
       const fb = await pool.query(
@@ -104,7 +95,6 @@ router.post("/player-performance", async (req, res) => {
         userId = fb.rows[0].user_id;
       }
     }
-
     // 3b) final fallback: X-User-Id header backfill (legacy rows that were created with NULL user_id)
     if (userId == null) {
       const hdrUserId = getUserIdFromReq(req);
@@ -128,18 +118,15 @@ router.post("/player-performance", async (req, res) => {
         }
       }
     }
-
     if (userId == null) {
       // still not found—older player created without user_id and no header/body user provided
       return res.status(404).json({ message: "User ID not found for this player." });
     }
-
     // 4) verify that user actually exists (defense in depth)
     const uRes2 = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
     if (uRes2.rows.length === 0) {
       return res.status(404).json({ message: "Linked user does not exist." });
     }
-
     // 5) normalize payload
     const payload = {
       match_name: String(match_name).trim(),
@@ -151,12 +138,15 @@ router.post("/player-performance", async (req, res) => {
       balls_faced: toInt(balls_faced),
       wickets_taken: toInt(wickets_taken),
       runs_given: toInt(runs_given),
-      fifties: toInt(fifties),
-      hundreds: toInt(hundreds),
+      fifties: 0,   // derived below
+      hundreds: 0,  // derived below
       dismissed: (dismissed && String(dismissed).trim()) || "Out",
       user_id: toInt(userId),
     };
-
+    // Derive 50s/100s from runs to enforce business rules
+    const derived = deriveMilestones(payload.run_scored);
+    payload.fifties = derived.fifties;
+    payload.hundreds = derived.hundreds;
     // 6) insert (column "dismissed" matches your DDL; include user_id)
     const insert = await pool.query(
       `INSERT INTO player_performance
@@ -182,7 +172,6 @@ router.post("/player-performance", async (req, res) => {
         payload.user_id,
       ]
     );
-
     return res.status(201).json({
       message: "✅ Player performance saved successfully.",
       data: insert.rows[0],
@@ -192,12 +181,10 @@ router.post("/player-performance", async (req, res) => {
     return res.status(500).json({ message: "❌ Server error occurred." });
   }
 });
-
 /**
  * GET /api/player-performance
  */
 router.get("/player-performance", async (req, res) => {
-  // optional: mark GET handler too
   res.set("X-Handler", "performanceRoutes");
   const result = await pool.query(`
     SELECT
@@ -221,5 +208,4 @@ router.get("/player-performance", async (req, res) => {
   `);
   res.json(result.rows);
 });
-
 module.exports = router;
