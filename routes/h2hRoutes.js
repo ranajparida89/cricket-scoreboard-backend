@@ -600,36 +600,30 @@ router.get("/players/opponent-summary", async (req, res) => {
 });
 
 /* -- Per-match trend series for a player (with MA(5); tolerant type + join) -- */
+/* -- Per-match trend series for a player (safe server-side metric + MA5) -- */
 router.get("/players/trend", async (req, res) => {
   const player   = String(req.query.player || "").trim();
-  const upType   = String(req.query.type || "ALL").toUpperCase();
+  const type     = String(req.query.type || "ALL").toUpperCase();
   const opponent = String(req.query.opponent || "ALL").trim().toLowerCase();
   const metric   = String(req.query.metric || "runs").toUpperCase(); // RUNS|BATTING_AVG|STRIKE_RATE|WICKETS|BOWLING_AVG
 
   if (!player) return res.status(400).json({ series: [], per_match: [], ma5: [] });
 
   try {
+    // 1) Fetch raw per-match aggregates. No dynamic CASE, no window fn.
     const q = `
-      -- Base list of matches; make a stable sequence for ordering
-      WITH m_base AS (
-        SELECT TRIM(match_name) AS match_name,
-               LOWER(TRIM(match_name)) AS mkey,
-               LOWER(TRIM(team1)) AS t1,
-               LOWER(TRIM(team2)) AS t2,
-               UPPER(TRIM(match_type)) AS mt
+      WITH m AS (
+        SELECT LOWER(TRIM(match_name)) AS mkey,
+               LOWER(TRIM(team1))      AS t1,
+               LOWER(TRIM(team2))      AS t2,
+               created_at              AS ts
         FROM match_history
         UNION ALL
-        SELECT TRIM(match_name) AS match_name,
-               LOWER(TRIM(match_name)) AS mkey,
-               LOWER(TRIM(team1)) AS t1,
-               LOWER(TRIM(team2)) AS t2,
-               'TEST' AS mt
+        SELECT LOWER(TRIM(match_name)) AS mkey,
+               LOWER(TRIM(team1))      AS t1,
+               LOWER(TRIM(team2))      AS t2,
+               created_at              AS ts
         FROM test_match_results
-      ),
-      m AS (
-        SELECT mb.*,
-               ROW_NUMBER() OVER (ORDER BY mb.match_name) AS seq
-        FROM m_base mb
       ),
       p AS (
         SELECT LOWER(TRIM(pp.match_name)) AS mkey,
@@ -649,58 +643,70 @@ router.get("/players/trend", async (req, res) => {
              OR ($2 = 'T20'  AND (pp.match_type ILIKE 't20%' OR pp.match_type ILIKE 't20i%'))
           )
         GROUP BY LOWER(TRIM(pp.match_name)), LOWER(TRIM(pp.team_name))
-      ),
-      j AS (
-        SELECT
-          COALESCE(m.match_name, p.mkey)       AS match_name,
-          m.seq                                AS mseq,
-          m.mt                                 AS mt,
-          CASE WHEN p.team = m.t1 THEN m.t2
-               WHEN p.team = m.t2 THEN m.t1
-               ELSE NULL END                   AS opponent,
-          p.runs, p.outs, p.wkts, p.runs_given, p.balls
-        FROM p
-        LEFT JOIN m ON p.mkey = m.mkey
-      ),
-      f AS (
-        SELECT *
-        FROM j
-        WHERE ($3 = 'all') OR (opponent = $3)
-      ),
-      per_match AS (
-        SELECT
-          match_name,
-          COALESCE(mseq, ROW_NUMBER() OVER (ORDER BY match_name)) AS ord_seq,
-          CASE
-            WHEN $4 = 'RUNS'         THEN runs::numeric
-            WHEN $4 = 'WICKETS'      THEN wkts::numeric
-            WHEN $4 = 'BOWLING_AVG'  THEN CASE WHEN wkts  > 0 THEN runs_given::numeric / wkts ELSE 0 END
-            WHEN $4 = 'BATTING_AVG'  THEN CASE WHEN outs  > 0 THEN runs::numeric / outs ELSE 0 END
-            WHEN $4 = 'STRIKE_RATE'  THEN CASE WHEN balls > 0 THEN (runs::numeric * 100.0) / balls ELSE 0 END
-            ELSE runs::numeric
-          END AS metric_value
-        FROM f
       )
       SELECT
-        match_name,
-        metric_value,
-        ROUND(AVG(metric_value) OVER (ORDER BY ord_seq ROWS BETWEEN 4 PRECEDING AND CURRENT ROW), 2) AS ma5,
-        ord_seq AS seq
-      FROM per_match
-      ORDER BY ord_seq;
+        COALESCE(m.ts, NULL) AS ts,
+        COALESCE(p.mkey, '') AS mkey,
+        CASE
+          WHEN p.team = m.t1 THEN m.t2
+          WHEN p.team = m.t2 THEN m.t1
+          ELSE NULL
+        END AS opponent,
+        p.runs, p.outs, p.wkts, p.runs_given, p.balls
+      FROM p
+      LEFT JOIN m ON p.mkey = m.mkey
+      WHERE ($3 = 'all' OR (CASE WHEN p.team = m.t1 THEN m.t2 WHEN p.team = m.t2 THEN m.t1 ELSE NULL END) = $3);
     `;
-    const r = await pool.query(q, [player, upType, opponent, metric]);
-    const series = r.rows || [];
 
-    const per_match = series.map(row => ({ name: row.match_name, value: nz(row.metric_value) }));
-    const ma5       = series.map(row => ({ name: row.match_name, value: nz(row.ma5) }));
+    const { rows } = await pool.query(q, [player, type, opponent]);
 
-    res.json({ series, per_match, ma5 });
+    // 2) Sort chronologically when we have timestamps; otherwise by mkey.
+    rows.sort((a, b) => {
+      const at = a.ts ? new Date(a.ts).getTime() : 0;
+      const bt = b.ts ? new Date(b.ts).getTime() : 0;
+      if (at !== bt) return at - bt;
+      return (a.mkey || "").localeCompare(b.mkey || "");
+    });
+
+    // 3) Compute the requested metric per match, then MA(5) in JS.
+    const toMetric = (r) => {
+      switch (metric) {
+        case "RUNS":         return Number(r.runs) || 0;
+        case "WICKETS":      return Number(r.wkts) || 0;
+        case "BOWLING_AVG":  return (Number(r.wkts) > 0) ? Number(r.runs_given) / Number(r.wkts) : 0;
+        case "BATTING_AVG":  return (Number(r.outs) > 0) ? Number(r.runs) / Number(r.outs) : 0;
+        case "STRIKE_RATE":  return (Number(r.balls) > 0) ? (Number(r.runs) * 100.0) / Number(r.balls) : 0;
+        default:             return Number(r.runs) || 0;
+      }
+    };
+
+    const series = rows.map((r, i) => ({
+      match_name: r.mkey,                  // you can replace by a nicer label if you have one
+      metric_value: Number(toMetric(r)),
+      seq: i + 1
+    }));
+
+    const ma5 = [];
+    for (let i = 0; i < series.length; i++) {
+      const start = Math.max(0, i - 4);
+      const window = series.slice(start, i + 1).map(s => s.metric_value);
+      const avg = window.length ? (window.reduce((a, b) => a + b, 0) / window.length) : 0;
+      ma5.push({ name: series[i].match_name, value: Number(avg.toFixed(2)) });
+    }
+
+    const per_match = series.map(s => ({ name: s.match_name, value: s.metric_value }));
+
+    res.json({
+      series: series.map(s => ({ match_name: s.match_name, metric_value: s.metric_value, seq: s.seq })),
+      per_match,
+      ma5
+    });
   } catch (e) {
-    console.error("players/trend:", e);
-    res.status(500).json({ series: [], per_match: [], ma5: [] });
+    console.error("players/trend:", e); // keep this so you can see the real DB error in Render logs
+    res.status(500).json({ series: [], per_match: [], ma5: [], error: e.message });
   }
 });
+
 
 
 module.exports = router;
