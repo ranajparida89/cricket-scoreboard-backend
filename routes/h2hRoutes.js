@@ -601,111 +601,103 @@ router.get("/players/opponent-summary", async (req, res) => {
 
 /* -- Per-match trend series for a player (with MA(5); tolerant type + join) -- */
 /* -- Per-match trend series for a player (safe server-side metric + MA5) -- */
+/* -- Per-match trend series (robust; UI still reads res.series) -- */
 router.get("/players/trend", async (req, res) => {
   const player   = String(req.query.player || "").trim();
   const type     = String(req.query.type || "ALL").toUpperCase();
   const opponent = String(req.query.opponent || "ALL").trim().toLowerCase();
   const metric   = String(req.query.metric || "runs").toUpperCase(); // RUNS|BATTING_AVG|STRIKE_RATE|WICKETS|BOWLING_AVG
 
-  if (!player) return res.status(400).json({ series: [], per_match: [], ma5: [] });
+  if (!player) return res.status(400).json({ series: [] });
 
-  try {
-    // 1) Fetch raw per-match aggregates. No dynamic CASE, no window fn.
-    const q = `
-      WITH m AS (
-        SELECT LOWER(TRIM(match_name)) AS mkey,
-               LOWER(TRIM(team1))      AS t1,
-               LOWER(TRIM(team2))      AS t2,
-               created_at              AS ts
-        FROM match_history
-        UNION ALL
-        SELECT LOWER(TRIM(match_name)) AS mkey,
-               LOWER(TRIM(team1))      AS t1,
-               LOWER(TRIM(team2))      AS t2,
-               created_at              AS ts
-        FROM test_match_results
-      ),
-      p AS (
-        SELECT LOWER(TRIM(pp.match_name)) AS mkey,
-               LOWER(TRIM(pp.team_name))  AS team,
-               SUM(pp.run_scored)         AS runs,
-               SUM(CASE WHEN COALESCE(pp.dismissed,'') ILIKE '%out%' THEN 1 ELSE 0 END) AS outs,
-               SUM(pp.wickets_taken)      AS wkts,
-               SUM(pp.runs_given)         AS runs_given,
-               COALESCE(SUM(pp.balls_faced), 0) AS balls
-        FROM player_performance pp
-        JOIN players pl ON pl.id = pp.player_id
-        WHERE LOWER(pl.player_name) = LOWER($1)
-          AND (
-                $2 = 'ALL'
-             OR ($2 = 'TEST' AND pp.match_type ILIKE 'test%')
-             OR ($2 = 'ODI'  AND pp.match_type ILIKE 'odi%')
-             OR ($2 = 'T20'  AND (pp.match_type ILIKE 't20%' OR pp.match_type ILIKE 't20i%'))
-          )
-        GROUP BY LOWER(TRIM(pp.match_name)), LOWER(TRIM(pp.team_name))
-      )
-      SELECT
-        COALESCE(m.ts, NULL) AS ts,
-        COALESCE(p.mkey, '') AS mkey,
-        CASE
-          WHEN p.team = m.t1 THEN m.t2
-          WHEN p.team = m.t2 THEN m.t1
-          ELSE NULL
-        END AS opponent,
-        p.runs, p.outs, p.wkts, p.runs_given, p.balls
+  const sql = `
+    WITH m AS (
+      SELECT LOWER(TRIM(match_name)) AS mkey, LOWER(TRIM(team1)) AS t1, LOWER(TRIM(team2)) AS t2
+      FROM match_history
+      UNION ALL
+      SELECT LOWER(TRIM(match_name)) AS mkey, LOWER(TRIM(team1)) AS t1, LOWER(TRIM(team2)) AS t2
+      FROM test_match_results
+    ),
+    p AS (
+      SELECT LOWER(TRIM(pp.match_name)) AS mkey,
+             LOWER(TRIM(pp.team_name))  AS team,
+             SUM(pp.run_scored)         AS runs,
+             SUM(CASE WHEN COALESCE(pp.dismissed,'') ILIKE '%out%' THEN 1 ELSE 0 END) AS outs,
+             SUM(pp.wickets_taken)      AS wkts,
+             SUM(pp.runs_given)         AS runs_given,
+             COALESCE(SUM(pp.balls_faced), 0) AS balls
+      FROM player_performance pp
+      JOIN players pl ON pl.id = pp.player_id
+      WHERE LOWER(pl.player_name) = LOWER($1)
+        AND (
+              $2 = 'ALL'
+           OR ($2 = 'TEST' AND pp.match_type ILIKE 'test%')
+           OR ($2 = 'ODI'  AND pp.match_type ILIKE 'odi%')
+           OR ($2 = 'T20'  AND (pp.match_type ILIKE 't20%' OR pp.match_type ILIKE 't20i%'))
+        )
+      GROUP BY LOWER(TRIM(pp.match_name)), LOWER(TRIM(pp.team_name))
+    ),
+    j AS (
+      SELECT COALESCE(m.mkey,p.mkey) AS mkey,
+             CASE WHEN p.team = m.t1 THEN m.t2
+                  WHEN p.team = m.t2 THEN m.t1
+                  ELSE NULL END      AS opponent,
+             p.runs,p.outs,p.wkts,p.runs_given,p.balls
       FROM p
       LEFT JOIN m ON p.mkey = m.mkey
-      WHERE ($3 = 'all' OR (CASE WHEN p.team = m.t1 THEN m.t2 WHEN p.team = m.t2 THEN m.t1 ELSE NULL END) = $3);
-    `;
+    ),
+    f AS (
+      SELECT *
+      FROM j
+      WHERE opponent IS NOT NULL
+        AND ($3 = 'all' OR opponent = $3)
+    ),
+    z AS (
+      SELECT mkey,
+             ROW_NUMBER() OVER (ORDER BY mkey) AS ord_seq,
+             runs, outs, wkts, runs_given, balls
+      FROM f
+    )
+    SELECT
+      mkey AS match_name,
+      CASE
+        WHEN $4 = 'RUNS'         THEN runs::numeric
+        WHEN $4 = 'WICKETS'      THEN wkts::numeric
+        WHEN $4 = 'BOWLING_AVG'  THEN CASE WHEN wkts  > 0 THEN runs_given::numeric / NULLIF(wkts,0)   END
+        WHEN $4 = 'BATTING_AVG'  THEN CASE WHEN outs  > 0 THEN runs::numeric       / NULLIF(outs,0)   END
+        WHEN $4 = 'STRIKE_RATE'  THEN CASE WHEN balls > 0 THEN (runs::numeric*100) / NULLIF(balls,0)  END
+        ELSE runs::numeric
+      END AS metric_value,
+      ROUND(
+        AVG(
+          CASE
+            WHEN $4 = 'RUNS'         THEN runs::numeric
+            WHEN $4 = 'WICKETS'      THEN wkts::numeric
+            WHEN $4 = 'BOWLING_AVG'  THEN CASE WHEN wkts  > 0 THEN runs_given::numeric / NULLIF(wkts,0)   END
+            WHEN $4 = 'BATTING_AVG'  THEN CASE WHEN outs  > 0 THEN runs::numeric       / NULLIF(outs,0)   END
+            WHEN $4 = 'STRIKE_RATE'  THEN CASE WHEN balls > 0 THEN (runs::numeric*100) / NULLIF(balls,0)  END
+            ELSE runs::numeric
+          END
+        ) OVER (ORDER BY ord_seq ROWS BETWEEN 4 PRECEDING AND CURRENT ROW)
+      ,2) AS ma5,
+      ord_seq AS seq
+    FROM z
+    ORDER BY ord_seq;
+  `;
 
-    const { rows } = await pool.query(q, [player, type, opponent]);
-
-    // 2) Sort chronologically when we have timestamps; otherwise by mkey.
-    rows.sort((a, b) => {
-      const at = a.ts ? new Date(a.ts).getTime() : 0;
-      const bt = b.ts ? new Date(b.ts).getTime() : 0;
-      if (at !== bt) return at - bt;
-      return (a.mkey || "").localeCompare(b.mkey || "");
-    });
-
-    // 3) Compute the requested metric per match, then MA(5) in JS.
-    const toMetric = (r) => {
-      switch (metric) {
-        case "RUNS":         return Number(r.runs) || 0;
-        case "WICKETS":      return Number(r.wkts) || 0;
-        case "BOWLING_AVG":  return (Number(r.wkts) > 0) ? Number(r.runs_given) / Number(r.wkts) : 0;
-        case "BATTING_AVG":  return (Number(r.outs) > 0) ? Number(r.runs) / Number(r.outs) : 0;
-        case "STRIKE_RATE":  return (Number(r.balls) > 0) ? (Number(r.runs) * 100.0) / Number(r.balls) : 0;
-        default:             return Number(r.runs) || 0;
-      }
-    };
-
-    const series = rows.map((r, i) => ({
-      match_name: r.mkey,                  // you can replace by a nicer label if you have one
-      metric_value: Number(toMetric(r)),
-      seq: i + 1
-    }));
-
-    const ma5 = [];
-    for (let i = 0; i < series.length; i++) {
-      const start = Math.max(0, i - 4);
-      const window = series.slice(start, i + 1).map(s => s.metric_value);
-      const avg = window.length ? (window.reduce((a, b) => a + b, 0) / window.length) : 0;
-      ma5.push({ name: series[i].match_name, value: Number(avg.toFixed(2)) });
-    }
-
-    const per_match = series.map(s => ({ name: s.match_name, value: s.metric_value }));
-
-    res.json({
-      series: series.map(s => ({ match_name: s.match_name, metric_value: s.metric_value, seq: s.seq })),
-      per_match,
-      ma5
-    });
+  try {
+    const r = await pool.query(sql, [player, type, opponent, metric]);
+    res.json({ series: r.rows || [] });
   } catch (e) {
-    console.error("players/trend:", e); // keep this so you can see the real DB error in Render logs
-    res.status(500).json({ series: [], per_match: [], ma5: [], error: e.message });
+    console.error("players/trend SQL error:", e);
+    // TEMP: surface the error for diagnosing in the browser if you add &debug=1
+    if (String(req.query.debug || "0") === "1") {
+      return res.status(500).json({ error: e.message, code: e.code, detail: e.detail });
+    }
+    res.status(500).json({ series: [] });
   }
 });
+
 
 
 
