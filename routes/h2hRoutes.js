@@ -534,34 +534,44 @@ router.get("/players/opponent-summary", async (req, res) => {
         FROM player_performance pp
         JOIN players pl ON pl.id = pp.player_id
         WHERE LOWER(pl.player_name) = LOWER($1)
-          AND ($2 = 'ALL' OR UPPER(TRIM(pp.match_type)) = $2)
+          AND (
+                $2 = 'ALL'
+             OR ($2 = 'TEST' AND pp.match_type ILIKE 'test%')
+             OR ($2 = 'ODI'  AND pp.match_type ILIKE 'odi%')
+             OR ($2 = 'T20'  AND (pp.match_type ILIKE 't20%' OR pp.match_type ILIKE 't20i%'))
+          )
         GROUP BY LOWER(TRIM(pp.match_name)), LOWER(TRIM(pp.team_name))
       ),
       j AS (
-        SELECT CASE WHEN p.team = m.t1 THEN m.t2
-                    WHEN p.team = m.t2 THEN m.t1
-                    ELSE NULL END AS opponent,
-               p.runs, p.outs, p.wkts, p.runs_given, p.balls
+        SELECT
+          CASE
+            WHEN p.team = m.t1 THEN m.t2
+            WHEN p.team = m.t2 THEN m.t1
+            ELSE NULL
+          END AS opponent,
+          p.runs, p.outs, p.wkts, p.runs_given, p.balls
         FROM p
-        JOIN m ON p.mkey = m.mkey
+        LEFT JOIN m ON p.mkey = m.mkey
       ),
       agg AS (
-        SELECT opponent,
-               SUM(runs)       AS runs,
-               SUM(outs)       AS outs,
-               SUM(wkts)       AS wkts,
-               SUM(runs_given) AS runs_given,
-               SUM(balls)      AS balls
+        SELECT
+          opponent,
+          SUM(runs)       AS runs,
+          SUM(outs)       AS outs,
+          SUM(wkts)       AS wkts,
+          SUM(runs_given) AS runs_given,
+          SUM(balls)      AS balls
         FROM j
         WHERE opponent IS NOT NULL
         GROUP BY opponent
       )
-      SELECT opponent,
-             runs,
-             ROUND(CASE WHEN outs  > 0 THEN runs::numeric / outs  ELSE 0 END, 2) AS batting_avg,
-             ROUND(CASE WHEN balls > 0 THEN (runs::numeric * 100.0) / balls ELSE 0 END, 2) AS strike_rate,
-             wkts,
-             ROUND(CASE WHEN wkts  > 0 THEN runs_given::numeric / wkts ELSE 0 END, 2) AS bowling_avg
+      SELECT
+        opponent,
+        runs,
+        ROUND(CASE WHEN outs  > 0 THEN runs::numeric / outs  ELSE 0 END, 2) AS batting_avg,
+        ROUND(CASE WHEN balls > 0 THEN (runs::numeric * 100.0) / balls ELSE 0 END, 2) AS strike_rate,
+        wkts,
+        ROUND(CASE WHEN wkts  > 0 THEN runs_given::numeric / wkts ELSE 0 END, 2) AS bowling_avg
       FROM agg
       ORDER BY runs DESC NULLS LAST;
     `;
@@ -589,7 +599,7 @@ router.get("/players/opponent-summary", async (req, res) => {
   }
 });
 
-/* -- Per-match trend series for a player (with MA(5)); SAFE: no to_timestamp(id) -- */
+/* -- Per-match trend series for a player (with MA(5); tolerant type + join) -- */
 router.get("/players/trend", async (req, res) => {
   const player   = String(req.query.player || "").trim();
   const upType   = String(req.query.type || "ALL").toUpperCase();
@@ -600,7 +610,7 @@ router.get("/players/trend", async (req, res) => {
 
   try {
     const q = `
-      -- Build the match index once and create a stable sequence for ordering
+      -- Base list of matches; make a stable sequence for ordering
       WITH m_base AS (
         SELECT TRIM(match_name) AS match_name,
                LOWER(TRIM(match_name)) AS mkey,
@@ -618,7 +628,7 @@ router.get("/players/trend", async (req, res) => {
       ),
       m AS (
         SELECT mb.*,
-               ROW_NUMBER() OVER (ORDER BY mb.match_name) AS seq  -- <-- replaces to_timestamp(id)
+               ROW_NUMBER() OVER (ORDER BY mb.match_name) AS seq
         FROM m_base mb
       ),
       p AS (
@@ -632,42 +642,52 @@ router.get("/players/trend", async (req, res) => {
         FROM player_performance pp
         JOIN players pl ON pl.id = pp.player_id
         WHERE LOWER(pl.player_name) = LOWER($1)
-          AND ($2 = 'ALL' OR UPPER(TRIM(pp.match_type)) = $2)
+          AND (
+                $2 = 'ALL'
+             OR ($2 = 'TEST' AND pp.match_type ILIKE 'test%')
+             OR ($2 = 'ODI'  AND pp.match_type ILIKE 'odi%')
+             OR ($2 = 'T20'  AND (pp.match_type ILIKE 't20%' OR pp.match_type ILIKE 't20i%'))
+          )
         GROUP BY LOWER(TRIM(pp.match_name)), LOWER(TRIM(pp.team_name))
       ),
       j AS (
-        SELECT m.match_name, m.seq, m.mt,
-               CASE WHEN p.team = m.t1 THEN m.t2
-                    WHEN p.team = m.t2 THEN m.t1
-                    ELSE NULL END AS opponent,
-               p.runs, p.outs, p.wkts, p.runs_given, p.balls
+        SELECT
+          COALESCE(m.match_name, p.mkey)       AS match_name,
+          m.seq                                AS mseq,
+          m.mt                                 AS mt,
+          CASE WHEN p.team = m.t1 THEN m.t2
+               WHEN p.team = m.t2 THEN m.t1
+               ELSE NULL END                   AS opponent,
+          p.runs, p.outs, p.wkts, p.runs_given, p.balls
         FROM p
-        JOIN m ON p.mkey = m.mkey
+        LEFT JOIN m ON p.mkey = m.mkey
       ),
       f AS (
         SELECT *
         FROM j
-        WHERE opponent IS NOT NULL
-          AND ($3 = 'all' OR opponent = $3)
+        WHERE ($3 = 'all') OR (opponent = $3)
       ),
       per_match AS (
-        SELECT match_name, seq,
-               CASE
-                 WHEN $4 = 'RUNS'         THEN runs::numeric
-                 WHEN $4 = 'WICKETS'      THEN wkts::numeric
-                 WHEN $4 = 'BOWLING_AVG'  THEN CASE WHEN wkts  > 0 THEN runs_given::numeric / wkts ELSE 0 END
-                 WHEN $4 = 'BATTING_AVG'  THEN CASE WHEN outs  > 0 THEN runs::numeric / outs ELSE 0 END
-                 WHEN $4 = 'STRIKE_RATE'  THEN CASE WHEN balls > 0 THEN (runs::numeric * 100.0) / balls ELSE 0 END
-                 ELSE runs::numeric
-               END AS metric_value
+        SELECT
+          match_name,
+          COALESCE(mseq, ROW_NUMBER() OVER (ORDER BY match_name)) AS ord_seq,
+          CASE
+            WHEN $4 = 'RUNS'         THEN runs::numeric
+            WHEN $4 = 'WICKETS'      THEN wkts::numeric
+            WHEN $4 = 'BOWLING_AVG'  THEN CASE WHEN wkts  > 0 THEN runs_given::numeric / wkts ELSE 0 END
+            WHEN $4 = 'BATTING_AVG'  THEN CASE WHEN outs  > 0 THEN runs::numeric / outs ELSE 0 END
+            WHEN $4 = 'STRIKE_RATE'  THEN CASE WHEN balls > 0 THEN (runs::numeric * 100.0) / balls ELSE 0 END
+            ELSE runs::numeric
+          END AS metric_value
         FROM f
       )
-      SELECT match_name,
-             metric_value,
-             ROUND(AVG(metric_value) OVER (ORDER BY seq ROWS BETWEEN 4 PRECEDING AND CURRENT ROW), 2) AS ma5,
-             seq
+      SELECT
+        match_name,
+        metric_value,
+        ROUND(AVG(metric_value) OVER (ORDER BY ord_seq ROWS BETWEEN 4 PRECEDING AND CURRENT ROW), 2) AS ma5,
+        ord_seq AS seq
       FROM per_match
-      ORDER BY seq;
+      ORDER BY ord_seq;
     `;
     const r = await pool.query(q, [player, upType, opponent, metric]);
     const series = r.rows || [];
