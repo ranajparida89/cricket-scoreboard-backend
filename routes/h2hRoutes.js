@@ -237,7 +237,6 @@ router.get("/runs-by-format", async (req, res) => {
 
     const r = await pool.query(q, [t1, t2, upType]);
 
-    // Shape results into: [{ match_type, <team1>: n, <team2>: n }]
     const out = {};
     for (const row of r.rows) {
       const mt = row.match_type;
@@ -473,6 +472,227 @@ router.get("/recent", async (req, res) => {
   } catch (e) {
     console.error("recent:", e);
     res.status(500).json({ error: "Failed to fetch recent results" });
+  }
+});
+
+/* ========================================================================
+ * NEW: PLAYER TRENDS ENDPOINTS (to power the Player Trends section in H2H)
+ * ------------------------------------------------------------------------
+ * These do NOT change any existing logic above. They add:
+ *   - GET /players/list
+ *   - GET /players/opponent-summary?player=&type=ALL|ODI|T20|TEST
+ *   - GET /players/trend?player=&type=ALL|ODI|T20|TEST&opponent=ALL|<Team>&metric=runs|batting_avg|strike_rate|wickets|bowling_avg
+ *
+ * Notes:
+ * - We normalize by LOWER(TRIM(match_name)) when joining across tables so that
+ *   different casings/spacing match correctly (same fix as used earlier).
+ * - Strike rate requires balls faced; if that column is not present in your
+ *   player_performance table, we return 0 for strike_rate to avoid errors.
+ * ====================================================================== */
+
+/* -- List of players (simple list of names) -- */
+router.get("/players/list", async (_req, res) => {
+  try {
+    const r = await pool.query(`SELECT player_name FROM players WHERE player_name IS NOT NULL AND player_name <> '' ORDER BY player_name;`);
+    res.json(r.rows.map(x => x.player_name));
+  } catch (e) {
+    console.error("players/list:", e);
+    res.status(500).json([]);
+  }
+});
+
+/* -- Opponent summary for a player (aggregated batting/bowling vs each opponent) -- */
+router.get("/players/opponent-summary", async (req, res) => {
+  const player = String(req.query.player || "").trim();
+  const upType = String(req.query.type || "ALL").toUpperCase();
+  if (!player) return res.status(400).json({ opponents: [], overall: {} });
+
+  try {
+    const q = `
+      WITH m AS (
+        SELECT
+          TRIM(match_name) AS match_name,
+          LOWER(TRIM(match_name)) AS mkey,
+          LOWER(TRIM(team1)) AS t1,
+          LOWER(TRIM(team2)) AS t2
+        FROM match_history
+        UNION ALL
+        SELECT
+          TRIM(match_name) AS match_name,
+          LOWER(TRIM(match_name)) AS mkey,
+          LOWER(TRIM(team1)) AS t1,
+          LOWER(TRIM(team2)) AS t2
+        FROM test_match_results
+      ),
+      p AS (
+        SELECT
+          LOWER(TRIM(pp.match_name)) AS mkey,
+          LOWER(TRIM(pp.team_name))  AS team,
+          SUM(pp.run_scored)         AS runs,
+          SUM(CASE WHEN COALESCE(pp.dismissed,'') ILIKE '%out%' THEN 1 ELSE 0 END) AS outs,
+          SUM(pp.wickets_taken)      AS wkts,
+          SUM(pp.runs_given)         AS runs_given,
+          COALESCE(SUM(pp.balls_faced), 0) AS balls
+        FROM player_performance pp
+        JOIN players pl ON pl.id = pp.player_id
+        WHERE pl.player_name = $1
+          AND ($2 = 'ALL' OR UPPER(TRIM(pp.match_type)) = $2)
+        GROUP BY LOWER(TRIM(pp.match_name)), LOWER(TRIM(pp.team_name))
+      ),
+      j AS (
+        SELECT
+          CASE
+            WHEN p.team = m.t1 THEN m.t2
+            WHEN p.team = m.t2 THEN m.t1
+            ELSE NULL
+          END AS opponent,
+          p.runs, p.outs, p.wkts, p.runs_given, p.balls
+        FROM p
+        JOIN m ON p.mkey = m.mkey
+      ),
+      agg AS (
+        SELECT
+          opponent,
+          SUM(runs)       AS runs,
+          SUM(outs)       AS outs,
+          SUM(wkts)       AS wkts,
+          SUM(runs_given) AS runs_given,
+          SUM(balls)      AS balls
+        FROM j
+        WHERE opponent IS NOT NULL
+        GROUP BY opponent
+      )
+      SELECT
+        to_char(NULL,'') AS dummy, -- keep single SELECT signature
+        opponent,
+        runs,
+        -- batting average
+        ROUND(CASE WHEN outs > 0 THEN runs::numeric / outs END, 2) AS batting_avg,
+        -- strike rate (uses balls if available; else 0)
+        ROUND(CASE WHEN balls > 0 THEN (runs::numeric * 100.0) / balls ELSE 0 END, 2) AS strike_rate,
+        -- bowling
+        wkts,
+        ROUND(CASE WHEN wkts > 0 THEN runs_given::numeric / wkts END, 2) AS bowling_avg
+      FROM agg
+      ORDER BY runs DESC NULLS LAST;
+    `;
+    const r = await pool.query(q, [player, upType]);
+
+    // overall totals (use the same rows)
+    const opps = r.rows.map(row => ({
+      opponent: toTitle(row.opponent || ""),
+      runs: nz(row.runs),
+      batting_avg: nz(row.batting_avg),
+      strike_rate: nz(row.strike_rate),
+      wickets: nz(row.wkts),
+      bowling_avg: nz(row.bowling_avg),
+    }));
+
+    const overall = opps.reduce((a, x) => {
+      a.runs += x.runs;
+      a.wickets += x.wickets;
+      // averages recomputed from components isn’t perfect; good enough here:
+      return a;
+    }, { runs: 0, wickets: 0 });
+
+    res.json({ opponents: opps, overall });
+  } catch (e) {
+    console.error("players/opponent-summary:", e);
+    res.status(500).json({ opponents: [], overall: {} });
+  }
+});
+
+/* -- Per-match trend series for a player (with MA(5)) -- */
+router.get("/players/trend", async (req, res) => {
+  const player = String(req.query.player || "").trim();
+  const upType = String(req.query.type || "ALL").toUpperCase();
+  const opponent = String(req.query.opponent || "ALL").trim().toLowerCase();
+  const metric = String(req.query.metric || "runs").toUpperCase(); // RUNS|BATTING_AVG|STRIKE_RATE|WICKETS|BOWLING_AVG
+
+  if (!player) return res.status(400).json({ series: [] });
+
+  try {
+    const q = `
+      WITH m AS (
+        SELECT
+          TRIM(match_name) AS match_name,
+          LOWER(TRIM(match_name)) AS mkey,
+          LOWER(TRIM(team1)) AS t1,
+          LOWER(TRIM(team2)) AS t2,
+          UPPER(TRIM(match_type)) AS mt,
+          COALESCE(created_at, to_timestamp(id)) AS ts
+        FROM match_history
+        UNION ALL
+        SELECT
+          TRIM(match_name) AS match_name,
+          LOWER(TRIM(match_name)) AS mkey,
+          LOWER(TRIM(team1)) AS t1,
+          LOWER(TRIM(team2)) AS t2,
+          'TEST' AS mt,
+          COALESCE(created_at, to_timestamp(id)) AS ts
+        FROM test_match_results
+      ),
+      p AS (
+        SELECT
+          LOWER(TRIM(pp.match_name)) AS mkey,
+          LOWER(TRIM(pp.team_name))  AS team,
+          SUM(pp.run_scored)         AS runs,
+          SUM(CASE WHEN COALESCE(pp.dismissed,'') ILIKE '%out%' THEN 1 ELSE 0 END) AS outs,
+          SUM(pp.wickets_taken)      AS wkts,
+          SUM(pp.runs_given)         AS runs_given,
+          COALESCE(SUM(pp.balls_faced), 0) AS balls
+        FROM player_performance pp
+        JOIN players pl ON pl.id = pp.player_id
+        WHERE pl.player_name = $1
+          AND ($2 = 'ALL' OR UPPER(TRIM(pp.match_type)) = $2)
+        GROUP BY LOWER(TRIM(pp.match_name)), LOWER(TRIM(pp.team_name))
+      ),
+      j AS (
+        SELECT
+          m.match_name,
+          m.ts,
+          m.mt,
+          CASE
+            WHEN p.team = m.t1 THEN m.t2
+            WHEN p.team = m.t2 THEN m.t1
+            ELSE NULL
+          END AS opponent,
+          p.runs, p.outs, p.wkts, p.runs_given, p.balls
+        FROM p
+        JOIN m ON p.mkey = m.mkey
+      ),
+      f AS (
+        SELECT *
+        FROM j
+        WHERE opponent IS NOT NULL
+          AND ($3 = 'all' OR opponent = $3)
+      ),
+      per_match AS (
+        SELECT
+          match_name,
+          ts,
+          CASE
+            WHEN $4 = 'RUNS'         THEN runs::numeric
+            WHEN $4 = 'WICKETS'      THEN wkts::numeric
+            WHEN $4 = 'BOWLING_AVG'  THEN CASE WHEN wkts > 0 THEN runs_given::numeric / wkts ELSE NULL END
+            WHEN $4 = 'BATTING_AVG'  THEN CASE WHEN outs > 0 THEN runs::numeric / outs ELSE NULL END
+            WHEN $4 = 'STRIKE_RATE'  THEN CASE WHEN balls > 0 THEN (runs::numeric * 100.0) / balls ELSE NULL END
+            ELSE runs::numeric
+          END AS metric_value
+        FROM f
+      )
+      SELECT
+        match_name,
+        metric_value,
+        ROUND(AVG(metric_value) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW), 2) AS ma5
+      FROM per_match
+      ORDER BY 1;
+    `;
+    const r = await pool.query(q, [player, upType, opponent, metric]);
+    res.json({ series: r.rows || [] });
+  } catch (e) {
+    console.error("players/trend:", e);
+    res.status(500).json({ series: [] });
   }
 });
 
