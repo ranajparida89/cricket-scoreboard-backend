@@ -191,13 +191,6 @@ router.get("/points", async (req, res) => {
 });
 
 /* ---------------- Runs by format ---------------- */
-/*
- * IMPORTANT FIX:
- * Earlier this endpoint compared pp.match_name with an array of exact strings.
- * Because match_name strings differ in case/spacing across tables, ODI/TEST
- * returned []. We now normalize and JOIN on LOWER(TRIM(match_name)) so all
- * formats work reliably. Optional ?type=ODI|T20|TEST|ALL is honored.
- */
 router.get("/runs-by-format", async (req, res) => {
   const { team1, team2 } = req.query;
   const upType = String(req.query.type || "ALL").toUpperCase();
@@ -251,7 +244,7 @@ router.get("/runs-by-format", async (req, res) => {
   }
 });
 
-/* ---------------- Top Batters (paired-matches, case-insensitive types) ---------------- */
+/* ---------------- Top Batters ---------------- */
 router.get("/top-batters", async (req, res) => {
   const { team1, team2, type = "ALL", limit = 8 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
@@ -295,7 +288,7 @@ router.get("/top-batters", async (req, res) => {
   }
 });
 
-/* ---------------- Top Bowlers (avg; min 3 wkts; paired-matches) ---------------- */
+/* ---------------- Top Bowlers ---------------- */
 router.get("/top-bowlers", async (req, res) => {
   const { team1, team2, type = "ALL", limit = 10, min_wkts = 3 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
@@ -349,7 +342,7 @@ router.get("/top-bowlers", async (req, res) => {
   }
 });
 
-/* ---------------- Test extras (safe fallbacks) ---------------- */
+/* ---------------- Test extras ---------------- */
 router.get("/test-innings-lead", async (req, res) => {
   const { team1, team2 } = req.query;
   if (!team1 || !team2) return res.status(400).json({ error: "team1 & team2 required" });
@@ -475,18 +468,7 @@ router.get("/recent", async (req, res) => {
   }
 });
 
-/* ========================================================================
- * NEW: PLAYER TRENDS ENDPOINTS (to power the Player Trends section in H2H)
- * ------------------------------------------------------------------------
- * Changes vs. previous version:
- *  - Return 0 instead of NULL when a denominator is 0 (outs/wkts/balls)
- *    so the charts don’t render blank series.
- *  - /players/trend returns extra arrays: per_match[] and ma5[].
- *  - /players/opponent-summary returns opponents_list[] for the dropdown.
- *  - Ensure chronological ordering (ORDER BY ts) for moving average.
- * ====================================================================== */
-
-/* -- List of players (simple list of names) -- */
+/* ---------------- Players basics (still handy for dropdowns etc.) ---------------- */
 router.get("/players/list", async (_req, res) => {
   try {
     const r = await pool.query(`
@@ -502,210 +484,194 @@ router.get("/players/list", async (_req, res) => {
   }
 });
 
-/* -- Opponent summary for a player (aggregated batting/bowling vs each opponent) -- */
-router.get("/players/opponent-summary", async (req, res) => {
-  const player = String(req.query.player || "").trim();
-  const upType = String(req.query.type || "ALL").toUpperCase();
-  if (!player) return res.status(400).json({ opponents: [], overall: {}, opponents_list: [] });
-
+/* =========================================================================
+ * NEW: META endpoints for filters (tournaments & years)
+ * ========================================================================= */
+router.get("/meta/tournaments", async (_req, res) => {
   try {
-    const q = `
-      WITH m AS (
-        SELECT TRIM(match_name) AS match_name,
-               LOWER(TRIM(match_name)) AS mkey,
-               LOWER(TRIM(team1)) AS t1,
-               LOWER(TRIM(team2)) AS t2
-        FROM match_history
-        UNION ALL
-        SELECT TRIM(match_name) AS match_name,
-               LOWER(TRIM(match_name)) AS mkey,
-               LOWER(TRIM(team1)) AS t1,
-               LOWER(TRIM(team2)) AS t2
-        FROM test_match_results
-      ),
-      p AS (
-        SELECT LOWER(TRIM(pp.match_name)) AS mkey,
-               LOWER(TRIM(pp.team_name))  AS team,
-               SUM(pp.run_scored)         AS runs,
-               SUM(CASE WHEN COALESCE(pp.dismissed,'') ILIKE '%out%' THEN 1 ELSE 0 END) AS outs,
-               SUM(pp.wickets_taken)      AS wkts,
-               SUM(pp.runs_given)         AS runs_given,
-               COALESCE(SUM(pp.balls_faced), 0) AS balls
-        FROM player_performance pp
-        JOIN players pl ON pl.id = pp.player_id
-        WHERE LOWER(pl.player_name) = LOWER($1)
-          AND (
-                $2 = 'ALL'
-             OR ($2 = 'TEST' AND pp.match_type ILIKE 'test%')
-             OR ($2 = 'ODI'  AND pp.match_type ILIKE 'odi%')
-             OR ($2 = 'T20'  AND (pp.match_type ILIKE 't20%' OR pp.match_type ILIKE 't20i%'))
-          )
-        GROUP BY LOWER(TRIM(pp.match_name)), LOWER(TRIM(pp.team_name))
-      ),
-      j AS (
-        SELECT
-          CASE
-            WHEN p.team = m.t1 THEN m.t2
-            WHEN p.team = m.t2 THEN m.t1
-            ELSE NULL
-          END AS opponent,
-          p.runs, p.outs, p.wkts, p.runs_given, p.balls
-        FROM p
-        LEFT JOIN m ON p.mkey = m.mkey
-      ),
-      agg AS (
-        SELECT
-          opponent,
-          SUM(runs)       AS runs,
-          SUM(outs)       AS outs,
-          SUM(wkts)       AS wkts,
-          SUM(runs_given) AS runs_given,
-          SUM(balls)      AS balls
-        FROM j
-        WHERE opponent IS NOT NULL
-        GROUP BY opponent
-      )
-      SELECT
-        opponent,
-        runs,
-        ROUND(CASE WHEN outs  > 0 THEN runs::numeric / outs  ELSE 0 END, 2) AS batting_avg,
-        ROUND(CASE WHEN balls > 0 THEN (runs::numeric * 100.0) / balls ELSE 0 END, 2) AS strike_rate,
-        wkts,
-        ROUND(CASE WHEN wkts  > 0 THEN runs_given::numeric / wkts ELSE 0 END, 2) AS bowling_avg
-      FROM agg
-      ORDER BY runs DESC NULLS LAST;
-    `;
-    const r = await pool.query(q, [player, upType]);
-
-    const opponents = r.rows.map(row => ({
-      opponent: toTitle(row.opponent || ""),
-      runs: nz(row.runs),
-      batting_avg: nz(row.batting_avg),
-      strike_rate: nz(row.strike_rate),
-      wickets: nz(row.wkts),
-      bowling_avg: nz(row.bowling_avg),
-    }));
-
-    const overall = opponents.reduce(
-      (a, x) => ({ runs: a.runs + x.runs, wickets: a.wickets + x.wickets }),
-      { runs: 0, wickets: 0 }
-    );
-    const opponents_list = ["All Opponents", ...opponents.map(o => o.opponent)];
-
-    res.json({ opponents, overall, opponents_list });
+    const r = await pool.query(`
+      SELECT DISTINCT tournament_name
+      FROM match_history
+      WHERE tournament_name IS NOT NULL AND TRIM(tournament_name) <> ''
+      ORDER BY tournament_name;
+    `);
+    res.json(r.rows.map(x => x.tournament_name));
   } catch (e) {
-    console.error("players/opponent-summary:", e);
-    res.status(500).json({ opponents: [], overall: {}, opponents_list: [] });
+    console.error("meta/tournaments:", e);
+    res.status(500).json([]);
   }
 });
 
-/* -- Per-match trend series for a player (with MA(5); tolerant type + join) -- */
-/* -- Per-match trend series for a player (safe server-side metric + MA5) -- */
-/* -- Per-match trend series (robust; UI still reads res.series) -- */
-/* -- Per-match trend series (schema-aligned to your DB) -- */
-router.get("/players/trend", async (req, res) => {
-  const player   = String(req.query.player || "").trim();
-  const upType   = String(req.query.type || "ALL").toUpperCase();
-  const opponent = String(req.query.opponent || "ALL").trim().toLowerCase();
-  const metric   = String(req.query.metric || "runs").toUpperCase(); // RUNS|BATTING_AVG|STRIKE_RATE|WICKETS|BOWLING_AVG
+router.get("/meta/years", async (_req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT DISTINCT season_year
+      FROM match_history
+      WHERE season_year IS NOT NULL
+      ORDER BY season_year DESC;
+    `);
+    res.json(r.rows.map(x => x.season_year));
+  } catch (e) {
+    console.error("meta/years:", e);
+    res.status(500).json([]);
+  }
+});
 
-  if (!player) return res.status(400).json({ series: [] });
+/* =========================================================================
+ * NEW: Player Highlights / Leaderboards (replaces player trend)
+ * -------------------------------------------------------------------------
+ * Query params:
+ *  - type=ALL|ODI|T20|Test
+ *  - tournament=<exact tournament_name> (optional)
+ *  - year=<season_year integer> (optional)
+ *  - team=<team name> (optional)  → when provided, results are team-wise
+ *  - limit=<N, default 10>        → how many to return per leaderboard
+ * Results:
+ *  leaders: {
+ *    most_runs, highest_wickets, best_batting_avg, best_strike_rate,
+ *    most_centuries, most_fifties, most_successful
+ *  }
+ *  Each item includes: player_name, team_name, matches, total_runs,
+ *  highest_score, total_wickets, batting_avg, strike_rate,
+ *  total_hundreds, total_fifties, success_matches, success_rate
+ * ========================================================================= */
+router.get("/players/highlights", async (req, res) => {
+  const upType = String(req.query.type || "ALL").toUpperCase();
+  const tournament = String(req.query.tournament || "").trim(); // exact, case-insensitive
+  const year = req.query.year != null && String(req.query.year).trim() !== "" ? Number(req.query.year) : null;
+  const team = String(req.query.team || "").trim(); // exact, case-insensitive
+  const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 10));
 
   try {
     const sql = `
-      -- Normalize all matches + build a safe timestamp for ordering
-      WITH m AS (
+      WITH base AS (
         SELECT
-          TRIM(match_name)                        AS match_name,
-          LOWER(TRIM(match_name))                 AS mkey,
-          LOWER(TRIM(team1))                      AS t1,
-          LOWER(TRIM(team2))                      AS t2,
-          COALESCE(created_at, match_time, match_date::timestamp) AS ts
-        FROM match_history
-        UNION ALL
-        SELECT
-          TRIM(match_name)                        AS match_name,
-          LOWER(TRIM(match_name))                 AS mkey,
-          LOWER(TRIM(team1))                      AS t1,
-          LOWER(TRIM(team2))                      AS t2,
-          COALESCE(created_at, match_date::timestamp)            AS ts
-        FROM test_match_results
-      ),
-      -- Per-match aggregates for the player from player_performance
-      p AS (
-        SELECT
-          LOWER(TRIM(pp.match_name)) AS mkey,
-          LOWER(TRIM(pp.team_name))  AS team,
-          SUM(pp.run_scored)         AS runs,
-          SUM(CASE WHEN COALESCE(pp.dismissed,'') ILIKE '%out%' THEN 1 ELSE 0 END) AS outs,
-          SUM(pp.wickets_taken)      AS wkts,
-          SUM(pp.runs_given)         AS runs_given,
-          COALESCE(SUM(pp.balls_faced), 0) AS balls
+          pp.player_id,
+          pl.player_name,
+          pp.team_name,
+          pp.run_scored,
+          pp.wickets_taken,
+          pp.runs_given,
+          pp.fifties,
+          pp.hundreds,
+          COALESCE(pp.balls_faced, 0) AS balls_faced,
+          CASE WHEN COALESCE(pp.dismissed,'') ILIKE '%out%' THEN 1 ELSE 0 END AS outs,
+          pp.match_id
         FROM player_performance pp
         JOIN players pl ON pl.id = pp.player_id
-        WHERE LOWER(pl.player_name) = LOWER($1)
-          AND (
-                $2 = 'ALL'
-             OR ($2 = 'TEST' AND pp.match_type ILIKE 'test%')
-             OR ($2 = 'ODI'  AND pp.match_type ILIKE 'odi%')
-             OR ($2 = 'T20'  AND (pp.match_type ILIKE 't20%' OR pp.match_type ILIKE 't20i%'))
+        LEFT JOIN match_history mh ON mh.id = pp.match_id
+        WHERE
+          -- match type
+          (
+            $1 = 'ALL'
+            OR ($1 = 'TEST' AND pp.match_type ILIKE 'test')
+            OR ($1 = 'ODI'  AND pp.match_type ILIKE 'odi')
+            OR ($1 = 'T20'  AND pp.match_type ILIKE 't20')
           )
-        GROUP BY LOWER(TRIM(pp.match_name)), LOWER(TRIM(pp.team_name))
+          -- tournament exact (case-insensitive)
+          AND (
+            $2 = '' OR $2 = 'ALL' OR (mh.tournament_name IS NOT NULL AND mh.tournament_name ILIKE $2)
+          )
+          -- year exact
+          AND (
+            $3::int IS NULL OR (mh.season_year IS NOT NULL AND mh.season_year = $3::int)
+          )
+          -- team-wise filter
+          AND (
+            $4 = '' OR $4 = 'ALL' OR LOWER(pp.team_name) = LOWER($4)
+          )
       ),
-      -- Join to find the opponent for each appearance
-      j AS (
+      agg AS (
         SELECT
-          m.match_name,
-          m.mkey,
-          m.ts,
-          CASE
-            WHEN p.team = m.t1 THEN m.t2
-            WHEN p.team = m.t2 THEN m.t1
-            ELSE NULL
-          END AS opponent,
-          p.runs, p.outs, p.wkts, p.runs_given, p.balls
-        FROM p
-        JOIN m ON p.mkey = m.mkey
-      ),
-      -- Filter opponent and create a stable sequence for the moving average
-      f AS (
-        SELECT *,
-               ROW_NUMBER() OVER (ORDER BY ts NULLS LAST, mkey) AS seq
-        FROM j
-        WHERE opponent IS NOT NULL
-          AND ($3 = 'all' OR opponent = $3)
-      ),
-      per_match AS (
-        SELECT
-          match_name,
-          seq,
-          CASE
-            WHEN $4 = 'RUNS'        THEN runs::numeric
-            WHEN $4 = 'WICKETS'     THEN wkts::numeric
-            WHEN $4 = 'BOWLING_AVG' THEN CASE WHEN wkts  > 0 THEN runs_given::numeric / wkts ELSE 0 END
-            WHEN $4 = 'BATTING_AVG' THEN CASE WHEN outs  > 0 THEN runs::numeric / outs ELSE 0 END
-            WHEN $4 = 'STRIKE_RATE' THEN CASE WHEN balls > 0 THEN (runs::numeric * 100.0) / balls ELSE 0 END
-            ELSE runs::numeric
-          END AS metric_value
-        FROM f
+          player_id,
+          MAX(player_name) AS player_name,
+          MAX(team_name)   AS team_name,
+          COUNT(*)         AS matches,
+          SUM(run_scored)  AS total_runs,
+          MAX(run_scored)  AS highest_score,
+          SUM(wickets_taken) AS total_wickets,
+          SUM(runs_given)    AS total_runs_given,
+          SUM(fifties)       AS total_fifties,
+          SUM(hundreds)      AS total_hundreds,
+          SUM(balls_faced)   AS balls,
+          SUM(outs)          AS outs,
+          SUM(CASE WHEN run_scored >= 25 AND wickets_taken >= 2 THEN 1 ELSE 0 END) AS success_matches
+        FROM base
+        GROUP BY player_id
       )
       SELECT
-        match_name,
-        ROUND(metric_value, 2) AS metric_value,
-        ROUND(AVG(metric_value) OVER (ORDER BY seq
-              ROWS BETWEEN 4 PRECEDING AND CURRENT ROW), 2) AS ma5,
-        seq
-      FROM per_match
-      ORDER BY seq;
+        player_id,
+        player_name,
+        team_name,
+        matches,
+        total_runs,
+        highest_score,
+        total_wickets,
+        total_runs_given,
+        total_fifties,
+        total_hundreds,
+        balls,
+        outs,
+        success_matches,
+        -- computed metrics
+        ROUND(CASE WHEN outs > 0   THEN total_runs::numeric / outs   END, 2) AS batting_avg,
+        ROUND(CASE WHEN balls > 0  THEN (total_runs::numeric * 100.0) / balls END, 2) AS strike_rate,
+        ROUND(CASE WHEN total_wickets > 0 THEN total_runs_given::numeric / total_wickets END, 2) AS bowling_avg,
+        ROUND(CASE WHEN matches > 0 THEN success_matches::numeric / matches END, 3) AS success_rate
+      FROM agg;
     `;
 
-    const r = await pool.query(sql, [player, upType, opponent, metric]);
-    return res.json({ series: r.rows || [] });
+    const r = await pool.query(sql, [upType, tournament, year, team]);
+    const rows = (r.rows || []).map(x => ({
+      ...x,
+      matches: nz(x.matches),
+      total_runs: nz(x.total_runs),
+      highest_score: nz(x.highest_score),
+      total_wickets: nz(x.total_wickets),
+      total_runs_given: nz(x.total_runs_given),
+      total_fifties: nz(x.total_fifties),
+      total_hundreds: nz(x.total_hundreds),
+      balls: nz(x.balls),
+      outs: nz(x.outs),
+      success_matches: nz(x.success_matches),
+      batting_avg: x.batting_avg == null ? 0 : Number(x.batting_avg),
+      strike_rate: x.strike_rate == null ? 0 : Number(x.strike_rate),
+      bowling_avg: x.bowling_avg == null ? 0 : Number(x.bowling_avg),
+      success_rate: x.success_rate == null ? 0 : Number(x.success_rate),
+    }));
+
+    const by = (key, fn = () => true, desc = true) =>
+      [...rows].filter(fn).sort((a, b) => (desc ? (nz(b[key]) - nz(a[key])) : (nz(a[key]) - nz(b[key])))).slice(0, limit);
+
+    const leaders = {
+      most_runs: by("total_runs"),
+      highest_wickets: by("total_wickets"),
+      best_batting_avg: by("batting_avg", x => x.outs > 0),
+      best_strike_rate: by("strike_rate", x => x.balls > 0),
+      most_centuries: by("total_hundreds"),
+      most_fifties: by("total_fifties"),
+      // most successful: max matches where (runs>=25 & wkts>=2); tie-breakers by success_rate, then runs+wickets
+      most_successful: [...rows]
+        .sort((a, b) => {
+          const d1 = nz(b.success_matches) - nz(a.success_matches);
+          if (d1) return d1;
+          const d2 = (b.success_rate || 0) - (a.success_rate || 0);
+          if (d2) return d2;
+          const d3 = (nz(b.total_runs) + nz(b.total_wickets)) - (nz(a.total_runs) + nz(a.total_wickets));
+          return d3;
+        })
+        .slice(0, limit),
+    };
+
+    res.json({
+      filters: { type: upType, tournament: tournament || "ALL", year: year || null, team: team || "ALL" },
+      totals: { players: rows.length, matches: rows.reduce((s, x) => s + nz(x.matches), 0) },
+      leaders,
+    });
   } catch (e) {
-    console.error("players/trend error:", e);
-    return res.status(500).json({ series: [], error: "players/trend failed", detail: e.message });
+    console.error("players/highlights:", e);
+    res.status(500).json({ error: "Failed to compute highlights", detail: e.message });
   }
 });
-
 
 module.exports = router;
