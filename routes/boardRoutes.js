@@ -7,7 +7,6 @@ const { v4: uuidv4 } = require("uuid");
 /* ---------------- Helpers ---------------- */
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "");
 
-// Accept 3 token shapes for admin (unchanged)
 const adminOnly = (req, res, next) => {
   const tokenAdmin =
     req.admin &&
@@ -25,70 +24,61 @@ const adminOnly = (req, res, next) => {
   next();
 };
 
-// Normalize/clean team list
 function sanitizeTeams(teams) {
   if (!Array.isArray(teams)) return [];
   const seen = new Set();
-  const clean = [];
+  const out = [];
   for (const t of teams) {
-    const name = String(t || "").trim();
-    if (!name) continue;
-    if (!seen.has(name)) {
-      seen.add(name);
-      clean.push(name);
+    const s = String(t || "").trim();
+    if (s && !seen.has(s)) {
+      seen.add(s);
+      out.push(s);
     }
   }
-  return clean;
+  return out;
 }
 
-// GPT UPDATE: parse DD-MM-YYYY or YYYY-MM-DD → YYYY-MM-DD, else null
+// Parse DD-MM-YYYY or YYYY-MM-DD to YYYY-MM-DD
 function toIsoDateString(input) {
   if (!input) return null;
   const s = String(input).trim();
-
-  // DD-MM-YYYY
   const dmy = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
   if (dmy) {
     const [, dd, mm, yyyy] = dmy;
     return `${yyyy}-${mm}-${dd}`;
   }
-
-  // YYYY-MM-DD
   const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (ymd) return s;
-
-  // Try Date object/other strings that JS can parse (last resort)
   const dt = new Date(s);
-  if (!isNaN(dt.getTime())) {
-    return dt.toISOString().slice(0, 10);
-  }
-  return null;
+  return isNaN(dt.getTime()) ? null : dt.toISOString().slice(0, 10);
 }
-
 function startOfToday() {
   const t = new Date();
   t.setHours(0, 0, 0, 0);
   return t;
 }
 
+// Get the data_type of board_teams.registration_id at runtime
+async function getTeamsFkType(client) {
+  const q = `
+    SELECT data_type
+    FROM information_schema.columns
+    WHERE table_name = 'board_teams' AND column_name = 'registration_id'
+    LIMIT 1
+  `;
+  const r = await client.query(q);
+  return r.rows[0]?.data_type || null; // 'uuid' | 'integer' | 'text' | null
+}
+
 /* ---------------------------------------------
- * API 1: Register a New Board (OPEN to normal users)
+ * Register a New Board (OPEN)
  * --------------------------------------------- */
 router.post("/register", async (req, res) => {
   try {
-    if (!req.body) {
-      return res.status(400).json({ error: "Missing request body." });
-    }
+    if (!req.body) return res.status(400).json({ error: "Missing request body." });
 
-    let {
-      board_name,
-      owner_name,
-      registration_date,
-      owner_email,
-      teams,
-    } = req.body;
+    let { board_name, owner_name, registration_date, owner_email, teams } = req.body;
 
-    // trim/normalize
     board_name = String(board_name || "").trim();
     owner_name = String(owner_name || "").trim();
     owner_email = String(owner_email || "").trim().toLowerCase();
@@ -97,27 +87,20 @@ router.post("/register", async (req, res) => {
     if (!board_name || !owner_name || !registration_date || !owner_email) {
       return res.status(400).json({ error: "All fields are required." });
     }
-
     if (!Array.isArray(teams) || teams.length === 0) {
       return res.status(400).json({ error: "At least one team is required." });
     }
-
     if (!isValidEmail(owner_email)) {
       return res.status(400).json({ error: "Invalid email format." });
     }
 
-    // GPT UPDATE: robust date parsing & validation
     const isoDate = toIsoDateString(registration_date);
     if (!isoDate) {
-      return res
-        .status(400)
-        .json({ error: "Invalid registration date. Use DD-MM-YYYY or YYYY-MM-DD." });
+      return res.status(400).json({ error: "Invalid registration date. Use DD-MM-YYYY or YYYY-MM-DD." });
     }
     const regDateObj = new Date(isoDate);
     if (regDateObj < startOfToday()) {
-      return res
-        .status(400)
-        .json({ error: "Registration date must be today or in the future." });
+      return res.status(400).json({ error: "Registration date must be today or in the future." });
     }
 
     const registration_id = uuidv4();
@@ -125,36 +108,63 @@ router.post("/register", async (req, res) => {
     try {
       await client.query("BEGIN");
 
-      // GPT UPDATE: cast via to_date to avoid format issues
+      // Insert board and return both id (int) and registration_id (uuid)
       const insertBoard = `
         INSERT INTO board_registration (registration_id, board_name, owner_name, registration_date, owner_email)
         VALUES ($1, $2, $3, to_date($4,'YYYY-MM-DD'), $5)
+        RETURNING id, registration_id
       `;
-      await client.query(insertBoard, [
+      const ins = await client.query(insertBoard, [
         registration_id,
         board_name,
         owner_name,
         isoDate,
         owner_email,
       ]);
+      const br = ins.rows[0];
 
+      // Determine which value to store in board_teams.registration_id
+      const fkType = await getTeamsFkType(client);
+      let fkValue = br.registration_id;      // default (uuid)
+      if (fkType === "integer") fkValue = br.id;           // use numeric id
+      else if (fkType === "text") fkValue = String(br.registration_id); // as text
+
+      // Insert teams
       const insertTeam = `
         INSERT INTO board_teams (registration_id, team_name)
         VALUES ($1, $2)
       `;
       for (const team of teams) {
-        await client.query(insertTeam, [registration_id, team]);
+        await client.query(insertTeam, [fkValue, team]);
       }
 
       await client.query("COMMIT");
-      res.status(201).json({
+      return res.status(201).json({
         message: "Board registered successfully.",
-        registration_id,
+        registration_id: br.registration_id,
       });
     } catch (err) {
       await client.query("ROLLBACK");
-      console.error("Transaction error (register):", err);
-      res.status(500).json({ error: "Error during registration." });
+      console.error("Transaction error (register):", {
+        code: err.code,
+        message: err.message,
+        detail: err.detail,
+        constraint: err.constraint,
+      });
+
+      if (err.code === "23505") {
+        if ((err.constraint || "").includes("board_registration_board_name_key"))
+          return res.status(409).json({ error: "Board name already exists." });
+        if ((err.constraint || "").includes("board_registration_owner_email_key"))
+          return res.status(409).json({ error: "Owner email already used." });
+        return res.status(409).json({ error: "Duplicate data violates a unique constraint." });
+      }
+      if (err.code === "22P02")
+        return res.status(400).json({ error: "Bad value for one of the fields (check date/UUID formats)." });
+      if (err.code === "42804")
+        return res.status(400).json({ error: "Data type mismatch — check board_teams.registration_id type." });
+
+      return res.status(500).json({ error: "Error during registration." });
     } finally {
       client.release();
     }
@@ -165,14 +175,12 @@ router.post("/register", async (req, res) => {
 });
 
 /* ---------------------------------------------
- * API 2: Get All Boards with Their Teams (legacy)
+ * Get All Boards with Their Teams (legacy)
  * --------------------------------------------- */
 router.get("/all", async (req, res) => {
   try {
     const query = `
-      SELECT 
-        br.*,
-        ARRAY_AGG(bt.team_name) AS teams
+      SELECT br.*, ARRAY_AGG(bt.team_name) AS teams
       FROM board_registration br
       LEFT JOIN board_teams bt ON br.registration_id = bt.registration_id
       GROUP BY br.registration_id
@@ -187,24 +195,17 @@ router.get("/all", async (req, res) => {
 });
 
 /* ---------------------------------------------
- * API 3: Update Board Info (ADMIN ONLY)
+ * Update Board (ADMIN ONLY) — replaces teams
  * --------------------------------------------- */
 router.put("/update/:registration_id", adminOnly, async (req, res) => {
   try {
     const { registration_id } = req.params;
-    let {
-      board_name,
-      owner_name,
-      registration_date,
-      owner_email,
-      teams,
-    } = req.body;
+    let { board_name, owner_name, registration_date, owner_email, teams } = req.body;
 
-    // trim/normalize
     board_name = String(board_name || "").trim();
     owner_name = String(owner_name || "").trim();
     owner_email = String(owner_email || "").trim().toLowerCase();
-    teams = sanitizeTeams(teams); // can be []
+    teams = sanitizeTeams(teams);
 
     if (!board_name || !owner_name || !registration_date || !owner_email) {
       return res.status(400).json({ error: "All fields are required." });
@@ -216,39 +217,44 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
       return res.status(400).json({ error: "Invalid email format." });
     }
 
-    // GPT UPDATE: robust date parsing
     const isoDate = toIsoDateString(registration_date);
     if (!isoDate) {
-      return res
-        .status(400)
-        .json({ error: "Invalid registration date. Use DD-MM-YYYY or YYYY-MM-DD." });
+      return res.status(400).json({ error: "Invalid registration date. Use DD-MM-YYYY or YYYY-MM-DD." });
     }
 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const updateBoard = `
-        UPDATE board_registration
-        SET board_name = $1,
-            owner_name = $2,
-            registration_date = to_date($3,'YYYY-MM-DD'),
-            owner_email = $4
-        WHERE registration_id = $5
-      `;
-      await client.query(updateBoard, [
-        board_name,
-        owner_name,
-        isoDate,
-        owner_email,
-        registration_id,
-      ]);
-
-      // replace teams (can be empty)
-      await client.query(
-        "DELETE FROM board_teams WHERE registration_id = $1",
+      // Get board numeric id (for integer FK cases)
+      const getBoard = await client.query(
+        "SELECT id, registration_id FROM board_registration WHERE registration_id = $1",
         [registration_id]
       );
+      if (getBoard.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Board not found." });
+      }
+      const br = getBoard.rows[0];
+
+      await client.query(
+        `
+          UPDATE board_registration
+          SET board_name = $1,
+              owner_name = $2,
+              registration_date = to_date($3,'YYYY-MM-DD'),
+              owner_email = $4
+          WHERE registration_id = $5
+        `,
+        [board_name, owner_name, isoDate, owner_email, registration_id]
+      );
+
+      const fkType = await getTeamsFkType(client);
+      let delValue = registration_id;
+      if (fkType === "integer") delValue = br.id;
+      else if (fkType === "text") delValue = String(registration_id);
+
+      await client.query("DELETE FROM board_teams WHERE registration_id = $1", [delValue]);
 
       if (teams.length > 0) {
         const insertTeam = `
@@ -256,7 +262,7 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
           VALUES ($1, $2)
         `;
         for (const team of teams) {
-          await client.query(insertTeam, [registration_id, team]);
+          await client.query(insertTeam, [delValue, team]);
         }
       }
 
@@ -264,7 +270,20 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
       res.status(200).json({ message: "Board updated successfully." });
     } catch (err) {
       await client.query("ROLLBACK");
-      console.error("Update transaction failed:", err);
+      console.error("Update transaction failed:", {
+        code: err.code,
+        message: err.message,
+        detail: err.detail,
+        constraint: err.constraint,
+      });
+
+      if (err.code === "23505")
+        return res.status(409).json({ error: "Duplicate value violates a unique constraint." });
+      if (err.code === "22P02")
+        return res.status(400).json({ error: "Bad value for one of the fields." });
+      if (err.code === "42804")
+        return res.status(400).json({ error: "Data type mismatch — check board_teams.registration_id type." });
+
       res.status(500).json({ error: "Error updating board." });
     } finally {
       client.release();
@@ -276,31 +295,43 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
 });
 
 /* ---------------------------------------------
- * API 4: Delete Board + Its Teams (ADMIN ONLY)
+ * Delete Board (ADMIN ONLY)
  * --------------------------------------------- */
 router.delete("/delete/:registration_id", adminOnly, async (req, res) => {
   try {
     const { registration_id } = req.params;
     const client = await pool.connect();
-
     try {
       await client.query("BEGIN");
 
-      await client.query(
-        "DELETE FROM board_teams WHERE registration_id = $1",
+      const getBoard = await client.query(
+        "SELECT id, registration_id FROM board_registration WHERE registration_id = $1",
         [registration_id]
       );
+      if (getBoard.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Board not found." });
+      }
+      const br = getBoard.rows[0];
 
-      await client.query(
-        "DELETE FROM board_registration WHERE registration_id = $1",
-        [registration_id]
-      );
+      const fkType = await getTeamsFkType(client);
+      let delValue = registration_id;
+      if (fkType === "integer") delValue = br.id;
+      else if (fkType === "text") delValue = String(registration_id);
+
+      await client.query("DELETE FROM board_teams WHERE registration_id = $1", [delValue]);
+      await client.query("DELETE FROM board_registration WHERE registration_id = $1", [registration_id]);
 
       await client.query("COMMIT");
       res.status(200).json({ message: "Board deleted successfully." });
     } catch (err) {
       await client.query("ROLLBACK");
-      console.error("Delete transaction failed:", err);
+      console.error("Delete transaction failed:", {
+        code: err.code,
+        message: err.message,
+        detail: err.detail,
+        constraint: err.constraint,
+      });
       res.status(500).json({ error: "Failed to delete board." });
     } finally {
       client.release();
@@ -312,12 +343,11 @@ router.delete("/delete/:registration_id", adminOnly, async (req, res) => {
 });
 
 /* ---------------------------------------------
- * API 5: Get All Boards (Optimized/clean)
+ * Get All Boards (clean)
  * --------------------------------------------- */
 router.get("/all-boards", async (req, res) => {
   try {
     const client = await pool.connect();
-
     const result = await client.query(`
       SELECT 
         br.registration_id,
@@ -331,9 +361,7 @@ router.get("/all-boards", async (req, res) => {
       GROUP BY br.registration_id, br.board_name, br.owner_name, br.registration_date, br.owner_email
       ORDER BY br.registration_date DESC
     `);
-
     client.release();
-
     res.status(200).json({ boards: result.rows });
   } catch (error) {
     console.error("Error fetching boards (/all-boards):", error);
