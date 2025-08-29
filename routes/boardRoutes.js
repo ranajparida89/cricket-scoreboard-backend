@@ -38,7 +38,7 @@ function sanitizeTeams(teams) {
   return out;
 }
 
-// Parse DD-MM-YYYY or YYYY-MM-DD to YYYY-MM-DD
+// Parse DD-MM-YYYY or YYYY-MM-DD → YYYY-MM-DD
 function toIsoDateString(input) {
   if (!input) return null;
   const s = String(input).trim();
@@ -56,18 +56,6 @@ function startOfToday() {
   const t = new Date();
   t.setHours(0, 0, 0, 0);
   return t;
-}
-
-// Get the data_type of board_teams.registration_id at runtime
-async function getTeamsFkType(client) {
-  const q = `
-    SELECT data_type
-    FROM information_schema.columns
-    WHERE table_name = 'board_teams' AND column_name = 'registration_id'
-    LIMIT 1
-  `;
-  const r = await client.query(q);
-  return r.rows[0]?.data_type || null; // 'uuid' | 'integer' | 'text' | null
 }
 
 /* ---------------------------------------------
@@ -123,19 +111,13 @@ router.post("/register", async (req, res) => {
       ]);
       const br = ins.rows[0];
 
-      // Determine which value to store in board_teams.registration_id
-      const fkType = await getTeamsFkType(client);
-      let fkValue = br.registration_id;      // default (uuid)
-      if (fkType === "integer") fkValue = br.id;           // use numeric id
-      else if (fkType === "text") fkValue = String(br.registration_id); // as text
-
-      // Insert teams
+      // ✅ Insert teams with BOTH keys to satisfy NOT NULL(board_id)
       const insertTeam = `
-        INSERT INTO board_teams (registration_id, team_name)
-        VALUES ($1, $2)
+        INSERT INTO board_teams (board_id, registration_id, team_name)
+        VALUES ($1, $2, $3)
       `;
       for (const team of teams) {
-        await client.query(insertTeam, [fkValue, team]);
+        await client.query(insertTeam, [br.id, br.registration_id, team]);
       }
 
       await client.query("COMMIT");
@@ -159,10 +141,12 @@ router.post("/register", async (req, res) => {
           return res.status(409).json({ error: "Owner email already used." });
         return res.status(409).json({ error: "Duplicate data violates a unique constraint." });
       }
+      if (err.code === "23502") // not_null_violation
+        return res.status(400).json({ error: "Missing required data (likely board_id on board_teams)." });
       if (err.code === "22P02")
         return res.status(400).json({ error: "Bad value for one of the fields (check date/UUID formats)." });
       if (err.code === "42804")
-        return res.status(400).json({ error: "Data type mismatch — check board_teams.registration_id type." });
+        return res.status(400).json({ error: "Data type mismatch." });
 
       return res.status(500).json({ error: "Error during registration." });
     } finally {
@@ -180,10 +164,18 @@ router.post("/register", async (req, res) => {
 router.get("/all", async (req, res) => {
   try {
     const query = `
-      SELECT br.*, ARRAY_AGG(bt.team_name) AS teams
+      SELECT 
+        br.id,
+        br.registration_id,
+        br.board_name,
+        br.owner_name,
+        br.registration_date,
+        br.owner_email,
+        ARRAY_REMOVE(ARRAY_AGG(bt.team_name), NULL) AS teams
       FROM board_registration br
-      LEFT JOIN board_teams bt ON br.registration_id = bt.registration_id
-      GROUP BY br.registration_id
+      LEFT JOIN board_teams bt 
+        ON (bt.registration_id = br.registration_id OR bt.board_id = br.id)
+      GROUP BY br.id, br.registration_id, br.board_name, br.owner_name, br.registration_date, br.owner_email
       ORDER BY br.registration_date DESC
     `;
     const result = await pool.query(query);
@@ -226,7 +218,7 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
     try {
       await client.query("BEGIN");
 
-      // Get board numeric id (for integer FK cases)
+      // Get board numeric id + uuid
       const getBoard = await client.query(
         "SELECT id, registration_id FROM board_registration WHERE registration_id = $1",
         [registration_id]
@@ -249,20 +241,19 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
         [board_name, owner_name, isoDate, owner_email, registration_id]
       );
 
-      const fkType = await getTeamsFkType(client);
-      let delValue = registration_id;
-      if (fkType === "integer") delValue = br.id;
-      else if (fkType === "text") delValue = String(registration_id);
-
-      await client.query("DELETE FROM board_teams WHERE registration_id = $1", [delValue]);
+      // Delete by either key (covers any historical rows)
+      await client.query(
+        "DELETE FROM board_teams WHERE board_id = $1 OR registration_id = $2",
+        [br.id, br.registration_id]
+      );
 
       if (teams.length > 0) {
         const insertTeam = `
-          INSERT INTO board_teams (registration_id, team_name)
-          VALUES ($1, $2)
+          INSERT INTO board_teams (board_id, registration_id, team_name)
+          VALUES ($1, $2, $3)
         `;
         for (const team of teams) {
-          await client.query(insertTeam, [delValue, team]);
+          await client.query(insertTeam, [br.id, br.registration_id, team]);
         }
       }
 
@@ -279,10 +270,12 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
 
       if (err.code === "23505")
         return res.status(409).json({ error: "Duplicate value violates a unique constraint." });
+      if (err.code === "23502")
+        return res.status(400).json({ error: "Missing required data (likely board_id on board_teams)." });
       if (err.code === "22P02")
         return res.status(400).json({ error: "Bad value for one of the fields." });
       if (err.code === "42804")
-        return res.status(400).json({ error: "Data type mismatch — check board_teams.registration_id type." });
+        return res.status(400).json({ error: "Data type mismatch." });
 
       res.status(500).json({ error: "Error updating board." });
     } finally {
@@ -314,13 +307,14 @@ router.delete("/delete/:registration_id", adminOnly, async (req, res) => {
       }
       const br = getBoard.rows[0];
 
-      const fkType = await getTeamsFkType(client);
-      let delValue = registration_id;
-      if (fkType === "integer") delValue = br.id;
-      else if (fkType === "text") delValue = String(registration_id);
-
-      await client.query("DELETE FROM board_teams WHERE registration_id = $1", [delValue]);
-      await client.query("DELETE FROM board_registration WHERE registration_id = $1", [registration_id]);
+      await client.query(
+        "DELETE FROM board_teams WHERE board_id = $1 OR registration_id = $2",
+        [br.id, br.registration_id]
+      );
+      await client.query(
+        "DELETE FROM board_registration WHERE registration_id = $1",
+        [registration_id]
+      );
 
       await client.query("COMMIT");
       res.status(200).json({ message: "Board deleted successfully." });
@@ -355,9 +349,10 @@ router.get("/all-boards", async (req, res) => {
         br.owner_name,
         TO_CHAR(br.registration_date, 'YYYY-MM-DD') AS registration_date,
         br.owner_email,
-        ARRAY_AGG(bt.team_name) AS teams
+        ARRAY_REMOVE(ARRAY_AGG(bt.team_name), NULL) AS teams
       FROM board_registration br
-      LEFT JOIN board_teams bt ON br.registration_id = bt.registration_id
+      LEFT JOIN board_teams bt 
+        ON (bt.registration_id = br.registration_id OR bt.board_id = br.id)
       GROUP BY br.registration_id, br.board_name, br.owner_name, br.registration_date, br.owner_email
       ORDER BY br.registration_date DESC
     `);
