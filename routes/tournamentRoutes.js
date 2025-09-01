@@ -9,6 +9,52 @@ const pool = require("../db");
 const norm = (s) => (s ?? "").toString().trim();
 
 /**
+ * NEW: GET /api/tournaments/filters?match_type=All|ODI|T20
+ * Returns distinct tournament names and years from match_history.
+ * Match types limited to ODI/T20 (or both when "All").
+ */
+router.get("/filters", async (req, res) => {
+  try {
+    const { match_type = "All" } = req.query;
+    const mtArr =
+      match_type === "All"
+        ? ["ODI", "T20"]
+        : ["ODI", "T20"].includes(match_type)
+        ? [match_type]
+        : ["ODI", "T20"];
+
+    const namesSql = `
+      SELECT DISTINCT tournament_name
+      FROM match_history
+      WHERE tournament_name IS NOT NULL AND TRIM(tournament_name) <> ''
+        AND match_type = ANY($1)
+      ORDER BY tournament_name
+    `;
+    const yearsSql = `
+      SELECT DISTINCT season_year
+      FROM match_history
+      WHERE season_year IS NOT NULL
+        AND match_type = ANY($1)
+      ORDER BY season_year DESC
+    `;
+
+    const [nRes, yRes] = await Promise.all([
+      pool.query(namesSql, [mtArr]),
+      pool.query(yearsSql, [mtArr]),
+    ]);
+
+    res.json({
+      tournaments: nRes.rows.map((r) => r.tournament_name),
+      years: yRes.rows.map((r) => Number(r.season_year)),
+      types: ["ODI", "T20"],
+    });
+  } catch (err) {
+    console.error("❌ tournaments/filters error:", err);
+    res.status(500).json({ error: "Failed to load filters" });
+  }
+});
+
+/**
  * GET /api/tournaments?match_type=All|ODI|T20
  * Returns [{ name, editions:[{season_year, match_type, matches}] }]
  */
@@ -60,7 +106,7 @@ router.get("/", async (req, res) => {
 /**
  * GET /api/tournaments/leaderboard
  * Query: match_type=All|ODI|T20, tournament_name? (optional), season_year? (optional)
- * Uses your approved SQL to compute Points/NRR server-side.
+ * Computes Points/NRR server-side from match_history.
  */
 router.get("/leaderboard", async (req, res) => {
   try {
@@ -73,7 +119,6 @@ router.get("/leaderboard", async (req, res) => {
         ? [match_type]
         : ["T20", "ODI"];
 
-    // Parameterised version of the exact SQL you validated
     const sql = `
       WITH
       base AS (
@@ -159,7 +204,11 @@ router.get("/leaderboard", async (req, res) => {
       ORDER BY points DESC, nrr DESC, team_name ASC
     `;
 
-    const { rows } = await pool.query(sql, [mtArr, tournament_name ? norm(tournament_name) : null, season_year ? Number(season_year) : null]);
+    const { rows } = await pool.query(sql, [
+      mtArr,
+      tournament_name ? norm(tournament_name) : null,
+      season_year ? Number(season_year) : null,
+    ]);
     res.json(rows);
   } catch (err) {
     console.error("❌ tournaments leaderboard error:", err);
@@ -189,7 +238,11 @@ router.get("/matches", async (req, res) => {
         AND ($3::int  IS NULL OR season_year = $3::int)
       ORDER BY COALESCE(match_date::timestamp, match_time, created_at) DESC
     `;
-    const { rows } = await pool.query(sql, [mtArr, tournament_name ? norm(tournament_name) : null, season_year ? Number(season_year) : null]);
+    const { rows } = await pool.query(sql, [
+      mtArr,
+      tournament_name ? norm(tournament_name) : null,
+      season_year ? Number(season_year) : null,
+    ]);
     res.json(rows);
   } catch (err) {
     console.error("❌ tournaments matches error:", err);
