@@ -11,7 +11,6 @@ const norm = (s) => (s ?? "").toString().trim();
 /**
  * NEW: GET /api/tournaments/filters?match_type=All|ODI|T20
  * Returns distinct tournament names and years from match_history.
- * Match types limited to ODI/T20 (or both when "All").
  */
 router.get("/filters", async (req, res) => {
   try {
@@ -119,14 +118,14 @@ router.get("/leaderboard", async (req, res) => {
         ? [match_type]
         : ["T20", "ODI"];
 
+    // ✅ FIXED: no join back to base (which was multiplying rows)
     const sql = `
-      WITH
-      base AS (
-        SELECT m.*
-        FROM match_history m
-        WHERE m.match_type = ANY($1)
-          AND ($2::text IS NULL OR LOWER(TRIM(m.tournament_name)) = LOWER(TRIM($2)))
-          AND ($3::int  IS NULL OR m.season_year = $3::int)
+      WITH base AS (
+        SELECT *
+        FROM match_history
+        WHERE match_type = ANY($1)
+          AND ($2::text IS NULL OR LOWER(TRIM(tournament_name)) = LOWER(TRIM($2)))
+          AND ($3::int  IS NULL OR season_year = $3::int)
       ),
       t1 AS (
         SELECT
@@ -181,25 +180,25 @@ router.get("/leaderboard", async (req, res) => {
         GROUP BY LOWER(TRIM(team2))
       ),
       per_team AS (
-        SELECT * FROM t1 UNION ALL SELECT * FROM t2
+        SELECT * FROM t1
+        UNION ALL
+        SELECT * FROM t2
       )
       SELECT
-        MIN(team_name) AS team_name,
-        SUM(matches)   AS matches,
-        SUM(wins)      AS wins,
-        SUM(losses)    AS losses,
-        SUM(draws)     AS draws,
-        (SUM(wins)*2 + SUM(draws)) AS points,
+        MIN(team_name)                                    AS team_name,
+        SUM(matches)                                      AS matches,
+        SUM(wins)                                         AS wins,
+        SUM(losses)                                       AS losses,
+        SUM(draws)                                        AS draws,
+        (SUM(wins)*2 + SUM(draws))                        AS points,
         ROUND(
           (SUM(runs_for)::decimal/NULLIF(SUM(overs_faced),0))
           -
           (SUM(runs_against)::decimal/NULLIF(SUM(overs_bowled),0))
-        , 2) AS nrr,
-        MIN(COALESCE(tournament_name,'')) AS tournament_name,
-        MIN(COALESCE(season_year::int,0)) AS season_year
+        , 2)                                              AS nrr,
+        COALESCE($2::text, '')                            AS tournament_name,  -- echo filters
+        COALESCE($3::int, 0)                              AS season_year
       FROM per_team
-      LEFT JOIN base b ON
-        (LOWER(TRIM(b.team1)) = per_team.team_key OR LOWER(TRIM(b.team2)) = per_team.team_key)
       GROUP BY team_key
       ORDER BY points DESC, nrr DESC, team_name ASC
     `;
@@ -218,7 +217,6 @@ router.get("/leaderboard", async (req, res) => {
 
 /**
  * (Optional helper) GET /api/tournaments/matches
- * Raw matches for a filtered season/tournament
  */
 router.get("/matches", async (req, res) => {
   try {
