@@ -1,6 +1,6 @@
 // src/routes/performanceRoutes.js
-// Adds: GET /api/tournaments (distinct), and tournament_name + season_year
-// autocapture/validation in POST /api/player-performance
+// Adds: GET /api/tournaments (distinct), tournament_name + season_year handling,
+// NEW: five-wicket haul persistence + fiveW counts endpoint.
 
 const express = require("express");
 const router = express.Router();
@@ -41,8 +41,18 @@ const extractYear = (s = "") => {
   return m ? Number(m[0]) : null;
 };
 
+function buildFiveWMessage({ wickets_taken, runs_given, against_team, match_type }) {
+  const wk = Number.isFinite(wickets_taken) ? wickets_taken : 0;
+  const rg = Number.isFinite(runs_given) ? runs_given : 0;
+  const vs = (against_team || "").trim();
+  const mt = (match_type || "").trim();
+  const ratio = rg ? ` (${wk}-${rg})` : ` (${wk})`;
+  const vsTxt = vs ? ` vs ${vs}` : "";
+  const mtTxt = mt ? ` • ${mt}` : "";
+  return `🎯 5-wicket haul${ratio}${vsTxt}${mtTxt}`;
+}
+
 async function lookupTournamentByMatch(client, { match_id, match_name }) {
-  // 1) by match_id (if ever provided by clients)
   if (match_id) {
     const r = await client.query(
       `
@@ -55,7 +65,6 @@ async function lookupTournamentByMatch(client, { match_id, match_name }) {
     );
     if (r.rows[0]?.tournament_name) return r.rows[0].tournament_name;
   }
-  // 2) by match_name (exact)
   if (match_name) {
     const r2 = await client.query(
       `
@@ -99,13 +108,13 @@ router.get("/tournaments", async (req, res) => {
 
 /**
  * POST /api/player-performance
- * Keeps all your current logic + adds tournament_name & season_year handling.
+ * Keeps all your current logic + adds tournament_name & season_year and 5W haul handling.
  */
 router.post("/player-performance", async (req, res) => {
   res.set("X-Handler", "performanceRoutes");
   const {
     match_name,
-    match_id,            // optional, not used by client now
+    match_id,            // optional
     player_id,
     team_name,
     match_type,
@@ -115,8 +124,12 @@ router.post("/player-performance", async (req, res) => {
     wickets_taken,
     runs_given,
     dismissed,           // "Out" | "Not Out"
-    tournament_name,     // NEW (optional — server can resolve)
-    season_year,         // NEW (optional — server can resolve)
+    tournament_name,     // optional — server can resolve
+    season_year,         // optional — server can resolve
+
+    // NEW (optional from client; server will enforce anyway)
+    is_five_wicket_haul,
+    bowling_milestone
   } = req.body;
 
   try {
@@ -195,9 +208,13 @@ router.post("/player-performance", async (req, res) => {
       user_id: toInt(userId),
       tournament_name: (tournament_name && String(tournament_name).trim()) || null,
       season_year: season_year ? toInt(season_year) : null,
+
+      // NEW
+      is_five_wicket_haul: false,
+      bowling_milestone: (bowling_milestone && String(bowling_milestone).trim()) || null
     };
 
-    // 5) derive milestones
+    // 5) derive batting milestones
     const derived = deriveMilestones(payload.run_scored);
     payload.fifties = derived.fifties;
     payload.hundreds = derived.hundreds;
@@ -216,14 +233,31 @@ router.post("/player-performance", async (req, res) => {
         null;
     }
 
-    // 7) insert — includes new columns (tournament_name, season_year)
+    // 7) enforce five-wicket logic server-side
+    if (payload.wickets_taken >= 5) {
+      payload.is_five_wicket_haul = true;
+      if (!payload.bowling_milestone) {
+        payload.bowling_milestone = buildFiveWMessage({
+          wickets_taken: payload.wickets_taken,
+          runs_given: payload.runs_given,
+          against_team: payload.against_team,
+          match_type: payload.match_type,
+        });
+      }
+    } else {
+      payload.is_five_wicket_haul = false;
+      payload.bowling_milestone = null; // store null if not a 5W
+    }
+
+    // 8) insert — includes new columns
     const insert = await pool.query(
       `INSERT INTO player_performance
         (match_name, player_id, team_name, match_type, against_team,
          run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds,
-         dismissed, user_id, tournament_name, season_year)
+         dismissed, user_id, tournament_name, season_year,
+         is_five_wicket_haul, bowling_milestone)
        VALUES
-        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        RETURNING *`,
       [
         payload.match_name,
@@ -241,6 +275,8 @@ router.post("/player-performance", async (req, res) => {
         payload.user_id,
         payload.tournament_name,
         payload.season_year,
+        payload.is_five_wicket_haul,
+        payload.bowling_milestone
       ]
     );
 
@@ -275,13 +311,62 @@ router.get("/player-performance", async (req, res) => {
       pp.hundreds,
       pp.dismissed,
       pp.user_id,
-      pp.tournament_name,     -- NEW
-      pp.season_year          -- NEW
+      pp.tournament_name,
+      pp.season_year,
+      pp.is_five_wicket_haul,      -- NEW
+      pp.bowling_milestone         -- NEW
     FROM player_performance pp
     JOIN players p ON p.id = pp.player_id
     ORDER BY pp.id DESC
   `);
   res.json(result.rows);
+});
+
+/**
+ * NEW: GET /api/player-performance/fivew-counts
+ * Returns how many times a player took 5W+ — tournament-wise, year-wise, match_type-wise.
+ *
+ * Query params (all optional):
+ *   player_id: number
+ *   tournament_name: text
+ *   season_year: number
+ *   match_type: 'ODI' | 'T20' | 'Test'
+ *
+ * If nothing is provided, returns grouped counts for all players by (player, tournament, year, match_type).
+ */
+router.get("/player-performance/fivew-counts", async (req, res) => {
+  try {
+    const playerId = req.query.player_id ? toInt(req.query.player_id, null) : null;
+    const tName    = req.query.tournament_name ? String(req.query.tournament_name) : null;
+    const sYear    = req.query.season_year ? toInt(req.query.season_year, null) : null;
+    const mTypeRaw = req.query.match_type ? String(req.query.match_type) : null;
+    const mType    = mTypeRaw ? normType(mTypeRaw) : null;
+
+    const sql = `
+      SELECT
+        pp.player_id,
+        p.player_name,
+        pp.team_name,
+        pp.tournament_name,
+        pp.season_year,
+        pp.match_type,
+        COUNT(*) AS fivew_count
+      FROM player_performance pp
+      JOIN players p ON p.id = pp.player_id
+      WHERE pp.is_five_wicket_haul = TRUE
+        AND ($1::int  IS NULL OR pp.player_id = $1)
+        AND ($2::text IS NULL OR pp.tournament_name = $2)
+        AND ($3::int  IS NULL OR pp.season_year = $3)
+        AND ($4::text IS NULL OR pp.match_type = $4)
+      GROUP BY 1,2,3,4,5,6
+      ORDER BY fivew_count DESC, p.player_name ASC
+    `;
+    const { rows } = await pool.query(sql, [playerId, tName, sYear, mType]);
+    res.json(rows);
+  } catch (e) {
+    console.error("GET /player-performance/fivew-counts failed:", e);
+    res.status(500).json({ message: "Failed to load five-wicket counts." });
+  }
 });
 
 module.exports = router;
