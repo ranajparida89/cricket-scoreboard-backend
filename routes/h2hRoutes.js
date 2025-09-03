@@ -181,7 +181,7 @@ router.get("/points", async (req, res) => {
     if (up === "ALL") { await runOne("odi"); await runOne("t20"); await runOne("TEST"); }
     else if (up === "TEST") await runOne("TEST");
     else if (up === "ODI") await runOne("odi");
-    else if (up === "T20") await runOne("t20"); // ← fixed typo
+    else if (up === "T20") await runOne("t2 0");
 
     res.json({ t1_points: total.t1, t2_points: total.t2 });
   } catch (e) {
@@ -558,7 +558,8 @@ router.get("/meta/years", async (req, res) => {
 });
 
 /* =========================================================================
- * Player Highlights / Leaderboards (+ Most 5W)
+ * Player Highlights / Leaderboards
+ *  - Adds new leaderboard: most_five_wicket_hauls
  * ========================================================================= */
 router.get("/players/highlights", async (req, res) => {
   const upType = String(req.query.type || "ALL").toUpperCase();
@@ -763,131 +764,6 @@ router.get("/players/highlights", async (req, res) => {
   } catch (e) {
     console.error("players/highlights:", e);
     res.status(500).json({ error: "Failed to compute highlights", detail: e.message });
-  }
-});
-
-/* =========================================================================
- * NEW: Team Scoring Trends (Batting First only)
- *   - Input: team (required), type=ALL|ODI|T20|TEST, tournament, year, limit
- *   - Output: series of last N batting-first scores + improvement/decline %
- * ========================================================================= */
-router.get("/scoring-trends", async (req, res) => {
-  const team = String(req.query.team || "").trim();
-  const type = String(req.query.type || "ALL").toUpperCase();
-  const tournament = String(req.query.tournament || "ALL").trim();
-  const year = req.query.year != null && String(req.query.year).trim() !== "" ? Number(req.query.year) : null;
-  const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 10));
-
-  if (!team) return res.status(400).json({ error: "team is required" });
-
-  try {
-    // We use player_performance to get team totals where innings=1 (batting first).
-    // Join to match tables only for metadata (tournament/year/created_at) so it works
-    // across ODI/T20 (match_history) and Test (test_match_results).
-    const q = `
-      WITH first_innings AS (
-        SELECT
-          TRIM(pp.match_name) AS match_name,
-          COALESCE(pp.match_id, mh.id) AS match_id,
-          UPPER(TRIM(pp.match_type)) AS match_type,
-          COALESCE(pp.season_year, mh.season_year) AS season_year,
-          COALESCE(pp.tournament_name, mh.tournament_name) AS tournament_name,
-          SUM(pp.run_scored) AS runs
-        FROM player_performance pp
-        LEFT JOIN match_history mh ON mh.id = pp.match_id
-        WHERE LOWER(TRIM(pp.team_name)) = LOWER($1)
-          AND COALESCE(pp.innings,1) = 1
-          AND (
-            $2 = 'ALL'
-            OR ($2='TEST' AND pp.match_type ILIKE 'test')
-            OR ($2='ODI'  AND pp.match_type ILIKE 'odi')
-            OR ($2='T20'  AND pp.match_type ILIKE 't20')
-          )
-          AND (
-            $3 = '' OR $3 = 'ALL'
-            OR (pp.tournament_name IS NOT NULL AND pp.tournament_name ILIKE $3)
-            OR (pp.tournament_name IS NULL AND mh.tournament_name IS NOT NULL AND mh.tournament_name ILIKE $3)
-          )
-          AND (
-            $4::int IS NULL
-            OR (pp.season_year IS NOT NULL AND pp.season_year = $4::int)
-            OR (pp.season_year IS NULL AND mh.season_year IS NOT NULL AND mh.season_year = $4::int)
-          )
-        GROUP BY TRIM(pp.match_name), COALESCE(pp.match_id, mh.id), UPPER(TRIM(pp.match_type)),
-                 COALESCE(pp.season_year, mh.season_year), COALESCE(pp.tournament_name, mh.tournament_name)
-      ),
-      ordered AS (
-        SELECT
-          fi.*,
-          COALESCE(mh.created_at, t.created_at, to_timestamp(mh.id), to_timestamp(t.id)) AS created_at,
-          COALESCE(mh.team1, t.team1) AS team1,
-          COALESCE(mh.team2, t.team2) AS team2,
-          t.id AS test_id
-        FROM first_innings fi
-        LEFT JOIN match_history mh ON mh.id = fi.match_id
-        LEFT JOIN test_match_results t ON t.match_name = fi.match_name
-      )
-      SELECT *
-      FROM ordered
-      ORDER BY created_at DESC NULLS LAST
-      LIMIT $5;
-    `;
-
-    const r = await pool.query(q, [team, type, tournament, year, limit]);
-
-    // series in latest-first order
-    const series = (r.rows || []).map(row => {
-      const t1 = (row.team1 || "").trim();
-      const t2 = (row.team2 || "").trim();
-      const opp = t1 && t2
-        ? (t1.toLowerCase() === team.toLowerCase() ? t2 : t1)
-        : null;
-      return {
-        match_id: row.match_id || row.test_id || null,
-        match_name: row.match_name,
-        match_type: row.match_type,
-        tournament_name: row.tournament_name,
-        season_year: nz(row.season_year) || null,
-        runs: nz(row.runs),
-        created_at: row.created_at,
-        opponent: opp,
-      };
-    });
-
-    // compute improvement/decline % from oldest->newest
-    const asc = [...series].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    let incSum = 0, decSum = 0, inc = 0, dec = 0, flat = 0;
-    for (let i = 1; i < asc.length; i++) {
-      const prev = nz(asc[i - 1].runs);
-      const curr = nz(asc[i].runs);
-      if (!prev) continue; // skip if previous is 0 to avoid div/0
-      const ch = ((curr - prev) / prev) * 100;
-      if (ch > 0) { incSum += ch; inc++; }
-      else if (ch < 0) { decSum += (-ch); dec++; }
-      else flat++;
-    }
-    const avg = asc.length ? asc.reduce((s, x) => s + nz(x.runs), 0) / asc.length : 0;
-    const overall = asc.length > 1 && nz(asc[0].runs)
-      ? ((nz(asc[asc.length - 1].runs) - nz(asc[0].runs)) / nz(asc[0].runs)) * 100
-      : 0;
-
-    res.json({
-      filters: { team, type, tournament: tournament || "ALL", year: year || null, limit },
-      series,
-      stats: {
-        improved_matches: inc,
-        declined_matches: dec,
-        flat_matches: flat,
-        sum_improvement_pct: Math.round(incSum * 100) / 100,
-        sum_decline_pct: Math.round(decSum * 100) / 100,
-        net_gap_pct: Math.round((incSum - decSum) * 100) / 100,
-        overall_pct: Math.round(overall * 100) / 100,
-        avg_runs: Math.round(avg * 100) / 100,
-      }
-    });
-  } catch (e) {
-    console.error("scoring-trends:", e);
-    res.status(500).json({ error: "Failed to compute scoring trends" });
   }
 });
 
