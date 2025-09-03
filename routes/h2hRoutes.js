@@ -181,7 +181,7 @@ router.get("/points", async (req, res) => {
     if (up === "ALL") { await runOne("odi"); await runOne("t20"); await runOne("TEST"); }
     else if (up === "TEST") await runOne("TEST");
     else if (up === "ODI") await runOne("odi");
-    else if (up === "T20") await runOne("t20"); // ✅ fixed typo
+    else if (up === "T20") await runOne("t20");
 
     res.json({ t1_points: total.t1, t2_points: total.t2 });
   } catch (e) {
@@ -537,9 +537,9 @@ router.get("/meta/years", async (req, res) => {
             OR ($1='T20'  AND pp.match_type ILIKE 't20')
           )
         UNION
-        SELECT mh.season_year AS y
+        SELECT COALESCE(mh.season_year, EXTRACT(YEAR FROM mh.match_time))::int AS y
         FROM match_history mh
-        WHERE mh.season_year IS NOT NULL
+        WHERE (mh.season_year IS NOT NULL OR mh.match_time IS NOT NULL)
           AND (
             $1 = 'ALL'
             OR ($1='TEST' AND mh.match_type ILIKE 'test')
@@ -558,291 +558,137 @@ router.get("/meta/years", async (req, res) => {
 });
 
 /* =========================================================================
- * Player Highlights / Leaderboards (+ Most 5W)
+ * Team Total Runs (Season-wise) + Leaderboard
  * ========================================================================= */
-router.get("/players/highlights", async (req, res) => {
-  const upType = String(req.query.type || "ALL").toUpperCase();
-  const tournament = String(req.query.tournament || "").trim(); // '' or 'ALL' or exact (ILIKE)
-  const year = req.query.year != null && String(req.query.year).trim() !== "" ? Number(req.query.year) : null;
-  const team = String(req.query.team || "").trim(); // '' or 'ALL' or exact
-  const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 10));
 
-  try {
-    // --- base highlights ---
-    const sql = `
-      WITH base AS (
-        SELECT
-          pp.player_id,
-          pl.player_name,
-          pp.team_name,
-          pp.run_scored,
-          pp.wickets_taken,
-          pp.runs_given,
-          pp.fifties,
-          pp.hundreds,
-          COALESCE(pp.balls_faced, 0) AS balls_faced,
-          CASE WHEN COALESCE(pp.dismissed,'') ILIKE '%out%' THEN 1 ELSE 0 END AS outs,
-          pp.match_id
-        FROM player_performance pp
-        JOIN players pl ON pl.id = pp.player_id
-        LEFT JOIN match_history mh ON mh.id = pp.match_id
-        WHERE
-          (
-            $1 = 'ALL'
-            OR ($1='TEST' AND pp.match_type ILIKE 'test')
-            OR ($1='ODI'  AND pp.match_type ILIKE 'odi')
-            OR ($1='T20'  AND pp.match_type ILIKE 't20')
-          )
-          AND (
-            $2 = '' OR $2 = 'ALL'
-            OR (pp.tournament_name IS NOT NULL AND pp.tournament_name ILIKE $2)
-            OR (pp.tournament_name IS NULL AND mh.tournament_name IS NOT NULL AND mh.tournament_name ILIKE $2)
-          )
-          AND (
-            $3::int IS NULL
-            OR (pp.season_year IS NOT NULL AND pp.season_year = $3::int)
-            OR (pp.season_year IS NULL AND mh.season_year IS NOT NULL AND mh.season_year = $3::int)
-          )
-          AND (
-            $4 = '' OR $4 = 'ALL' OR LOWER(pp.team_name) = LOWER($4)
-          )
-      ),
-      agg AS (
-        SELECT
-          player_id,
-          MAX(player_name) AS player_name,
-          MAX(team_name)   AS team_name,
-          COUNT(*)         AS matches,
-          SUM(run_scored)  AS total_runs,
-          MAX(run_scored)  AS highest_score,
-          SUM(wickets_taken) AS total_wickets,
-          SUM(runs_given)    AS total_runs_given,
-          SUM(fifties)       AS total_fifties,
-          SUM(hundreds)      AS total_hundreds,
-          SUM(balls_faced)   AS balls,
-          SUM(outs)          AS outs,
-          SUM(CASE WHEN run_scored >= 25 AND wickets_taken >= 2 THEN 1 ELSE 0 END) AS success_matches
-        FROM base
-        GROUP BY player_id
-      )
-      SELECT
-        player_id,
-        player_name,
-        team_name,
-        matches,
-        total_runs,
-        highest_score,
-        total_wickets,
-        total_runs_given,
-        total_fifties,
-        total_hundreds,
-        balls,
-        outs,
-        success_matches,
-        ROUND(CASE WHEN outs > 0   THEN total_runs::numeric / outs   END, 2) AS batting_avg,
-        ROUND(CASE WHEN balls > 0  THEN (total_runs::numeric * 100.0) / balls END, 2) AS strike_rate,
-        ROUND(CASE WHEN total_wickets > 0 THEN total_runs_given::numeric / total_wickets END, 2) AS bowling_avg,
-        ROUND(CASE WHEN matches > 0 THEN success_matches::numeric / matches END, 3) AS success_rate
-      FROM agg;
-    `;
-
-    const r = await pool.query(sql, [upType, tournament, year, team]);
-
-    const rows = (r.rows || []).map(x => ({
-      ...x,
-      matches: nz(x.matches),
-      total_runs: nz(x.total_runs),
-      highest_score: nz(x.highest_score),
-      total_wickets: nz(x.total_wickets),
-      total_runs_given: nz(x.total_runs_given),
-      total_fifties: nz(x.total_fifties),
-      total_hundreds: nz(x.total_hundreds),
-      balls: nz(x.balls),
-      outs: nz(x.outs),
-      success_matches: nz(x.success_matches),
-      batting_avg: x.batting_avg == null ? 0 : Number(x.batting_avg),
-      strike_rate: x.strike_rate == null ? 0 : Number(x.strike_rate),
-      bowling_avg: x.bowling_avg == null ? 0 : Number(x.bowling_avg),
-      success_rate: x.success_rate == null ? 0 : Number(x.success_rate),
-    }));
-
-    const by = (key, fn = () => true, desc = true) =>
-      [...rows].filter(fn).sort((a, b) => (desc ? nz(b[key]) - nz(a[key]) : nz(a[key]) - nz(b[key]))).slice(0, limit);
-
-    const leaders = {
-      most_runs: by("total_runs"),
-      highest_wickets: by("total_wickets"),
-      best_batting_avg: by("batting_avg", x => x.outs > 0),
-      best_strike_rate: by("strike_rate", x => x.balls > 0),
-      most_centuries: by("total_hundreds"),
-      most_fifties: by("total_fifties"),
-      most_successful: [...rows]
-        .sort((a, b) => {
-          const d1 = nz(b.success_matches) - nz(a.success_matches);
-          if (d1) return d1;
-          const d2 = (b.success_rate || 0) - (a.success_rate || 0);
-          if (d2) return d2;
-          return (nz(b.total_runs) + nz(b.total_wickets)) - (nz(a.total_runs) + nz(a.total_wickets));
-        })
-        .slice(0, limit),
-    };
-
-    // --- Most 5-wicket hauls ---
-    const sql5 = `
-      WITH base AS (
-        SELECT
-          pp.player_id,
-          pl.player_name,
-          pp.team_name,
-          pp.wickets_taken,
-          pp.runs_given,
-          pp.against_team,
-          COALESCE(pp.is_five_wicket_haul, (pp.wickets_taken >= 5)) AS is_5w
-        FROM player_performance pp
-        JOIN players pl ON pl.id = pp.player_id
-        LEFT JOIN match_history mh ON mh.id = pp.match_id
-        WHERE
-          (
-            $1 = 'ALL'
-            OR ($1='TEST' AND pp.match_type ILIKE 'test')
-            OR ($1='ODI'  AND pp.match_type ILIKE 'odi')
-            OR ($1='T20'  AND pp.match_type ILIKE 't20')
-          )
-          AND (
-            $2 = '' OR $2 = 'ALL'
-            OR (pp.tournament_name IS NOT NULL AND pp.tournament_name ILIKE $2)
-            OR (pp.tournament_name IS NULL AND mh.tournament_name IS NOT NULL AND mh.tournament_name ILIKE $2)
-          )
-          AND (
-            $3::int IS NULL
-            OR (pp.season_year IS NOT NULL AND pp.season_year = $3::int)
-            OR (pp.season_year IS NULL AND mh.season_year IS NOT NULL AND mh.season_year = $3::int)
-          )
-          AND (
-            $4 = '' OR $4 = 'ALL' OR LOWER(pp.team_name) = LOWER($4)
-          )
-      ),
-      fivewh AS (
-        SELECT * FROM base WHERE is_5w = TRUE
-      ),
-      best_row AS (
-        SELECT DISTINCT ON (player_id)
-          player_id, player_name, team_name,
-          wickets_taken AS best_wickets,
-          COALESCE(against_team,'') AS best_vs_team
-        FROM fivewh
-        ORDER BY player_id, wickets_taken DESC, runs_given ASC NULLS LAST
-      ),
-      agg AS (
-        SELECT
-          player_id,
-          MAX(player_name) AS player_name,
-          MAX(team_name)   AS team_name,
-          COUNT(*)::int    AS fivewh_count,
-          MAX(wickets_taken)::int AS best_wickets
-        FROM fivewh
-        GROUP BY player_id
-      )
-      SELECT a.player_id, a.player_name, a.team_name,
-             a.fivewh_count, a.best_wickets,
-             b.best_vs_team
-      FROM agg a
-      LEFT JOIN best_row b USING (player_id)
-      ORDER BY a.fivewh_count DESC, a.best_wickets DESC, a.player_name ASC
-      LIMIT $5;
-    `;
-    const r5 = await pool.query(sql5, [upType, tournament, year, team, limit]);
-
-    leaders.most_five_wicket_hauls = r5.rows || [];
-
-    res.json({
-      filters: { type: upType, tournament: tournament || "ALL", year: year || null, team: team || "ALL" },
-      totals: { players: rows.length, matches: rows.reduce((s, x) => s + nz(x.matches), 0) },
-      leaders,
-    });
-  } catch (e) {
-    console.error("players/highlights:", e);
-    res.status(500).json({ error: "Failed to compute highlights", detail: e.message });
-  }
-});
-
-/* =========================================================================
- * NEW: Team Total Runs (season-wise), with filters
- *   GET /api/h2h/team-total-runs?team=India&type=ALL|ODI|T20|TEST&tournament=ALL|<name>&season=<year|''>
- *   - Returns totals grouped by season_year for a single team.
- * ========================================================================= */
+/**
+ * GET /api/h2h/team-total-runs
+ * Params:
+ *  - team (required)
+ *  - type = ALL|ODI|T20|TEST
+ *  - tournament = '' | 'ALL' | partial name (ILIKE)
+ *  - season = '' | year (number)
+ * Returns: { filters, kpis:{total,min,max,avg,seasons}, series:[{season_year,runs}] }
+ *
+ * NOTE: Uses ONLY match_history and counts both runs1 and runs2 via UNION ALL.
+ */
 router.get("/team-total-runs", async (req, res) => {
   const team = String(req.query.team || "").trim();
   const upType = String(req.query.type || "ALL").toUpperCase();
-  const tournament = String(req.query.tournament || "").trim(); // '' or 'ALL' means all
-  const seasonYear = req.query.season != null && String(req.query.season).trim() !== ""
-    ? Number(req.query.season)
-    : null;
+  const tournament = String(req.query.tournament || "").trim(); // '' or 'ALL' or pattern
+  const seasonYear =
+    req.query.season != null && String(req.query.season).trim() !== ""
+      ? Number(req.query.season)
+      : null;
 
   if (!team) return res.status(400).json({ error: "team is required" });
 
   try {
-    const q = `
-      WITH base AS (
-        SELECT
-          LOWER(TRIM(pp.team_name)) AS team,
-          COALESCE(pp.season_year, mh.season_year) AS season_year,
-          COALESCE(pp.tournament_name, mh.tournament_name) AS tournament_name,
-          UPPER(TRIM(pp.match_type)) AS match_type,
-          SUM(pp.run_scored) AS runs
-        FROM player_performance pp
-        LEFT JOIN match_history mh ON mh.id = pp.match_id
-        WHERE LOWER(TRIM(pp.team_name)) = LOWER($1)
-          AND (
-            $2 = 'ALL'
-            OR ($2='TEST' AND pp.match_type ILIKE 'test')
-            OR ($2='ODI'  AND pp.match_type ILIKE 'odi')
-            OR ($2='T20'  AND pp.match_type ILIKE 't20')
-          )
-          AND (
-            $3 = '' OR $3 = 'ALL'
-            OR (pp.tournament_name IS NOT NULL AND pp.tournament_name ILIKE $3)
-            OR (pp.tournament_name IS NULL AND mh.tournament_name IS NOT NULL AND mh.tournament_name ILIKE $3)
-          )
-          AND (
-            $4::int IS NULL
-            OR (pp.season_year IS NOT NULL AND pp.season_year = $4::int)
-            OR (pp.season_year IS NULL AND mh.season_year IS NOT NULL AND mh.season_year = $4::int)
-          )
-        GROUP BY LOWER(TRIM(pp.team_name)),
-                 COALESCE(pp.season_year, mh.season_year),
-                 COALESCE(pp.tournament_name, mh.tournament_name),
-                 UPPER(TRIM(pp.match_type))
-      )
+    const sql = `
       SELECT season_year, SUM(runs)::bigint AS runs
-      FROM base
+      FROM (
+        SELECT
+          COALESCE(mh.season_year, EXTRACT(YEAR FROM mh.match_time))::int AS season_year,
+          COALESCE(mh.runs1,0) AS runs
+        FROM match_history mh
+        WHERE LOWER(TRIM(mh.team1)) = LOWER($1)
+          AND ($2 = 'ALL' OR UPPER(TRIM(mh.match_type)) = $2)
+          AND ($3 = '' OR $3 = 'ALL' OR mh.tournament_name ILIKE $3)
+          AND ($4::int IS NULL OR COALESCE(mh.season_year, EXTRACT(YEAR FROM mh.match_time))::int = $4::int)
+
+        UNION ALL
+
+        SELECT
+          COALESCE(mh.season_year, EXTRACT(YEAR FROM mh.match_time))::int AS season_year,
+          COALESCE(mh.runs2,0) AS runs
+        FROM match_history mh
+        WHERE LOWER(TRIM(mh.team2)) = LOWER($1)
+          AND ($2 = 'ALL' OR UPPER(TRIM(mh.match_type)) = $2)
+          AND ($3 = '' OR $3 = 'ALL' OR mh.tournament_name ILIKE $3)
+          AND ($4::int IS NULL OR COALESCE(mh.season_year, EXTRACT(YEAR FROM mh.match_time))::int = $4::int)
+      ) t
       WHERE season_year IS NOT NULL
       GROUP BY season_year
       ORDER BY season_year;
     `;
 
-    const r = await pool.query(q, [team, upType, tournament, seasonYear]);
-
+    const r = await pool.query(sql, [team, upType, tournament, seasonYear]);
     const series = (r.rows || []).map(row => ({
       season_year: Number(row.season_year),
-      runs: Number(row.runs || 0),
+      runs: Number(row.runs || 0)
     }));
 
-    const total_runs = series.reduce((s, x) => s + x.runs, 0);
+    const vals = series.map(s => s.runs);
+    const total = vals.reduce((a, b) => a + b, 0);
+    const min = vals.length ? Math.min(...vals) : 0;
+    const max = vals.length ? Math.max(...vals) : 0;
+    const avg = vals.length ? Math.round(total / vals.length) : 0;
 
     res.json({
       filters: {
         team,
         type: upType,
         tournament: tournament || "ALL",
-        season: seasonYear || null,
+        season: seasonYear || null
       },
-      total_runs,
-      series,
+      kpis: { total, min, max, avg, seasons: series.length },
+      series
     });
   } catch (e) {
     console.error("team-total-runs:", e);
     res.status(500).json({ error: "Failed to compute team total runs", detail: e.message });
+  }
+});
+
+/**
+ * GET /api/h2h/team-total-runs/by-team
+ * “Total Runs by Team” leaderboard for the same filters.
+ * Params: type, tournament, season
+ * Returns: [{ team, total_runs }]
+ */
+router.get("/team-total-runs/by-team", async (req, res) => {
+  const upType = String(req.query.type || "ALL").toUpperCase();
+  const tournament = String(req.query.tournament || "").trim(); // '' | ALL | pattern
+  const seasonYear =
+    req.query.season != null && String(req.query.season).trim() !== ""
+      ? Number(req.query.season)
+      : null;
+
+  try {
+    const sql = `
+      SELECT t.team, SUM(t.runs)::bigint AS total_runs
+      FROM (
+        SELECT LOWER(TRIM(team1)) AS team,
+               COALESCE(runs1,0) AS runs,
+               UPPER(TRIM(match_type)) AS match_type,
+               tournament_name,
+               COALESCE(season_year, EXTRACT(YEAR FROM match_time))::int AS y
+        FROM match_history
+
+        UNION ALL
+
+        SELECT LOWER(TRIM(team2)) AS team,
+               COALESCE(runs2,0) AS runs,
+               UPPER(TRIM(match_type)) AS match_type,
+               tournament_name,
+               COALESCE(season_year, EXTRACT(YEAR FROM match_time))::int AS y
+        FROM match_history
+      ) AS t
+      WHERE t.team IS NOT NULL AND t.team <> ''
+        AND ($1 = 'ALL' OR t.match_type = $1)
+        AND ($2 = '' OR $2 = 'ALL' OR t.tournament_name ILIKE $2)
+        AND ($3::int IS NULL OR t.y = $3::int)
+      GROUP BY t.team
+      ORDER BY total_runs DESC, t.team;
+    `;
+    const r = await pool.query(sql, [upType, tournament, seasonYear]);
+    res.json((r.rows || []).map(x => ({
+      team: toTitle(x.team),
+      total_runs: Number(x.total_runs || 0)
+    })));
+  } catch (e) {
+    console.error("team-total-runs/by-team:", e);
+    res.status(500).json({ error: "Failed to compute totals by team", detail: e.message });
   }
 });
 
