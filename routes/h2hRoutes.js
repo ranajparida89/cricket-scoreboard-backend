@@ -181,7 +181,7 @@ router.get("/points", async (req, res) => {
     if (up === "ALL") { await runOne("odi"); await runOne("t20"); await runOne("TEST"); }
     else if (up === "TEST") await runOne("TEST");
     else if (up === "ODI") await runOne("odi");
-    else if (up === "T20") await runOne("t2 0");
+    else if (up === "T20") await runOne("t20"); // ✅ fixed typo
 
     res.json({ t1_points: total.t1, t2_points: total.t2 });
   } catch (e) {
@@ -468,7 +468,7 @@ router.get("/recent", async (req, res) => {
   }
 });
 
-/* ---------------- Players basics (still handy for dropdowns etc.) ---------------- */
+/* ---------------- Players basics (dropdowns) ---------------- */
 router.get("/players/list", async (_req, res) => {
   try {
     const r = await pool.query(`
@@ -558,8 +558,7 @@ router.get("/meta/years", async (req, res) => {
 });
 
 /* =========================================================================
- * Player Highlights / Leaderboards
- *  - Adds new leaderboard: most_five_wicket_hauls
+ * Player Highlights / Leaderboards (+ Most 5W)
  * ========================================================================= */
 router.get("/players/highlights", async (req, res) => {
   const upType = String(req.query.type || "ALL").toUpperCase();
@@ -569,7 +568,7 @@ router.get("/players/highlights", async (req, res) => {
   const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 10));
 
   try {
-    // --- base highlights (existing) ---
+    // --- base highlights ---
     const sql = `
       WITH base AS (
         SELECT
@@ -688,7 +687,7 @@ router.get("/players/highlights", async (req, res) => {
         .slice(0, limit),
     };
 
-    // --- NEW: Most 5-wicket hauls (with best wickets and vs which team) ---
+    // --- Most 5-wicket hauls ---
     const sql5 = `
       WITH base AS (
         SELECT
@@ -764,6 +763,86 @@ router.get("/players/highlights", async (req, res) => {
   } catch (e) {
     console.error("players/highlights:", e);
     res.status(500).json({ error: "Failed to compute highlights", detail: e.message });
+  }
+});
+
+/* =========================================================================
+ * NEW: Team Total Runs (season-wise), with filters
+ *   GET /api/h2h/team-total-runs?team=India&type=ALL|ODI|T20|TEST&tournament=ALL|<name>&season=<year|''>
+ *   - Returns totals grouped by season_year for a single team.
+ * ========================================================================= */
+router.get("/team-total-runs", async (req, res) => {
+  const team = String(req.query.team || "").trim();
+  const upType = String(req.query.type || "ALL").toUpperCase();
+  const tournament = String(req.query.tournament || "").trim(); // '' or 'ALL' means all
+  const seasonYear = req.query.season != null && String(req.query.season).trim() !== ""
+    ? Number(req.query.season)
+    : null;
+
+  if (!team) return res.status(400).json({ error: "team is required" });
+
+  try {
+    const q = `
+      WITH base AS (
+        SELECT
+          LOWER(TRIM(pp.team_name)) AS team,
+          COALESCE(pp.season_year, mh.season_year) AS season_year,
+          COALESCE(pp.tournament_name, mh.tournament_name) AS tournament_name,
+          UPPER(TRIM(pp.match_type)) AS match_type,
+          SUM(pp.run_scored) AS runs
+        FROM player_performance pp
+        LEFT JOIN match_history mh ON mh.id = pp.match_id
+        WHERE LOWER(TRIM(pp.team_name)) = LOWER($1)
+          AND (
+            $2 = 'ALL'
+            OR ($2='TEST' AND pp.match_type ILIKE 'test')
+            OR ($2='ODI'  AND pp.match_type ILIKE 'odi')
+            OR ($2='T20'  AND pp.match_type ILIKE 't20')
+          )
+          AND (
+            $3 = '' OR $3 = 'ALL'
+            OR (pp.tournament_name IS NOT NULL AND pp.tournament_name ILIKE $3)
+            OR (pp.tournament_name IS NULL AND mh.tournament_name IS NOT NULL AND mh.tournament_name ILIKE $3)
+          )
+          AND (
+            $4::int IS NULL
+            OR (pp.season_year IS NOT NULL AND pp.season_year = $4::int)
+            OR (pp.season_year IS NULL AND mh.season_year IS NOT NULL AND mh.season_year = $4::int)
+          )
+        GROUP BY LOWER(TRIM(pp.team_name)),
+                 COALESCE(pp.season_year, mh.season_year),
+                 COALESCE(pp.tournament_name, mh.tournament_name),
+                 UPPER(TRIM(pp.match_type))
+      )
+      SELECT season_year, SUM(runs)::bigint AS runs
+      FROM base
+      WHERE season_year IS NOT NULL
+      GROUP BY season_year
+      ORDER BY season_year;
+    `;
+
+    const r = await pool.query(q, [team, upType, tournament, seasonYear]);
+
+    const series = (r.rows || []).map(row => ({
+      season_year: Number(row.season_year),
+      runs: Number(row.runs || 0),
+    }));
+
+    const total_runs = series.reduce((s, x) => s + x.runs, 0);
+
+    res.json({
+      filters: {
+        team,
+        type: upType,
+        tournament: tournament || "ALL",
+        season: seasonYear || null,
+      },
+      total_runs,
+      series,
+    });
+  } catch (e) {
+    console.error("team-total-runs:", e);
+    res.status(500).json({ error: "Failed to compute team total runs", detail: e.message });
   }
 });
 
