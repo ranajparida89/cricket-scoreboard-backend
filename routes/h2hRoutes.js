@@ -691,22 +691,24 @@ router.get("/team-total-runs/by-team", async (req, res) => {
 /* =========================================================================
  * Player Highlights / Leaderboards (Best Players)
  * ========================================================================= */
+// Player Highlights / Leaderboards (de-duped by canonical name + team)
 router.get("/players/highlights", async (req, res) => {
   const upType = String(req.query.type || "ALL").toUpperCase();
-  const tournament = String(req.query.tournament || "").trim();
+  const tournament = String(req.query.tournament || "").trim(); // '' or 'ALL' or exact (ILIKE)
   const year = req.query.year != null && String(req.query.year).trim() !== "" ? Number(req.query.year) : null;
-  const teamRaw = String(req.query.team || "").trim();     // may be 'All Teams'
-  const team = isAll(teamRaw) ? "" : teamRaw;              // normalize here
+  const team = String(req.query.team || "").trim(); // '' or 'ALL' or exact
   const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 10));
 
   try {
-    // --- base highlights ---
+    // --- base rows with canonical keys ---
     const sql = `
       WITH base AS (
         SELECT
           pp.player_id,
           pl.player_name,
           pp.team_name,
+          LOWER(REGEXP_REPLACE(TRIM(pl.player_name), '\\s+', ' ', 'g')) AS canon_name,
+          LOWER(TRIM(pp.team_name)) AS canon_team,
           pp.run_scored,
           pp.wickets_taken,
           pp.runs_given,
@@ -736,14 +738,16 @@ router.get("/players/highlights", async (req, res) => {
             OR (pp.season_year IS NULL AND mh.season_year IS NOT NULL AND mh.season_year = $3::int)
           )
           AND (
-            $4 = '' OR LOWER(pp.team_name) = LOWER($4)
+            $4 = '' OR $4 = 'ALL' OR LOWER(pp.team_name) = LOWER($4)
           )
       ),
       agg AS (
         SELECT
-          player_id,
-          MAX(player_name) AS player_name,
-          MAX(team_name)   AS team_name,
+          canon_name,
+          canon_team,
+          INITCAP(canon_name) AS player_name,
+          -- keep a readable team label; since canon_team is fixed in group, MAX() is safe
+          MAX(team_name) AS team_name,
           COUNT(*)         AS matches,
           SUM(run_scored)  AS total_runs,
           MAX(run_scored)  AS highest_score,
@@ -755,10 +759,9 @@ router.get("/players/highlights", async (req, res) => {
           SUM(outs)          AS outs,
           SUM(CASE WHEN run_scored >= 25 AND wickets_taken >= 2 THEN 1 ELSE 0 END) AS success_matches
         FROM base
-        GROUP BY player_id
+        GROUP BY canon_name, canon_team
       )
       SELECT
-        player_id,
         player_name,
         team_name,
         matches,
@@ -771,35 +774,36 @@ router.get("/players/highlights", async (req, res) => {
         balls,
         outs,
         success_matches,
-        ROUND(CASE WHEN outs > 0   THEN total_runs::numeric / outs   END, 2) AS batting_avg,
-        ROUND(CASE WHEN balls > 0  THEN (total_runs::numeric * 100.0) / balls END, 2) AS strike_rate,
+        ROUND(CASE WHEN outs  > 0 THEN total_runs::numeric / outs        END, 2) AS batting_avg,
+        ROUND(CASE WHEN balls > 0 THEN (total_runs::numeric * 100.0) / balls END, 2) AS strike_rate,
         ROUND(CASE WHEN total_wickets > 0 THEN total_runs_given::numeric / total_wickets END, 2) AS bowling_avg,
         ROUND(CASE WHEN matches > 0 THEN success_matches::numeric / matches END, 3) AS success_rate
-      FROM agg;
+      FROM agg
     `;
 
     const r = await pool.query(sql, [upType, tournament, year, team]);
 
     const rows = (r.rows || []).map(x => ({
       ...x,
-      matches: nz(x.matches),
-      total_runs: nz(x.total_runs),
-      highest_score: nz(x.highest_score),
-      total_wickets: nz(x.total_wickets),
-      total_runs_given: nz(x.total_runs_given),
-      total_fifties: nz(x.total_fifties),
-      total_hundreds: nz(x.total_hundreds),
-      balls: nz(x.balls),
-      outs: nz(x.outs),
-      success_matches: nz(x.success_matches),
+      matches: x.matches|0,
+      total_runs: x.total_runs|0,
+      highest_score: x.highest_score|0,
+      total_wickets: x.total_wickets|0,
+      total_runs_given: x.total_runs_given|0,
+      total_fifties: x.total_fifties|0,
+      total_hundreds: x.total_hundreds|0,
+      balls: x.balls|0,
+      outs: x.outs|0,
+      success_matches: x.success_matches|0,
       batting_avg: x.batting_avg == null ? 0 : Number(x.batting_avg),
       strike_rate: x.strike_rate == null ? 0 : Number(x.strike_rate),
       bowling_avg: x.bowling_avg == null ? 0 : Number(x.bowling_avg),
       success_rate: x.success_rate == null ? 0 : Number(x.success_rate),
     }));
 
+    const nz = v => (v == null ? 0 : Number(v));
     const by = (key, fn = () => true, desc = true) =>
-      [...rows].filter(fn).sort((a, b) => (desc ? nz(b[key]) - nz(a[key]) : nz(a[key]) - nz(b[key]))).slice(0, limit);
+      [...rows].filter(fn).sort((a,b) => desc ? nz(b[key]) - nz(a[key]) : nz(a[key]) - nz(b[key])).slice(0, limit);
 
     const leaders = {
       most_runs: by("total_runs"),
@@ -819,17 +823,18 @@ router.get("/players/highlights", async (req, res) => {
         .slice(0, limit),
     };
 
-    // --- Most 5-wicket hauls ---
+    // --- Most 5-wicket hauls, also de-duped by canon name + team ---
     const sql5 = `
       WITH base AS (
         SELECT
-          pp.player_id,
           pl.player_name,
           pp.team_name,
+          LOWER(REGEXP_REPLACE(TRIM(pl.player_name), '\\s+', ' ', 'g')) AS canon_name,
+          LOWER(TRIM(pp.team_name)) AS canon_team,
           pp.wickets_taken,
           pp.runs_given,
-          pp.against_team,
-          COALESCE(pp.is_five_wicket_haul, (pp.wickets_taken >= 5)) AS is_5w
+          COALESCE(pp.is_five_wicket_haul, (pp.wickets_taken >= 5)) AS is_5w,
+          COALESCE(pp.against_team,'') AS against_team
         FROM player_performance pp
         JOIN players pl ON pl.id = pp.player_id
         LEFT JOIN match_history mh ON mh.id = pp.match_id
@@ -851,35 +856,34 @@ router.get("/players/highlights", async (req, res) => {
             OR (pp.season_year IS NULL AND mh.season_year IS NOT NULL AND mh.season_year = $3::int)
           )
           AND (
-            $4 = '' OR LOWER(pp.team_name) = LOWER($4)
+            $4 = '' OR $4 = 'ALL' OR LOWER(pp.team_name) = LOWER($4)
           )
       ),
       fivewh AS (
         SELECT * FROM base WHERE is_5w = TRUE
       ),
-      best_row AS (
-        SELECT DISTINCT ON (player_id)
-          player_id, player_name, team_name,
-          wickets_taken AS best_wickets,
-          COALESCE(against_team,'') AS best_vs_team
-        FROM fivewh
-        ORDER BY player_id, wickets_taken DESC, runs_given ASC NULLS LAST
-      ),
       agg AS (
         SELECT
-          player_id,
-          MAX(player_name) AS player_name,
-          MAX(team_name)   AS team_name,
-          COUNT(*)::int    AS fivewh_count,
+          canon_name,
+          canon_team,
+          INITCAP(canon_name) AS player_name,
+          MAX(team_name) AS team_name,
+          COUNT(*)::int AS fivewh_count,
           MAX(wickets_taken)::int AS best_wickets
         FROM fivewh
-        GROUP BY player_id
+        GROUP BY canon_name, canon_team
+      ),
+      best_row AS (
+        SELECT
+          canon_name,
+          canon_team,
+          (ARRAY_AGG(against_team ORDER BY wickets_taken DESC, runs_given ASC NULLS LAST))[1] AS best_vs_team
+        FROM fivewh
+        GROUP BY canon_name, canon_team
       )
-      SELECT a.player_id, a.player_name, a.team_name,
-             a.fivewh_count, a.best_wickets,
-             b.best_vs_team
+      SELECT a.player_name, a.team_name, a.fivewh_count, a.best_wickets, COALESCE(b.best_vs_team,'') AS best_vs_team
       FROM agg a
-      LEFT JOIN best_row b USING (player_id)
+      LEFT JOIN best_row b USING (canon_name, canon_team)
       ORDER BY a.fivewh_count DESC, a.best_wickets DESC, a.player_name ASC
       LIMIT $5;
     `;
@@ -889,7 +893,7 @@ router.get("/players/highlights", async (req, res) => {
 
     res.json({
       filters: { type: upType, tournament: tournament || "ALL", year: year || null, team: team || "ALL" },
-      totals: { players: rows.length, matches: rows.reduce((s, x) => s + nz(x.matches), 0) },
+      totals: { players: rows.length, matches: rows.reduce((s, x) => s + (x.matches|0), 0) },
       leaders,
     });
   } catch (e) {
@@ -897,5 +901,6 @@ router.get("/players/highlights", async (req, res) => {
     res.status(500).json({ error: "Failed to compute highlights", detail: e.message });
   }
 });
+
 
 module.exports = router;
