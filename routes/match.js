@@ -145,4 +145,53 @@ router.get('/list', async (req, res) => {
   res.json({ matches });
 });
 
+// routes/match.js  (ADD THIS BLOCK near the other router.gets)
+
+// GET /api/match/tournaments?scope=limited|test
+// limited -> read from match_history (ODI/T20)
+// test    -> read from test_match_results (Test)
+router.get('/tournaments', async (req, res) => {
+  try {
+    const scope = (req.query.scope || 'limited').toLowerCase();
+    const table = scope === 'test' ? 'test_match_results' : 'match_history';
+
+    const q = await pool.query(
+      `SELECT DISTINCT tournament_name
+         FROM ${table}
+        WHERE tournament_name IS NOT NULL AND tournament_name <> ''
+        ORDER BY tournament_name ASC`
+    );
+
+    res.json({ tournaments: q.rows.map(r => r.tournament_name) });
+  } catch (err) {
+    console.error('tournaments list error:', err.message);
+    res.status(500).json({ error: 'Failed to load tournaments' });
+  }
+});
+
+// (Optional) GET /api/match/tournaments/years?scope=limited|test&tournament_name=...
+router.get('/tournaments/years', async (req, res) => {
+  try {
+    const scope = (req.query.scope || 'limited').toLowerCase();
+    const table = scope === 'test' ? 'test_match_results' : 'match_history';
+    const name = (req.query.tournament_name || '').trim();
+
+    if (!name) return res.json({ years: [] });
+
+    const q = await pool.query(
+      `SELECT DISTINCT season_year
+         FROM ${table}
+        WHERE tournament_name = $1 AND season_year IS NOT NULL
+        ORDER BY season_year DESC`,
+      [name]
+    );
+
+    res.json({ years: q.rows.map(r => r.season_year) });
+  } catch (err) {
+    console.error('tournament years error:', err.message);
+    res.status(500).json({ error: 'Failed to load years' });
+  }
+});
+
+
 module.exports = router;
