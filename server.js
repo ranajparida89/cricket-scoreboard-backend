@@ -439,9 +439,11 @@ app.get("/api/rankings/test", async (req, res) => {
 });
 
 // ✅ Match History
+// ✅ Match History (T20/ODI) — now supports tournament & season filters too
 app.get("/api/match-history", async (req, res) => {
   try {
-    const { match_type, team, winner } = req.query;
+    const { match_type, team, winner, tournament_name, season_year } = req.query;
+
     let query = `SELECT * FROM match_history WHERE 1=1`;
     const params = [];
 
@@ -457,14 +459,25 @@ app.get("/api/match-history", async (req, res) => {
       params.push(`%${winner}%`);
       query += ` AND winner ILIKE $${params.length}`;
     }
+    if (tournament_name) {
+      params.push(`%${tournament_name}%`);
+      query += ` AND tournament_name ILIKE $${params.length}`;
+    }
+    if (season_year) {
+      // works whether season_year column is text or int
+      params.push(`${season_year}`);
+      query += ` AND CAST(season_year AS TEXT) ILIKE $${params.length}`;
+    }
 
-    query += ` ORDER BY match_time DESC`;
+    query += ` ORDER BY match_time DESC`; // keep your ordering
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Failed to fetch match history" });
   }
 });
+
 
 
 // ✅ Start the backend server
