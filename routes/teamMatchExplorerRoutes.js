@@ -1,5 +1,5 @@
 // C:\cricket-scoreboard-backend\routes\teamMatchExplorerRoutes.js
-// Team Match Explorer API (ODI/T20) — SQL-based filtering + pagination
+// Team Match Explorer API (ODI/T20) — simplified, regex-free (prod-safe)
 
 const express = require("express");
 const router = express.Router();
@@ -25,50 +25,48 @@ router.get("/by-team", async (req, res) => {
     const pageSize = Math.min(100, Math.max(1, toInt(req.query.pageSize, 20)));
     const offset = (page - 1) * pageSize;
 
-    // --- MAIN DATA QUERY (paged) ------------------------------------------
+    /**
+     * Notes:
+     * - We avoid regex. Result is derived as:
+     *   - Draw/NR if winner is NULL/empty or contains 'draw'/'no result'
+     *   - Win   if winner ILIKE '%<team>%'
+     *   - Else  Loss
+     * - Date is chosen safely even if match_date is text or empty.
+     */
     const DATA_SQL = `
-      WITH norm AS (
+      WITH base AS (
         SELECT
-          m.*,
-          -- normalize format (defensive)
-          replace(replace(lower(m.match_type), '-', ''), ' ', '') AS fmt_norm,
-          -- extract winner team from phrases like "India won the match!"
-          NULLIF(
-            btrim(regexp_replace(coalesce(m.winner,''), '\\s*won\\b.*$', '', 'i')),
-            ''
-          ) AS winner_team
-        FROM match_history m
-      ),
-      base AS (
-        SELECT
-          n.id AS match_id,
-          COALESCE(n.match_date::date, n.created_at::date) AS date,
-          n.match_type AS format,
-          n.tournament_name AS tournament,
-          n.season_year,
-          n.match_name,
+          m.id AS match_id,
+          COALESCE(NULLIF(m.match_date::text,'')::date, m.created_at::date) AS date,
+          m.match_type AS format,
+          m.tournament_name AS tournament,
+          m.season_year,
+          m.match_name,
+          -- opponent from selected team's perspective
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.team2 ELSE m.team1 END AS opponent,
 
-          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.team2 ELSE n.team1 END AS opponent,
+          -- selected team innings (primary ODI/T20 columns)
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.runs1    ELSE m.runs2    END AS team_runs,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.wickets1 ELSE m.wickets2 END AS team_wkts,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.overs1   ELSE m.overs2   END AS team_overs,
 
-          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.runs1    ELSE n.runs2    END AS team_runs,
-          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.wickets1 ELSE n.wickets2 END AS team_wkts,
-          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.overs1   ELSE n.overs2   END AS team_overs,
+          -- opponent innings
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.runs2    ELSE m.runs1    END AS opp_runs,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.wickets2 ELSE m.wickets1 END AS opp_wkts,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.overs2   ELSE m.overs1   END AS opp_overs,
 
-          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.runs2    ELSE n.runs1    END AS opp_runs,
-          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.wickets2 ELSE n.wickets1 END AS opp_wkts,
-          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.overs2   ELSE n.overs1   END AS opp_overs,
-
+          -- result from selected team's perspective (regex-free)
           CASE
-            WHEN n.winner IS NULL OR btrim(n.winner) = '' THEN 'D'
-            WHEN lower(n.winner_team) = lower($1)          THEN 'W'
+            WHEN m.winner IS NULL OR btrim(m.winner) = '' OR m.winner ILIKE '%draw%' OR m.winner ILIKE '%no result%' THEN 'D'
+            WHEN m.winner ILIKE '%' || $1 || '%' THEN 'W'
             ELSE 'L'
           END AS result
-        FROM norm n
+        FROM match_history m
         WHERE
-          (btrim(lower(n.team1)) = btrim(lower($1)) OR btrim(lower(n.team2)) = btrim(lower($1)))
-          AND ($2 = 'All' OR replace(replace(lower($2), '-', ''), ' ', '') = n.fmt_norm)
-          AND ($3::int IS NULL OR n.season_year = $3)
-          AND ($4::text IS NULL OR btrim(lower(n.tournament_name)) = btrim(lower($4)))
+          (btrim(lower(m.team1)) = btrim(lower($1)) OR btrim(lower(m.team2)) = btrim(lower($1)))
+          AND ($2 = 'All' OR lower(m.match_type) = lower($2))
+          AND ($3::int IS NULL OR m.season_year = $3)
+          AND ($4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4)))
       ),
       filtered AS (
         SELECT * FROM base
@@ -80,35 +78,25 @@ router.get("/by-team", async (req, res) => {
       )
       SELECT *
       FROM filtered
-      ORDER BY date DESC
+      ORDER BY date DESC NULLS LAST
       LIMIT $6 OFFSET $7;
     `;
 
     const COUNT_SUMMARY_SQL = `
-      WITH norm AS (
+      WITH base AS (
         SELECT
-          m.*,
-          replace(replace(lower(m.match_type), '-', ''), ' ', '') AS fmt_norm,
-          NULLIF(
-            btrim(regexp_replace(coalesce(m.winner,''), '\\s*won\\b.*$', '', 'i')),
-            ''
-          ) AS winner_team
-        FROM match_history m
-      ),
-      base AS (
-        SELECT
-          COALESCE(n.match_date::date, n.created_at::date) AS date,
+          COALESCE(NULLIF(m.match_date::text,'')::date, m.created_at::date) AS date,
           CASE
-            WHEN n.winner IS NULL OR btrim(n.winner) = '' THEN 'D'
-            WHEN lower(n.winner_team) = lower($1)          THEN 'W'
+            WHEN m.winner IS NULL OR btrim(m.winner) = '' OR m.winner ILIKE '%draw%' OR m.winner ILIKE '%no result%' THEN 'D'
+            WHEN m.winner ILIKE '%' || $1 || '%' THEN 'W'
             ELSE 'L'
           END AS result
-        FROM norm n
+        FROM match_history m
         WHERE
-          (btrim(lower(n.team1)) = btrim(lower($1)) OR btrim(lower(n.team2)) = btrim(lower($1)))
-          AND ($2 = 'All' OR replace(replace(lower($2), '-', ''), ' ', '') = n.fmt_norm)
-          AND ($3::int IS NULL OR n.season_year = $3)
-          AND ($4::text IS NULL OR btrim(lower(n.tournament_name)) = btrim(lower($4)))
+          (btrim(lower(m.team1)) = btrim(lower($1)) OR btrim(lower(m.team2)) = btrim(lower($1)))
+          AND ($2 = 'All' OR lower(m.match_type) = lower($2))
+          AND ($3::int IS NULL OR m.season_year = $3)
+          AND ($4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4)))
       ),
       filtered AS (
         SELECT * FROM base
@@ -119,13 +107,13 @@ router.get("/by-team", async (req, res) => {
         )
       )
       SELECT
-        COUNT(*)::int                                             AS total,
-        COUNT(*) FILTER (WHERE result = 'W')::int                 AS wins,
-        COUNT(*) FILTER (WHERE result = 'L')::int                 AS losses,
-        COUNT(*) FILTER (WHERE result = 'D')::int                 AS draws,
+        COUNT(*)::int                                     AS total,
+        COUNT(*) FILTER (WHERE result = 'W')::int         AS wins,
+        COUNT(*) FILTER (WHERE result = 'L')::int         AS losses,
+        COUNT(*) FILTER (WHERE result = 'D')::int         AS draws,
         COALESCE(
           (SELECT array_agg(result) FROM (
-             SELECT result FROM filtered ORDER BY date DESC LIMIT 5
+             SELECT result FROM filtered ORDER BY date DESC NULLS LAST LIMIT 5
            ) s),
           ARRAY[]::text[]
         ) AS last5;
@@ -179,7 +167,7 @@ router.get("/by-team", async (req, res) => {
       matches,
     });
   } catch (err) {
-    console.error("teamMatchExplorerRoutes error:", err);
+    console.error("teamMatchExplorerRoutes error:", err); // will print real PG error in logs
     res.status(500).json({ error: "Internal server error" });
   }
 });
