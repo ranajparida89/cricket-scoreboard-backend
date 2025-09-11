@@ -1,5 +1,5 @@
 // C:\cricket-scoreboard-backend\routes\teamMatchExplorerRoutes.js
-// Team Match Explorer API (ODI/T20) — matches the `match_history` schema in your screenshot.
+// Team Match Explorer API (ODI/T20) — SQL-based filtering + pagination
 
 const express = require("express");
 const router = express.Router();
@@ -11,137 +11,172 @@ const toInt = (v, d = 0) => {
 };
 const norm = (s) => (s ?? "").toString().trim();
 
-const RESULT_MAP = new Map([
-  ["ALL", null],
-  ["W", "W"],
-  ["L", "L"],
-  ["D", "D"],   // draw / no result
-  ["NR", "D"],
-]);
-
-/**
- * GET /api/team-match-explorer/by-team
- * Query:
- *   team       (string, required)
- *   format     (All|ODI|T20, default All)
- *   season     (year, optional)
- *   tournament (string, optional)
- *   result     (All|W|L|D|NR, default All)
- *   page       (number, default 1)
- *   pageSize   (number, default 20, max 100)
- */
 router.get("/by-team", async (req, res) => {
   try {
     const teamRaw = norm(req.query.team);
     if (!teamRaw) return res.status(400).json({ error: "team is required" });
 
-    const format = norm(req.query.format || "All");
+    const format = norm(req.query.format || "All");           // 'All' | 'ODI' | 'T20'
     const season = req.query.season ? toInt(req.query.season, null) : null;
     const tournament = req.query.tournament ? norm(req.query.tournament) : null;
-    const resultParam = (req.query.result || "All").toUpperCase();
-    const resultFilter = RESULT_MAP.get(resultParam) ?? null;
+    const result = (req.query.result || "All").toUpperCase(); // 'All' | 'W' | 'L' | 'D' | 'NR'
 
     const page = Math.max(1, toInt(req.query.page, 1));
     const pageSize = Math.min(100, Math.max(1, toInt(req.query.pageSize, 20)));
     const offset = (page - 1) * pageSize;
 
-    // Build base filter using your column names
-    const where = [
-      "(LOWER(m.team1) = LOWER($1) OR LOWER(m.team2) = LOWER($1))",
-      "($2 = 'All' OR LOWER(m.match_type) = LOWER($2))",
-      "($3::int IS NULL OR m.season_year = $3)",
-      "($4::text IS NULL OR LOWER(m.tournament_name) = LOWER($4))",
-    ].join(" AND ");
-    const params = [teamRaw, format, season, tournament];
+    // --- MAIN DATA QUERY (paged) ------------------------------------------
+    const DATA_SQL = `
+      WITH norm AS (
+        SELECT
+          m.*,
+          -- normalize format (defensive)
+          replace(replace(lower(m.match_type), '-', ''), ' ', '') AS fmt_norm,
+          -- extract winner team from phrases like "India won the match!"
+          NULLIF(
+            btrim(regexp_replace(coalesce(m.winner,''), '\\s*won\\b.*$', '', 'i')),
+            ''
+          ) AS winner_team
+        FROM match_history m
+      ),
+      base AS (
+        SELECT
+          n.id AS match_id,
+          COALESCE(n.match_date::date, n.created_at::date) AS date,
+          n.match_type AS format,
+          n.tournament_name AS tournament,
+          n.season_year,
+          n.match_name,
 
-    // Pull rows once, then map to team perspective (we need to compute W/L/D from `winner`)
-    const rows = await pool.query(
-      `SELECT
-         m.id                                        AS match_id,
-         COALESCE(m.match_date::date, NULL)          AS date,
-         m.match_type                                AS format,
-         m.tournament_name                           AS tournament,
-         m.season_year                               AS season_year,
-         m.match_name                                 AS match_name,
-         m.team1, m.runs1, m.overs1, m.wickets1,
-         m.team2, m.runs2, m.overs2, m.wickets2,
-         m.winner
-       FROM match_history m
-       WHERE ${where}
-       ORDER BY COALESCE(m.match_date, m.created_at) DESC`,
-      params
-    );
+          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.team2 ELSE n.team1 END AS opponent,
 
-    const mapped = rows.rows.map((r) => {
-      const teamIsT1 = r.team1?.toLowerCase() === teamRaw.toLowerCase();
-      const opponent = teamIsT1 ? r.team2 : r.team1;
+          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.runs1    ELSE n.runs2    END AS team_runs,
+          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.wickets1 ELSE n.wickets2 END AS team_wkts,
+          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.overs1   ELSE n.overs2   END AS team_overs,
 
-      // Pull the team/opponent innings (primary set; *_2 exists but we ignore for ODI/T20)
-      const team_runs  = teamIsT1 ? r.runs1    : r.runs2;
-      const team_wkts  = teamIsT1 ? r.wickets1 : r.wickets2;
-      const team_overs = teamIsT1 ? r.overs1   : r.overs2;
+          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.runs2    ELSE n.runs1    END AS opp_runs,
+          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.wickets2 ELSE n.wickets1 END AS opp_wkts,
+          CASE WHEN btrim(lower(n.team1)) = btrim(lower($1)) THEN n.overs2   ELSE n.overs1   END AS opp_overs,
 
-      const opp_runs   = teamIsT1 ? r.runs2    : r.runs1;
-      const opp_wkts   = teamIsT1 ? r.wickets2 : r.wickets1;
-      const opp_overs  = teamIsT1 ? r.overs2   : r.overs1;
+          CASE
+            WHEN n.winner IS NULL OR btrim(n.winner) = '' THEN 'D'
+            WHEN lower(n.winner_team) = lower($1)          THEN 'W'
+            ELSE 'L'
+          END AS result
+        FROM norm n
+        WHERE
+          (btrim(lower(n.team1)) = btrim(lower($1)) OR btrim(lower(n.team2)) = btrim(lower($1)))
+          AND ($2 = 'All' OR replace(replace(lower($2), '-', ''), ' ', '') = n.fmt_norm)
+          AND ($3::int IS NULL OR n.season_year = $3)
+          AND ($4::text IS NULL OR btrim(lower(n.tournament_name)) = btrim(lower($4)))
+      ),
+      filtered AS (
+        SELECT * FROM base
+        WHERE (
+          $5 = 'All'
+          OR ($5 = 'NR' AND result = 'D')  -- treat NR as Draw
+          OR result = $5
+        )
+      )
+      SELECT *
+      FROM filtered
+      ORDER BY date DESC
+      LIMIT $6 OFFSET $7;
+    `;
 
-      // Compute result from `winner` (string of winning team or null)
-      const w = (r.winner ?? "").toString().toLowerCase();
-      let result = "L";
-      if (!w) result = "D";
-      else if (w === teamRaw.toLowerCase()) result = "W";
+    const COUNT_SUMMARY_SQL = `
+      WITH norm AS (
+        SELECT
+          m.*,
+          replace(replace(lower(m.match_type), '-', ''), ' ', '') AS fmt_norm,
+          NULLIF(
+            btrim(regexp_replace(coalesce(m.winner,''), '\\s*won\\b.*$', '', 'i')),
+            ''
+          ) AS winner_team
+        FROM match_history m
+      ),
+      base AS (
+        SELECT
+          COALESCE(n.match_date::date, n.created_at::date) AS date,
+          CASE
+            WHEN n.winner IS NULL OR btrim(n.winner) = '' THEN 'D'
+            WHEN lower(n.winner_team) = lower($1)          THEN 'W'
+            ELSE 'L'
+          END AS result
+        FROM norm n
+        WHERE
+          (btrim(lower(n.team1)) = btrim(lower($1)) OR btrim(lower(n.team2)) = btrim(lower($1)))
+          AND ($2 = 'All' OR replace(replace(lower($2), '-', ''), ' ', '') = n.fmt_norm)
+          AND ($3::int IS NULL OR n.season_year = $3)
+          AND ($4::text IS NULL OR btrim(lower(n.tournament_name)) = btrim(lower($4)))
+      ),
+      filtered AS (
+        SELECT * FROM base
+        WHERE (
+          $5 = 'All'
+          OR ($5 = 'NR' AND result = 'D')
+          OR result = $5
+        )
+      )
+      SELECT
+        COUNT(*)::int                                             AS total,
+        COUNT(*) FILTER (WHERE result = 'W')::int                 AS wins,
+        COUNT(*) FILTER (WHERE result = 'L')::int                 AS losses,
+        COUNT(*) FILTER (WHERE result = 'D')::int                 AS draws,
+        COALESCE(
+          (SELECT array_agg(result) FROM (
+             SELECT result FROM filtered ORDER BY date DESC LIMIT 5
+           ) s),
+          ARRAY[]::text[]
+        ) AS last5;
+    `;
 
-      // Build a human-readable line (no margin column in schema)
-      const result_text =
-        result === "W"
-          ? `${teamRaw} beat ${opponent}`
-          : result === "L"
-          ? `${opponent} beat ${teamRaw}`
-          : "Draw / No Result";
+    const FACETS_SEASONS_SQL = `
+      SELECT DISTINCT season_year
+      FROM match_history
+      WHERE btrim(lower(team1)) = btrim(lower($1)) OR btrim(lower(team2)) = btrim(lower($1))
+      ORDER BY season_year DESC NULLS LAST;
+    `;
 
-      return {
-        match_id: r.match_id,
-        date: r.date,
-        format: r.format,
-        tournament: r.tournament,
-        season_year: r.season_year,
-        match_name: r.match_name,
-        team: teamRaw,
-        opponent,
-        team_runs, team_wkts, team_overs,
-        opp_runs,  opp_wkts,  opp_overs,
-        result,
-        result_text,
-      };
-    });
+    const FACETS_TOURN_SQL = `
+      SELECT DISTINCT tournament_name
+      FROM match_history
+      WHERE btrim(lower(team1)) = btrim(lower($1)) OR btrim(lower(team2)) = btrim(lower($1))
+      ORDER BY tournament_name ASC NULLS LAST;
+    `;
 
-    // Apply optional result filter (W/L/D)
-    const filtered = resultFilter
-      ? mapped.filter(m => m.result === resultFilter)
-      : mapped;
+    const params = [teamRaw, format, season, tournament, result, pageSize, offset];
 
-    // Summary + facets
+    const [dataRes, countRes, seasonsRes, tournRes] = await Promise.all([
+      pool.query(DATA_SQL, params),
+      pool.query(COUNT_SUMMARY_SQL, [teamRaw, format, season, tournament, result]),
+      pool.query(FACETS_SEASONS_SQL, [teamRaw]),
+      pool.query(FACETS_TOURN_SQL, [teamRaw]),
+    ]);
+
+    const matches = dataRes.rows;
+    const total = countRes.rows[0]?.total || 0;
     const summary = {
-      played: filtered.length,
-      wins:   filtered.filter(m => m.result === "W").length,
-      losses: filtered.filter(m => m.result === "L").length,
-      draws:  filtered.filter(m => m.result === "D").length,
-      last5:  filtered.slice(0, 5).map(m => m.result),
+      played: total,
+      wins: countRes.rows[0]?.wins || 0,
+      losses: countRes.rows[0]?.losses || 0,
+      draws: countRes.rows[0]?.draws || 0,
+      last5: countRes.rows[0]?.last5 || [],
     };
-    const seasons     = [...new Set(mapped.map(m => m.season_year).filter(Boolean))].sort((a,b)=>b-a);
-    const tournaments = [...new Set(mapped.map(m => m.tournament).filter(Boolean))].sort();
-
-    // Pagination in JS (safe & simple)
-    const total = filtered.length;
-    const pageItems = filtered.slice(offset, offset + pageSize);
+    const facets = {
+      seasons: seasonsRes.rows.map(r => r.season_year).filter(v => v !== null),
+      tournaments: tournRes.rows.map(r => r.tournament_name).filter(Boolean),
+    };
 
     return res.json({
       team: teamRaw,
-      filters: { format, season, tournament, result: resultFilter ?? "All" },
-      facets: { seasons, tournaments },
+      filters: { format, season, tournament, result },
+      facets,
       summary,
-      page, pageSize, total,
-      matches: pageItems,
+      page,
+      pageSize,
+      total,
+      matches,
     });
   } catch (err) {
     console.error("teamMatchExplorerRoutes error:", err);
