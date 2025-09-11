@@ -135,10 +135,11 @@ app.use("/api/boards", attachAdminIfPresent, boardRoutes);
 app.use("/api/boards/analytics", boardAnalyticsRoutes);
 app.use("/api/squads", attachAdminIfPresent, squadRoutes);
 app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespace
-app.use("/api/tournaments", tournamentRoutes);
+// app.use("/api/tournaments", tournamentRoutes);
 app.use("/api", teamLeaderboardRoutes);
 app.use("/api/boards/hof", hallOfFameRoutes);
 app.use("/api/team-match-explorer", teamMatchExplorerRoutes);
+app.use("/api/api/team-match-explorer", teamMatchExplorerRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
