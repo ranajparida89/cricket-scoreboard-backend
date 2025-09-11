@@ -1,6 +1,3 @@
-// C:\cricket-scoreboard-backend\routes\teamMatchExplorerRoutes.js
-// Team Match Explorer API (ODI/T20) — simplified, regex-free (prod-safe)
-
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
@@ -25,37 +22,27 @@ router.get("/by-team", async (req, res) => {
     const pageSize = Math.min(100, Math.max(1, toInt(req.query.pageSize, 20)));
     const offset = (page - 1) * pageSize;
 
-    /**
-     * Notes:
-     * - We avoid regex. Result is derived as:
-     *   - Draw/NR if winner is NULL/empty or contains 'draw'/'no result'
-     *   - Win   if winner ILIKE '%<team>%'
-     *   - Else  Loss
-     * - Date is chosen safely even if match_date is text or empty.
-     */
+    // --------- DATA (paged) — no casts on match_date, only created_at ----------
     const DATA_SQL = `
       WITH base AS (
         SELECT
           m.id AS match_id,
-          COALESCE(NULLIF(m.match_date::text,'')::date, m.created_at::date) AS date,
+          m.created_at::timestamp AS date,                -- safe: always timestamp
           m.match_type AS format,
           m.tournament_name AS tournament,
           m.season_year,
           m.match_name,
-          -- opponent from selected team's perspective
+
           CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.team2 ELSE m.team1 END AS opponent,
 
-          -- selected team innings (primary ODI/T20 columns)
           CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.runs1    ELSE m.runs2    END AS team_runs,
           CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.wickets1 ELSE m.wickets2 END AS team_wkts,
           CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.overs1   ELSE m.overs2   END AS team_overs,
 
-          -- opponent innings
           CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.runs2    ELSE m.runs1    END AS opp_runs,
           CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.wickets2 ELSE m.wickets1 END AS opp_wkts,
           CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.overs2   ELSE m.overs1   END AS opp_overs,
 
-          -- result from selected team's perspective (regex-free)
           CASE
             WHEN m.winner IS NULL OR btrim(m.winner) = '' OR m.winner ILIKE '%draw%' OR m.winner ILIKE '%no result%' THEN 'D'
             WHEN m.winner ILIKE '%' || $1 || '%' THEN 'W'
@@ -65,14 +52,14 @@ router.get("/by-team", async (req, res) => {
         WHERE
           (btrim(lower(m.team1)) = btrim(lower($1)) OR btrim(lower(m.team2)) = btrim(lower($1)))
           AND ($2 = 'All' OR lower(m.match_type) = lower($2))
-          AND ($3::int IS NULL OR m.season_year = $3)
+          AND ($3::int IS NULL OR m.season_year = $3)           -- season_year is integer in your table
           AND ($4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4)))
       ),
       filtered AS (
         SELECT * FROM base
         WHERE (
           $5 = 'All'
-          OR ($5 = 'NR' AND result = 'D')  -- treat NR as Draw
+          OR ($5 = 'NR' AND result = 'D')
           OR result = $5
         )
       )
@@ -82,10 +69,11 @@ router.get("/by-team", async (req, res) => {
       LIMIT $6 OFFSET $7;
     `;
 
+    // --------- SUMMARY (counts + last5) ----------
     const COUNT_SUMMARY_SQL = `
       WITH base AS (
         SELECT
-          COALESCE(NULLIF(m.match_date::text,'')::date, m.created_at::date) AS date,
+          m.created_at::timestamp AS date,
           CASE
             WHEN m.winner IS NULL OR btrim(m.winner) = '' OR m.winner ILIKE '%draw%' OR m.winner ILIKE '%no result%' THEN 'D'
             WHEN m.winner ILIKE '%' || $1 || '%' THEN 'W'
@@ -156,7 +144,7 @@ router.get("/by-team", async (req, res) => {
       tournaments: tournRes.rows.map(r => r.tournament_name).filter(Boolean),
     };
 
-    return res.json({
+    res.json({
       team: teamRaw,
       filters: { format, season, tournament, result },
       facets,
@@ -167,7 +155,7 @@ router.get("/by-team", async (req, res) => {
       matches,
     });
   } catch (err) {
-    console.error("teamMatchExplorerRoutes error:", err); // will print real PG error in logs
+    console.error("teamMatchExplorerRoutes error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
