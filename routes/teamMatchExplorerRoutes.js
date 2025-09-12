@@ -1,3 +1,4 @@
+// routes/teamMatchExplorerRoutes.js
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
@@ -13,7 +14,7 @@ router.get("/by-team", async (req, res) => {
     const teamRaw = norm(req.query.team);
     if (!teamRaw) return res.status(400).json({ error: "team is required" });
 
-    const format = norm(req.query.format || "All");           // 'All' | 'ODI' | 'T20'
+    const format = norm(req.query.format || "All");  // 'All' | 'ODI' | 'T20'
     const season = req.query.season ? toInt(req.query.season, null) : null;
     const tournament = req.query.tournament ? norm(req.query.tournament) : null;
     const result = (req.query.result || "All").toUpperCase(); // 'All' | 'W' | 'L' | 'D' | 'NR'
@@ -22,76 +23,89 @@ router.get("/by-team", async (req, res) => {
     const pageSize = Math.min(100, Math.max(1, toInt(req.query.pageSize, 20)));
     const offset = (page - 1) * pageSize;
 
-    // --------- DATA (paged) — no casts on match_date, only created_at ----------
+    // ---------- DATA (paged) ----------
     const DATA_SQL = `
       WITH base AS (
         SELECT
           m.id AS match_id,
-          m.created_at::timestamp AS date,                -- safe: always timestamp
+          -- use created_at as the ordering timestamp (safe)
+          COALESCE(m.created_at::timestamp, now()) AS created_ts,
+          -- plain 'YYYY-MM-DD' string for display
+          to_char(COALESCE(m.created_at::timestamp, now()), 'YYYY-MM-DD') AS date,
           m.match_type AS format,
           m.tournament_name AS tournament,
           m.season_year,
           m.match_name,
 
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.team2 ELSE m.team1 END AS opponent,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower(CAST($1 AS text))) THEN m.team2 ELSE m.team1 END AS opponent,
 
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.runs1    ELSE m.runs2    END AS team_runs,
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.wickets1 ELSE m.wickets2 END AS team_wkts,
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.overs1   ELSE m.overs2   END AS team_overs,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower(CAST($1 AS text))) THEN m.runs1    ELSE m.runs2    END AS team_runs,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower(CAST($1 AS text))) THEN m.wickets1 ELSE m.wickets2 END AS team_wkts,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower(CAST($1 AS text))) THEN m.overs1   ELSE m.overs2   END AS team_overs,
 
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.runs2    ELSE m.runs1    END AS opp_runs,
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.wickets2 ELSE m.wickets1 END AS opp_wkts,
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.overs2   ELSE m.overs1   END AS opp_overs,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower(CAST($1 AS text))) THEN m.runs2    ELSE m.runs1    END AS opp_runs,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower(CAST($1 AS text))) THEN m.wickets2 ELSE m.wickets1 END AS opp_wkts,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower(CAST($1 AS text))) THEN m.overs2   ELSE m.overs1   END AS opp_overs,
 
           CASE
-            WHEN m.winner IS NULL OR btrim(m.winner) = '' OR m.winner ILIKE '%draw%' OR m.winner ILIKE '%no result%' THEN 'D'
-            WHEN m.winner ILIKE '%' || $1 || '%' THEN 'W'
+            WHEN m.winner IS NULL OR btrim(m.winner) = ''
+                 OR position('draw' in lower(m.winner)) > 0
+                 OR position('no result' in lower(m.winner)) > 0
+              THEN 'D'
+            WHEN position(lower(CAST($1 AS text)) in lower(m.winner)) > 0
+              THEN 'W'
             ELSE 'L'
           END AS result
         FROM match_history m
         WHERE
-          (btrim(lower(m.team1)) = btrim(lower($1)) OR btrim(lower(m.team2)) = btrim(lower($1)))
-          AND ($2 = 'All' OR lower(m.match_type) = lower($2))
-          AND ($3::int IS NULL OR m.season_year = $3)           -- season_year is integer in your table
-          AND ($4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4)))
+          (btrim(lower(m.team1)) = btrim(lower(CAST($1 AS text)))
+           OR btrim(lower(m.team2)) = btrim(lower(CAST($1 AS text))))
+          AND ($2::text = 'All' OR lower(m.match_type) = lower($2::text))
+          AND ($3::int IS NULL OR m.season_year = $3::int)
+          AND ($4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4::text)))
       ),
       filtered AS (
         SELECT * FROM base
         WHERE (
-          $5 = 'All'
-          OR ($5 = 'NR' AND result = 'D')
-          OR result = $5
+          $5::text = 'All'
+          OR ($5::text = 'NR' AND result = 'D')
+          OR result = $5::text
         )
       )
       SELECT *
       FROM filtered
-      ORDER BY date DESC NULLS LAST
+      ORDER BY created_ts DESC
       LIMIT $6 OFFSET $7;
     `;
 
-    // --------- SUMMARY (counts + last5) ----------
+    // ---------- SUMMARY (counts + last5) ----------
     const COUNT_SUMMARY_SQL = `
       WITH base AS (
         SELECT
-          m.created_at::timestamp AS date,
+          COALESCE(m.created_at::timestamp, now()) AS created_ts,
           CASE
-            WHEN m.winner IS NULL OR btrim(m.winner) = '' OR m.winner ILIKE '%draw%' OR m.winner ILIKE '%no result%' THEN 'D'
-            WHEN m.winner ILIKE '%' || $1 || '%' THEN 'W'
+            WHEN m.winner IS NULL OR btrim(m.winner) = ''
+                 OR position('draw' in lower(m.winner)) > 0
+                 OR position('no result' in lower(m.winner)) > 0
+              THEN 'D'
+            WHEN position(lower(CAST($1 AS text)) in lower(m.winner)) > 0
+              THEN 'W'
             ELSE 'L'
           END AS result
         FROM match_history m
         WHERE
-          (btrim(lower(m.team1)) = btrim(lower($1)) OR btrim(lower(m.team2)) = btrim(lower($1)))
-          AND ($2 = 'All' OR lower(m.match_type) = lower($2))
-          AND ($3::int IS NULL OR m.season_year = $3)
-          AND ($4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4)))
+          (btrim(lower(m.team1)) = btrim(lower(CAST($1 AS text)))
+           OR btrim(lower(m.team2)) = btrim(lower(CAST($1 AS text))))
+          AND ($2::text = 'All' OR lower(m.match_type) = lower($2::text))
+          AND ($3::int IS NULL OR m.season_year = $3::int)
+          AND ($4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4::text)))
       ),
       filtered AS (
         SELECT * FROM base
         WHERE (
-          $5 = 'All'
-          OR ($5 = 'NR' AND result = 'D')
-          OR result = $5
+          $5::text = 'All'
+          OR ($5::text = 'NR' AND result = 'D')
+          OR result = $5::text
         )
       )
       SELECT
@@ -101,7 +115,7 @@ router.get("/by-team", async (req, res) => {
         COUNT(*) FILTER (WHERE result = 'D')::int         AS draws,
         COALESCE(
           (SELECT array_agg(result) FROM (
-             SELECT result FROM filtered ORDER BY date DESC NULLS LAST LIMIT 5
+             SELECT result FROM filtered ORDER BY created_ts DESC LIMIT 5
            ) s),
           ARRAY[]::text[]
         ) AS last5;
@@ -110,14 +124,16 @@ router.get("/by-team", async (req, res) => {
     const FACETS_SEASONS_SQL = `
       SELECT DISTINCT season_year
       FROM match_history
-      WHERE btrim(lower(team1)) = btrim(lower($1)) OR btrim(lower(team2)) = btrim(lower($1))
+      WHERE btrim(lower(team1)) = btrim(lower(CAST($1 AS text)))
+         OR btrim(lower(team2)) = btrim(lower(CAST($1 AS text)))
       ORDER BY season_year DESC NULLS LAST;
     `;
 
     const FACETS_TOURN_SQL = `
       SELECT DISTINCT tournament_name
       FROM match_history
-      WHERE btrim(lower(team1)) = btrim(lower($1)) OR btrim(lower(team2)) = btrim(lower($1))
+      WHERE btrim(lower(team1)) = btrim(lower(CAST($1 AS text)))
+         OR btrim(lower(team2)) = btrim(lower(CAST($1 AS text)))
       ORDER BY tournament_name ASC NULLS LAST;
     `;
 

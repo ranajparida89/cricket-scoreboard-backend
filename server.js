@@ -139,7 +139,6 @@ app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespac
 app.use("/api", teamLeaderboardRoutes);
 app.use("/api/boards/hof", hallOfFameRoutes);
 app.use("/api/team-match-explorer", teamMatchExplorerRoutes);
-app.use("/api/api/team-match-explorer", teamMatchExplorerRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
