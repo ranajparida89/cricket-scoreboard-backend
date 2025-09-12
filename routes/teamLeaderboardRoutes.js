@@ -1,7 +1,6 @@
 // routes/teamLeaderboardRoutes.js
-// 1) Existing leaderboard endpoint (unchanged behavior)
-// 2) NEW: /api/teams/explorer — returns paged matches + summary for a team
-//    Uses positional SQL params only (the version you tested in psql).
+// 1) /api/teams/leaderboard  – existing leaderboard (unchanged behavior)
+// 2) /api/teams/explorer     – simplified, positional-params-only
 
 const express = require("express");
 const router = express.Router();
@@ -69,120 +68,102 @@ router.get("/teams/leaderboard", async (req, res) => {
   }
 });
 
-// ======================= 2) Team Match Explorer =======================
+// ======================= 2) Team Match Explorer (simplified) =======================
 // GET /api/teams/explorer?team=South%20Africa&format=All&result=All&page=1&pageSize=20
 router.get("/teams/explorer", async (req, res) => {
   try {
     const team = norm(req.query.team);
     if (!team) return res.status(400).json({ error: "team is required" });
 
-    const format     = norm(req.query.format || "All");            // 'All' | 'ODI' | 'T20'
+    const format     = norm(req.query.format || "All");           // 'All' | 'ODI' | 'T20'
     const season     = req.query.season ? Number(req.query.season) : null;
     const tournament = req.query.tournament ? norm(req.query.tournament) : null;
-    const result     = (req.query.result || "All").toUpperCase();  // 'All' | 'W' | 'L' | 'D' | 'NR'
+    const result     = (req.query.result || "All").toUpperCase(); // 'All' | 'W' | 'L' | 'D' | 'NR'
     const page       = Math.max(1, toInt(req.query.page, 1));
     const pageSize   = Math.min(100, Math.max(1, toInt(req.query.pageSize, 20)));
     const offset     = (page - 1) * pageSize;
 
+    // ---- DATA (paged) ----
     const DATA_SQL = `
       WITH base AS (
         SELECT
           m.id AS match_id,
-          COALESCE(m.match_date::timestamp, NOW())                          AS created_ts,
-          TO_CHAR(COALESCE(m.match_date::date, NOW()::date), 'YYYY-MM-DD')  AS date,
-          m.match_type                              AS format,
-          m.tournament_name                         AS tournament,
-          m.season_year                             AS season_year,
-          m.match_name                              AS match_name,
+          COALESCE(m.match_date::timestamp, NOW()) AS created_ts,
+          TO_CHAR(COALESCE(m.match_date::date, NOW()::date), 'YYYY-MM-DD') AS date,
+          m.match_type AS format,
+          m.tournament_name AS tournament,
+          m.season_year,
+          m.match_name,
 
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1))
-               THEN m.team2 ELSE m.team1 END        AS opponent,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.team2 ELSE m.team1 END AS opponent,
 
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1))
-               THEN m.runs1 ELSE m.runs2 END        AS team_runs,
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1))
-               THEN m.wickets1 ELSE m.wickets2 END  AS team_wkts,
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1))
-               THEN m.overs1 ELSE m.overs2 END      AS team_overs,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.runs1    ELSE m.runs2    END AS team_runs,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.wickets1 ELSE m.wickets2 END AS team_wkts,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.overs1   ELSE m.overs2   END AS team_overs,
 
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1))
-               THEN m.runs2 ELSE m.runs1 END        AS opp_runs,
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1))
-               THEN m.wickets2 ELSE m.wickets1 END  AS opp_wkts,
-          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1))
-               THEN m.overs2 ELSE m.overs1 END      AS opp_overs,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.runs2    ELSE m.runs1    END AS opp_runs,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.wickets2 ELSE m.wickets1 END AS opp_wkts,
+          CASE WHEN btrim(lower(m.team1)) = btrim(lower($1)) THEN m.overs2   ELSE m.overs1   END AS opp_overs,
 
           CASE
-            WHEN COALESCE(btrim(m.winner), '') = ''                        THEN 'D'
-            WHEN position('draw'      in lower(COALESCE(m.winner,''))) > 0 THEN 'D'
-            WHEN position('no result' in lower(COALESCE(m.winner,''))) > 0 THEN 'D'
-            WHEN position(lower($1)   in lower(COALESCE(m.winner,''))) > 0 THEN 'W'
+            WHEN COALESCE(btrim(m.winner), '') = ''                         THEN 'D'
+            WHEN position('draw'       in lower(COALESCE(m.winner,''))) > 0 THEN 'D'
+            WHEN position('no result'  in lower(COALESCE(m.winner,''))) > 0 THEN 'D'
+            WHEN position(lower($1)    in lower(COALESCE(m.winner,''))) > 0 THEN 'W'
             ELSE 'L'
-          END AS result
+          END AS res_code
         FROM match_history m
         WHERE
           (btrim(lower(m.team1)) = btrim(lower($1)) OR btrim(lower(m.team2)) = btrim(lower($1)))
-          AND ( lower($2) = 'all'
-                OR replace(replace(lower(m.match_type), '-', ''), ' ', '')
-                   = replace(replace(lower($2),           '-', ''), ' ', '') )
-          AND ( $3::int  IS NULL OR m.season_year = $3::int )
-          AND ( $4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4)) )
-      ),
-      filtered AS (
-        SELECT * FROM base
-        WHERE (
-          $5 = 'ALL'
-          OR ($5 = 'NR' AND result = 'D')
-          OR result = $5
-        )
+          AND ($2 = 'All' OR lower(m.match_type) = lower($2))
+          AND ($3::int  IS NULL OR m.season_year = $3::int)
+          AND ($4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4)))
       )
       SELECT
         match_id, date, format, tournament, season_year, match_name, opponent,
-        result, team_runs, team_wkts, team_overs, opp_runs, opp_wkts, opp_overs
-      FROM filtered
+        res_code AS result,
+        team_runs, team_wkts, team_overs,
+        opp_runs,  opp_wkts,  opp_overs
+      FROM base
+      WHERE ($5 = 'ALL' OR ($5 = 'NR' AND res_code = 'D') OR res_code = $5)
       ORDER BY created_ts DESC
       LIMIT $6::int OFFSET $7::int;
     `;
 
+    // ---- SUMMARY ----
     const SUMMARY_SQL = `
       WITH base AS (
         SELECT
           COALESCE(m.match_date::timestamp, NOW()) AS created_ts,
-          m.match_type                              AS format,
           CASE
-            WHEN COALESCE(btrim(m.winner), '') = ''                        THEN 'D'
-            WHEN position('draw'      in lower(COALESCE(m.winner,''))) > 0 THEN 'D'
-            WHEN position('no result' in lower(COALESCE(m.winner,''))) > 0 THEN 'D'
-            WHEN position(lower($1)   in lower(COALESCE(m.winner,''))) > 0 THEN 'W'
+            WHEN COALESCE(btrim(m.winner), '') = ''                         THEN 'D'
+            WHEN position('draw'       in lower(COALESCE(m.winner,''))) > 0 THEN 'D'
+            WHEN position('no result'  in lower(COALESCE(m.winner,''))) > 0 THEN 'D'
+            WHEN position(lower($1)    in lower(COALESCE(m.winner,''))) > 0 THEN 'W'
             ELSE 'L'
-          END AS result
+          END AS res_code
         FROM match_history m
         WHERE
           (btrim(lower(m.team1)) = btrim(lower($1)) OR btrim(lower(m.team2)) = btrim(lower($1)))
-          AND ( lower($2) = 'all'
-                OR replace(replace(lower(m.match_type), '-', ''), ' ', '')
-                   = replace(replace(lower($2),           '-', ''), ' ', '') )
-          AND ( $3::int  IS NULL OR m.season_year = $3::int )
-          AND ( $4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4)) )
-      ),
-      filtered AS (
-        SELECT * FROM base
-        WHERE (
-          $5 = 'ALL'
-          OR ($5 = 'NR' AND result = 'D')
-          OR result = $5
-        )
+          AND ($2 = 'All' OR lower(m.match_type) = lower($2))
+          AND ($3::int  IS NULL OR m.season_year = $3::int)
+          AND ($4::text IS NULL OR btrim(lower(m.tournament_name)) = btrim(lower($4)))
       )
       SELECT
-        COUNT(*)::int                    AS total,
-        SUM((result = 'W')::int)         AS wins,
-        SUM((result = 'L')::int)         AS losses,
-        SUM((result = 'D')::int)         AS draws,
-        ARRAY(SELECT result FROM filtered
-              ORDER BY created_ts DESC
-              LIMIT 5)                   AS last5;
+        COUNT(*)::int              AS total,
+        SUM((res_code = 'W')::int) AS wins,
+        SUM((res_code = 'L')::int) AS losses,
+        SUM((res_code = 'D')::int) AS draws,
+        ARRAY(
+          SELECT res_code FROM base
+          ORDER BY created_ts DESC
+          LIMIT 5
+        )                          AS last5
+      FROM base
+      WHERE ($5 = 'ALL' OR ($5 = 'NR' AND res_code = 'D') OR res_code = $5);
     `;
 
+    // ---- FACETS ----
     const FACETS_SEASONS_SQL = `
       SELECT DISTINCT season_year
       FROM match_history
@@ -208,7 +189,7 @@ router.get("/teams/explorer", async (req, res) => {
       pool.query(FACETS_TOURN_SQL,   [team]),
     ]);
 
-    const s = sumRes.rows[0] || { total: 0, wins: 0, losses: 0, draws: 0, last5: [] };
+    const sum = sumRes.rows[0] || { total: 0, wins: 0, losses: 0, draws: 0, last5: [] };
 
     res.json({
       team,
@@ -218,13 +199,31 @@ router.get("/teams/explorer", async (req, res) => {
         tournaments: tournRes.rows.map(r => r.tournament_name).filter(Boolean),
       },
       summary: {
-        played: s.total, wins: s.wins, losses: s.losses, draws: s.draws, last5: s.last5 || [],
+        played: sum.total,
+        wins:   sum.wins,
+        losses: sum.losses,
+        draws:  sum.draws,
+        last5:  sum.last5 || [],
       },
-      page, pageSize, total: s.total,
+      page,
+      pageSize,
+      total: sum.total,
       matches: dataRes.rows,
     });
   } catch (err) {
-    console.error("❌ /teams/explorer error:", err);
+    console.error("❌ /teams/explorer error:", {
+      msg: err.message,
+      stack: err.stack,
+      params: {
+        team: req.query.team,
+        format: req.query.format,
+        result: req.query.result,
+        season: req.query.season,
+        tournament: req.query.tournament,
+        page: req.query.page,
+        pageSize: req.query.pageSize,
+      },
+    });
     res.status(500).json({ error: "Internal server error" });
   }
 });
