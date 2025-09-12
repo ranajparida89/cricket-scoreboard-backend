@@ -44,8 +44,8 @@ router.get("/by-team", async (req, res) => {
 
           CASE
             WHEN COALESCE(btrim(m.winner), '') = ''
-                 OR position('draw' in lower(COALESCE(m.winner,''))) > 0
-                 OR position('no result' in lower(COALESCE(m.winner,''))) > 0
+              OR position('draw' in lower(COALESCE(m.winner,''))) > 0
+              OR position('no result' in lower(COALESCE(m.winner,''))) > 0
               THEN 'D'
             WHEN position(lower($1::text) in lower(COALESCE(m.winner,''))) > 0
               THEN 'W'
@@ -73,15 +73,15 @@ router.get("/by-team", async (req, res) => {
       LIMIT $6::int OFFSET $7::int;
     `;
 
-    // ---------- SUMMARY ----------
+    // ---------- SUMMARY (FIX: add FROM filtered) ----------
     const COUNT_SUMMARY_SQL = `
       WITH base AS (
         SELECT
           COALESCE(m.created_at::timestamp, now()) AS created_ts,
           CASE
             WHEN COALESCE(btrim(m.winner), '') = ''
-                 OR position('draw' in lower(COALESCE(m.winner,''))) > 0
-                 OR position('no result' in lower(COALESCE(m.winner,''))) > 0
+              OR position('draw' in lower(COALESCE(m.winner,''))) > 0
+              OR position('no result' in lower(COALESCE(m.winner,''))) > 0
               THEN 'D'
             WHEN position(lower($1::text) in lower(COALESCE(m.winner,''))) > 0
               THEN 'W'
@@ -113,7 +113,8 @@ router.get("/by-team", async (req, res) => {
              SELECT result FROM filtered ORDER BY created_ts DESC LIMIT 5
            ) s),
           ARRAY[]::text[]
-        ) AS last5;
+        ) AS last5
+      FROM filtered;     -- <<< THIS WAS MISSING
     `;
 
     const FACETS_SEASONS_SQL = `
