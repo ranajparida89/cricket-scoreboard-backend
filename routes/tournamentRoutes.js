@@ -9,7 +9,7 @@ const pool = require("../db");
 const norm = (s) => (s ?? "").toString().trim();
 
 /**
- * NEW: GET /api/tournaments/filters?match_type=All|ODI|T20
+ * GET /api/tournaments/filters?match_type=All|ODI|T20
  * Returns distinct tournament names and years from match_history.
  */
 router.get("/filters", async (req, res) => {
@@ -196,7 +196,7 @@ router.get("/leaderboard", async (req, res) => {
           -
           (SUM(runs_against)::decimal/NULLIF(SUM(overs_bowled),0))
         , 2)                                              AS nrr,
-        COALESCE($2::text, '')                            AS tournament_name,  -- echo filters
+        COALESCE($2::text, '')                            AS tournament_name,
         COALESCE($3::int, 0)                              AS season_year
       FROM per_team
       GROUP BY team_key

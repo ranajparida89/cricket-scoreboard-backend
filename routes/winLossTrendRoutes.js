@@ -1,169 +1,180 @@
 // routes/winLossTrendRoutes.js
+// Returns last 10 results (Win/Loss/Draw/No Result) for a user's team across ODI/T20 (match_history) and Test (test_match_results)
 
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 
-// Helper: ODI/T20 result parsing
+// ---------- Helpers ----------
+const norm = (s) => (s ?? '').toString().trim();
+const lnorm = (s) => norm(s).toLowerCase();
+
 function parseOdiT20Result(winnerString, teamName, opponentName) {
-  if (!winnerString) return 'No Result';
-  const winnerLower = winnerString.toLowerCase();
-  if (winnerLower.includes('draw') || winnerLower.includes('tie')) return 'Draw';
-  if (winnerLower.includes(teamName.toLowerCase())) return 'Win';
-  if (winnerLower.includes(opponentName.toLowerCase())) return 'Loss';
+  const w = lnorm(winnerString);
+  if (!w) return 'No Result';
+  if (w.includes('draw') || w.includes('match draw') || w.includes('match drawn') || w.includes('tie')) return 'Draw';
+  if (w.includes(lnorm(teamName)))   return 'Win';
+  if (w.includes(lnorm(opponentName))) return 'Loss';
   return 'No Result';
 }
 
 router.get('/', async (req, res) => {
   try {
-    const teamName = req.query.team_name;
-    const matchType = req.query.match_type || "All";
-    const userId = req.query.user_id; // 👈 NEW LINE
+    const teamName = norm(req.query.team_name);
+    const matchType = (req.query.match_type || 'All').trim();
+    const userId = Number.parseInt(req.query.user_id, 10);
+    const LIMIT = 10;
 
-    if (!teamName) return res.status(400).json({ error: "team_name is required" });
-    if (!userId) return res.status(400).json({ error: "user_id is required" }); // 👈 NEW VALIDATION
+    if (!teamName) return res.status(400).json({ error: 'team_name is required' });
+    if (!userId || Number.isNaN(userId)) return res.status(400).json({ error: 'user_id is required' });
 
     let allMatches = [];
 
-    if (matchType === "All") {
-      // ODI/T20 (from match_history)
-      const odiT20Query = `
+    if (matchType === 'All') {
+      // ---------- ODI/T20 ----------
+      const odiT20Sql = `
         SELECT 
-          id as match_id,
+          id AS match_id,
           match_type,
           match_name,
           team1,
           team2,
           winner,
-          match_time as match_date
+          match_time AS match_date
         FROM match_history
-        WHERE (team1 = $1 OR team2 = $1) AND user_id = $2 -- 👈 FILTER BY user_id
+        WHERE (LOWER(TRIM(team1)) = LOWER(TRIM($1)) OR LOWER(TRIM(team2)) = LOWER(TRIM($1)))
+          AND user_id = $2
         ORDER BY match_time DESC
-        LIMIT 10
+        LIMIT $3
       `;
-      const { rows: odiT20Matches } = await pool.query(odiT20Query, [teamName, userId]);
-      const odiT20Data = odiT20Matches.map(row => {
-        const opponent = row.team1 === teamName ? row.team2 : row.team1;
+      const { rows: odiT20 } = await pool.query(odiT20Sql, [teamName, userId, LIMIT]);
+      const odiT20Data = odiT20.map(r => {
+        const isT1 = lnorm(r.team1) === lnorm(teamName);
+        const opponent = isT1 ? r.team2 : r.team1;
         return {
-          match_id: row.match_id,
-          match_type: row.match_type,
-          match_name: row.match_name,
+          match_id: r.match_id,
+          match_type: r.match_type,
+          match_name: r.match_name,
           opponent,
-          result: parseOdiT20Result(row.winner, teamName, opponent),
-          match_date: row.match_date
+          result: parseOdiT20Result(r.winner, teamName, opponent),
+          match_date: r.match_date
         };
       });
 
-      // Test (from test_match_results) - Add user_id filter **if you have user_id in that table**
-      const testQuery = `
+      // ---------- Test ----------
+      const testSql = `
         SELECT 
-          id as match_id,
-          match_type,
+          id AS match_id,
+          'Test'::text AS match_type,
           match_name,
           team1,
           team2,
           winner,
-          created_at as match_date
+          COALESCE(match_date::timestamp, created_at) AS match_date
         FROM test_match_results
-        WHERE (team1 = $1 OR team2 = $1) AND user_id = $2 -- 👈 FILTER BY user_id (if present)
-        ORDER BY created_at DESC
-        LIMIT 10
+        WHERE (LOWER(TRIM(team1)) = LOWER(TRIM($1)) OR LOWER(TRIM(team2)) = LOWER(TRIM($1)))
+          AND user_id = $2
+        ORDER BY COALESCE(match_date::timestamp, created_at) DESC
+        LIMIT $3
       `;
-      const { rows: testMatches } = await pool.query(testQuery, [teamName, userId]);
-      const testData = testMatches.map(row => {
-        const opponent = row.team1 === teamName ? row.team2 : row.team1;
-        let result;
-        if (!row.winner) result = 'No Result';
-        else if (row.winner.toLowerCase() === teamName.toLowerCase()) result = 'Win';
-        else if (row.winner.toLowerCase() === opponent.toLowerCase()) result = 'Loss';
-        else if (row.winner.toLowerCase().includes('draw') || row.winner.toLowerCase().includes('tie')) result = 'Draw';
-        else result = 'No Result';
+      const { rows: testRows } = await pool.query(testSql, [teamName, userId, LIMIT]);
+      const testData = testRows.map(r => {
+        const opponent = lnorm(r.team1) === lnorm(teamName) ? r.team2 : r.team1;
+        const w = lnorm(r.winner);
+        let result = 'No Result';
+        if (w) {
+          if (w === lnorm(teamName)) result = 'Win';
+          else if (w === lnorm(opponent)) result = 'Loss';
+          else if (w.includes('draw') || w.includes('match draw') || w.includes('match drawn') || w.includes('tie')) result = 'Draw';
+        }
         return {
-          match_id: row.match_id,
-          match_type: row.match_type,
-          match_name: row.match_name,
+          match_id: r.match_id,
+          match_type: 'Test',
+          match_name: r.match_name,
           opponent,
           result,
-          match_date: row.match_date
+          match_date: r.match_date
         };
       });
 
       allMatches = [...odiT20Data, ...testData];
       allMatches.sort((a, b) => new Date(b.match_date) - new Date(a.match_date));
-      allMatches = allMatches.slice(0, 10);
+      allMatches = allMatches.slice(0, LIMIT);
 
-    } else if (matchType === "Test") {
-      // Only Test
-      const testQuery = `
+    } else if (matchType === 'Test') {
+      // ---------- Only Test ----------
+      const sql = `
         SELECT 
-          id as match_id,
-          match_type,
+          id AS match_id,
           match_name,
           team1,
           team2,
           winner,
-          created_at as match_date
+          COALESCE(match_date::timestamp, created_at) AS match_date
         FROM test_match_results
-        WHERE (team1 = $1 OR team2 = $1) AND match_type = 'Test' AND user_id = $2 -- 👈 FILTER BY user_id
-        ORDER BY created_at DESC
-        LIMIT 10
+        WHERE (LOWER(TRIM(team1)) = LOWER(TRIM($1)) OR LOWER(TRIM(team2)) = LOWER(TRIM($1)))
+          AND user_id = $2
+          AND match_type = 'Test'
+        ORDER BY COALESCE(match_date::timestamp, created_at) DESC
+        LIMIT $3
       `;
-      const { rows: testMatches } = await pool.query(testQuery, [teamName, userId]);
-      allMatches = testMatches.map(row => {
-        const opponent = row.team1 === teamName ? row.team2 : row.team1;
-        let result;
-        if (!row.winner) result = 'No Result';
-        else if (row.winner.toLowerCase() === teamName.toLowerCase()) result = 'Win';
-        else if (row.winner.toLowerCase() === opponent.toLowerCase()) result = 'Loss';
-        else if (row.winner.toLowerCase().includes('draw') || row.winner.toLowerCase().includes('tie')) result = 'Draw';
-        else result = 'No Result';
+      const { rows } = await pool.query(sql, [teamName, userId, LIMIT]);
+      allMatches = rows.map(r => {
+        const opponent = lnorm(r.team1) === lnorm(teamName) ? r.team2 : r.team1;
+        const w = lnorm(r.winner);
+        let result = 'No Result';
+        if (w) {
+          if (w === lnorm(teamName)) result = 'Win';
+          else if (w === lnorm(opponent)) result = 'Loss';
+          else if (w.includes('draw') || w.includes('match draw') || w.includes('match drawn') || w.includes('tie')) result = 'Draw';
+        }
         return {
-          match_id: row.match_id,
-          match_type: row.match_type,
-          match_name: row.match_name,
+          match_id: r.match_id,
+          match_type: 'Test',
+          match_name: r.match_name,
           opponent,
           result,
-          match_date: row.match_date
+          match_date: r.match_date
         };
       });
 
     } else {
-      // Only ODI/T20
-      const odiT20Query = `
+      // ---------- Only ODI or T20 ----------
+      const sql = `
         SELECT 
-          id as match_id,
+          id AS match_id,
           match_type,
           match_name,
           team1,
           team2,
           winner,
-          match_time as match_date
+          match_time AS match_date
         FROM match_history
-        WHERE (team1 = $1 OR team2 = $1) AND match_type = $2 AND user_id = $3 -- 👈 FILTER BY user_id
+        WHERE (LOWER(TRIM(team1)) = LOWER(TRIM($1)) OR LOWER(TRIM(team2)) = LOWER(TRIM($1)))
+          AND match_type = $2
+          AND user_id = $3
         ORDER BY match_time DESC
-        LIMIT 10
+        LIMIT $4
       `;
-      const { rows: odiT20Matches } = await pool.query(odiT20Query, [teamName, matchType, userId]);
-      allMatches = odiT20Matches.map(row => {
-        const opponent = row.team1 === teamName ? row.team2 : row.team1;
+      const { rows } = await pool.query(sql, [teamName, matchType, userId, LIMIT]);
+      allMatches = rows.map(r => {
+        const isT1 = lnorm(r.team1) === lnorm(teamName);
+        const opponent = isT1 ? r.team2 : r.team1;
         return {
-          match_id: row.match_id,
-          match_type: row.match_type,
-          match_name: row.match_name,
+          match_id: r.match_id,
+          match_type: r.match_type,
+          match_name: r.match_name,
           opponent,
-          result: parseOdiT20Result(row.winner, teamName, opponent),
-          match_date: row.match_date
+          result: parseOdiT20Result(r.winner, teamName, opponent),
+          match_date: r.match_date
         };
       });
     }
 
-    res.json({
-      team_name: teamName,
-      data: allMatches
-    });
+    res.json({ team_name: teamName, data: allMatches });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error('WIN/LOSS TREND ERROR', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
