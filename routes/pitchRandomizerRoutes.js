@@ -1,5 +1,5 @@
 // C:\cricket-scoreboard-backend\routes\pitchRandomizerRoutes.js
-// [Ranaj Parida - Pitch Randomizer logging API with server-side duplicate detection]
+// [Ranaj Parida - Pitch Randomizer logging API with server-side duplicate detection + auto-trim to 10]
 
 const express = require("express");
 const router = express.Router();
@@ -35,7 +35,7 @@ router.post("/log", async (req, res) => {
   }
 
   try {
-    // ✅ Step 1: Check for duplicates (same user + match + match_type within 60 sec)
+    // ✅ Step 1: duplicate check (same user + same match + same match_type within 60 seconds)
     const dupCheckQuery = `
       SELECT created_at 
       FROM pitch_randomizer_logs
@@ -58,15 +58,15 @@ router.post("/log", async (req, res) => {
       }
     }
 
-    // ✅ Step 2: Insert new log with server-confirmed duplicate flag
+    // ✅ Step 2: insert
     const insertQuery = `
       INSERT INTO pitch_randomizer_logs
         (match_type, user_name, match_name, pitch_type, pitch_hardness, pitch_crack, pitch_age, is_duplicate, browser_fingerprint)
       VALUES
         ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-      RETURNING id, created_at;
+      RETURNING id, created_at
     `;
-    const values = [
+    const insertValues = [
       match_type,
       user_name,
       match_name,
@@ -77,13 +77,34 @@ router.post("/log", async (req, res) => {
       is_duplicate_final,
       browser_fingerprint || null,
     ];
-    const result = await pool.query(insertQuery, values);
+    const insertResult = await pool.query(insertQuery, insertValues);
+
+    const insertedId = insertResult.rows[0].id;
+    const insertedAt = insertResult.rows[0].created_at;
+
+    // ✅ Step 3: keep only 10 rows in DB
+    // logic: if total > 10 → delete everything except the latest inserted row
+    let historyCleared = false;
+    const countRes = await pool.query(
+      "SELECT COUNT(*)::int AS cnt FROM pitch_randomizer_logs"
+    );
+    const total = countRes.rows[0].cnt;
+
+    if (total > 10) {
+      // remove all other rows, keep only this one
+      await pool.query(
+        "DELETE FROM pitch_randomizer_logs WHERE id <> $1",
+        [insertedId]
+      );
+      historyCleared = true;
+    }
 
     return res.json({
       success: true,
-      id: result.rows[0].id,
-      created_at: result.rows[0].created_at,
-      is_duplicate: is_duplicate_final, // ✅ new field
+      id: insertedId,
+      created_at: insertedAt,
+      is_duplicate: is_duplicate_final,
+      history_cleared: historyCleared, // 👈 frontend will use this
     });
   } catch (err) {
     console.error("Error inserting pitch log:", err);
