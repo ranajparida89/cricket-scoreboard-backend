@@ -59,6 +59,7 @@ const tournamentRoutes = require("./routes/tournamentRoutes");
 const teamLeaderboardRoutes = require("./routes/teamLeaderboardRoutes");  // ✅ NEW
 const hallOfFameRoutes = require("./routes/hallOfFameRoutes");
 const teamMatchExplorerRoutes = require("./routes/teamMatchExplorerRoutes");
+const pitchRandomizerRoutes = require('./routes/pitchRandomizerRoutes'); // Randomizer
 
 const app = express();
 const server = http.createServer(app);
@@ -141,6 +142,7 @@ app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespac
 app.use("/api", teamLeaderboardRoutes);
 app.use("/api/boards/hof", hallOfFameRoutes);
 app.use("/api/team-match-explorer", teamMatchExplorerRoutes);
+app.use('/api/tools/pitch-randomizer', pitchRandomizerRoutes); // Randomizer
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
