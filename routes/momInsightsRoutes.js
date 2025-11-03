@@ -8,51 +8,82 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
-// small helper to trim
-const clean = (v) => (v ? v.toString().trim() : null);
+// small helper to trim and normalize empties
+const clean = (v) => {
+  if (v === null || v === undefined) return null;
+  const t = v.toString().trim();
+  if (!t || t.toLowerCase() === "null" || t.toLowerCase() === "undefined") return null;
+  return t;
+};
 
 /**
  * GET /api/mom-insights/meta
  * Returns distinct lists needed for dropdowns:
- *  - match_types → from your app it's basically ['T20','ODI','Test']
- *  - tournaments → DISTINCT from match_history + test_match_results
- *  - seasons     → DISTINCT season_year from both tables
+ *  - match_types → from actual data (T20/ODI from match_history, add Test if present in test_match_results)
+ *  - tournaments → DISTINCT from match_history + test_match_results, filtered for null/empty/"null"
+ *  - seasons     → DISTINCT season_year from both tables, filtered
  */
 router.get("/mom-insights/meta", async (req, res) => {
   try {
-    // match types are known, but we can still keep it dynamic
-    const matchTypes = ["T20", "ODI", "Test"];
+    // 1) formats from match_history
+    const mhFormats = await pool.query(`
+      SELECT DISTINCT match_type
+      FROM match_history
+      WHERE match_type IS NOT NULL AND match_type <> ''
+    `);
 
-    // distinct tournaments from both tables
-    const tournamentsQuery = `
+    // 2) check if there is at least one test MoM
+    const testHasMom = await pool.query(`
+      SELECT 1
+      FROM test_match_results
+      WHERE mom_player IS NOT NULL AND mom_player <> ''
+      LIMIT 1
+    `);
+
+    const matchTypeSet = new Set();
+    mhFormats.rows.forEach((r) => {
+      const v = clean(r.match_type);
+      if (v) matchTypeSet.add(v);
+    });
+    if (testHasMom.rows.length > 0) {
+      matchTypeSet.add("Test");
+    }
+    const match_types = Array.from(matchTypeSet).sort(); // e.g. ["ODI","T20","Test"]
+
+    // 3) tournaments from both tables
+    const tournamentsResult = await pool.query(`
       SELECT DISTINCT tournament_name
       FROM (
         SELECT tournament_name FROM match_history
         UNION ALL
         SELECT tournament_name FROM test_match_results
       ) t
-      WHERE tournament_name IS NOT NULL AND tournament_name <> ''
       ORDER BY tournament_name ASC
-    `;
-    const tournamentsResult = await pool.query(tournamentsQuery);
+    `);
 
-    // distinct seasons
-    const seasonsQuery = `
+    const tournaments = tournamentsResult.rows
+      .map((r) => clean(r.tournament_name))
+      .filter(Boolean); // remove null/empty/"null"
+
+    // 4) seasons from both tables
+    const seasonsResult = await pool.query(`
       SELECT DISTINCT season_year
       FROM (
         SELECT season_year FROM match_history
         UNION ALL
         SELECT season_year FROM test_match_results
       ) s
-      WHERE season_year IS NOT NULL AND season_year <> ''
       ORDER BY season_year DESC
-    `;
-    const seasonsResult = await pool.query(seasonsQuery);
+    `);
+
+    const seasons = seasonsResult.rows
+      .map((r) => clean(r.season_year))
+      .filter(Boolean);
 
     return res.json({
-      match_types: matchTypes,
-      tournaments: tournamentsResult.rows.map((r) => r.tournament_name),
-      seasons: seasonsResult.rows.map((r) => r.season_year),
+      match_types,
+      tournaments,
+      seasons,
     });
   } catch (err) {
     console.error("❌ /mom-insights/meta error:", err);
@@ -98,7 +129,7 @@ router.get("/mom-insights", async (req, res) => {
 
     const whereClause = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
 
-    // ✅ we union ODI/T20 + Test, normalize test's match_type to 'Test'
+    // ✅ union ODI/ODI from match_history + Test from test_match_results
     const sql = `
       SELECT 
         m.mom_player      AS player_name,
@@ -123,7 +154,6 @@ router.get("/mom-insights", async (req, res) => {
 
     const { rows } = await pool.query(sql, params);
 
-    // if no data, return empty structure
     if (!rows.length) {
       return res.json({ summary: [], records: [] });
     }
@@ -131,7 +161,7 @@ router.get("/mom-insights", async (req, res) => {
     // ✅ build player-wise summary
     const summaryMap = {};
     for (const row of rows) {
-      const key = row.player_name || "Unknown";
+      const key = clean(row.player_name) || "Unknown";
       if (!summaryMap[key]) {
         summaryMap[key] = {
           player: key,
@@ -141,8 +171,10 @@ router.get("/mom-insights", async (req, res) => {
         };
       }
       summaryMap[key].count += 1;
-      if (row.match_type) summaryMap[key].formats.add(row.match_type);
-      if (row.tournament_name) summaryMap[key].tournaments.add(row.tournament_name);
+      const fmt = clean(row.match_type);
+      const tour = clean(row.tournament_name);
+      if (fmt) summaryMap[key].formats.add(fmt);
+      if (tour) summaryMap[key].tournaments.add(tour);
     }
 
     const summary = Object.values(summaryMap)
@@ -152,7 +184,7 @@ router.get("/mom-insights", async (req, res) => {
         formats: Array.from(s.formats),
         tournaments: Array.from(s.tournaments),
       }))
-      .sort((a, b) => b.count - a.count); // highest first
+      .sort((a, b) => b.count - a.count);
 
     return res.json({
       summary,
