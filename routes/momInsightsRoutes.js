@@ -19,38 +19,32 @@ const clean = (v) => {
 /**
  * GET /api/mom-insights/meta
  * Returns distinct lists needed for dropdowns:
- *  - match_types → from actual data (T20/ODI from match_history, add Test if present in test_match_results)
- *  - tournaments → DISTINCT from match_history + test_match_results, filtered for null/empty/"null"
- *  - seasons     → DISTINCT season_year from both tables, filtered
+ *  - match_types → from actual data + always include "Test"
+ *  - tournaments → DISTINCT from match_history + test_match_results, cleaned
+ *  - seasons     → DISTINCT season_year from both tables, cleaned
  */
 router.get("/mom-insights/meta", async (req, res) => {
   try {
-    // 1) formats from match_history
+    // 1) formats from match_history (will give you T20 / ODI)
     const mhFormats = await pool.query(`
       SELECT DISTINCT match_type
       FROM match_history
       WHERE match_type IS NOT NULL AND match_type <> ''
     `);
 
-    // 2) check if there is at least one test MoM
-    const testHasMom = await pool.query(`
-      SELECT 1
-      FROM test_match_results
-      WHERE mom_player IS NOT NULL AND mom_player <> ''
-      LIMIT 1
-    `);
-
     const matchTypeSet = new Set();
+
     mhFormats.rows.forEach((r) => {
       const v = clean(r.match_type);
       if (v) matchTypeSet.add(v);
     });
-    if (testHasMom.rows.length > 0) {
-      matchTypeSet.add("Test");
-    }
+
+    // ✅ Always include Test, even if there is no MoM yet in test_match_results
+    matchTypeSet.add("Test");
+
     const match_types = Array.from(matchTypeSet).sort(); // e.g. ["ODI","T20","Test"]
 
-    // 3) tournaments from both tables
+    // 2) tournaments from both tables
     const tournamentsResult = await pool.query(`
       SELECT DISTINCT tournament_name
       FROM (
@@ -65,7 +59,7 @@ router.get("/mom-insights/meta", async (req, res) => {
       .map((r) => clean(r.tournament_name))
       .filter(Boolean); // remove null/empty/"null"
 
-    // 4) seasons from both tables
+    // 3) seasons from both tables
     const seasonsResult = await pool.query(`
       SELECT DISTINCT season_year
       FROM (
@@ -129,7 +123,7 @@ router.get("/mom-insights", async (req, res) => {
 
     const whereClause = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
 
-    // ✅ union ODI/ODI from match_history + Test from test_match_results
+    // ✅ union ODI/T20 from match_history + Test from test_match_results
     const sql = `
       SELECT 
         m.mom_player      AS player_name,
