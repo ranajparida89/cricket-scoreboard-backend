@@ -1,6 +1,7 @@
 // ✅ testMatchRoutes.js (Final Fix for Test Rankings)
 // ✅ [Ranaj Parida - 2025-04-15 | 11:55 PM] Ensures Test match inserts are visible in `teams` & `/ranking`
 // ✅ [2025-08-21 | Tournaments] Persist tournament_name, season_year, match_date into test_match_results
+// ✅ [2025-11-04 | MoM] Persist mom_player, mom_reason into test_match_results
 
 const express = require("express");
 const router = express.Router();
@@ -32,11 +33,19 @@ router.post("/test-match", async (req, res) => {
       // ✅ [TOURNAMENT] new fields (optional)
       tournament_name = null,
       season_year = null,
-      match_date = null
+      match_date = null,
+      // ✅ [MoM] new fields (required from UI)
+      mom_player = null,
+      mom_reason = null
     } = req.body;
 
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
       return res.status(400).json({ error: "Missing required fields." });
+    }
+
+    // ✅ MoM must be there (your UI makes it mandatory, keep backend strict)
+    if (!mom_player || !mom_reason) {
+      return res.status(400).json({ error: "Man of the Match and Reason are required." });
     }
 
     const oversFields = [overs1, overs2, overs1_2, overs2_2];
@@ -67,10 +76,11 @@ router.post("/test-match", async (req, res) => {
     const totalOvers2 = convertOversToDecimal(overs2) + convertOversToDecimal(overs2_2);
     const totalWickets2 = wickets2 + wickets2_2;
 
-    // ✅ 3. Insert into test_match_results (NOW including tournament fields)
+    // ✅ 3. Insert into test_match_results (NOW including tournament fields + MoM)
     const matchDateSafe = match_date || new Date().toISOString().slice(0,10);
 
     if (winner === "Draw") {
+      // draw → 2 rows (for both teams) — keep same pattern, just append MoM
       await pool.query(`
         INSERT INTO test_match_results (
           match_id, match_type, team1, team2, winner, points,
@@ -79,10 +89,11 @@ router.post("/test-match", async (req, res) => {
           runs1_2, overs1_2, wickets1_2,
           runs2_2, overs2_2, wickets2_2,
           total_overs_used, match_name, user_id,
-          tournament_name, season_year, match_date
+          tournament_name, season_year, match_date,
+          mom_player, mom_reason
         ) VALUES
-        ($1, $2, $3, $4, $5, 2, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23),
-        ($1, $2, $4, $3, $5, 2, $9, $10, $11, $6, $7, $8, $15, $16, $17, $12, $13, $14, $18, $19, $20, $21, $22, $23)
+        ($1, $2, $3, $4, $5, 2, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25),
+        ($1, $2, $4, $3, $5, 2, $9, $10, $11, $6, $7, $8, $15, $16, $17, $12, $13, $14, $18, $19, $20, $21, $22, $23, $24, $25)
       `, [
         match_id, match_type, team1, team2, winner,
         runs1, overs1, wickets1,
@@ -90,7 +101,8 @@ router.post("/test-match", async (req, res) => {
         runs1_2, overs1_2, wickets1_2,
         runs2_2, overs2_2, wickets2_2,
         total_overs_used, match_name?.toUpperCase(), user_id,
-        tournament_name, season_year, matchDateSafe
+        tournament_name, season_year, matchDateSafe,
+        mom_player, mom_reason
       ]);
     } else {
       await pool.query(`
@@ -101,20 +113,25 @@ router.post("/test-match", async (req, res) => {
           runs1_2, overs1_2, wickets1_2,
           runs2_2, overs2_2, wickets2_2,
           total_overs_used, match_name, user_id,
-          tournament_name, season_year, match_date
+          tournament_name, season_year, match_date,
+          mom_player, mom_reason
         ) VALUES (
           $1, $2, $3, $4, $5, $6,
           $7, $8, $9, $10, $11, $12,
           $13, $14, $15, $16, $17, $18,
           $19, $20, $21,
-          $22, $23, $24
+          $22, $23, $24,
+          $25, $26
         )
       `, [
         match_id, match_type, team1, team2, winner, points,
-        runs1, overs1, wickets1, runs2, overs2, wickets2,
-        runs1_2, overs1_2, wickets1_2, runs2_2, overs2_2, wickets2_2,
+        runs1, overs1, wickets1,
+        runs2, overs2, wickets2,
+        runs1_2, overs1_2, wickets1_2,
+        runs2_2, overs2_2, wickets2_2,
         total_overs_used, match_name?.toUpperCase(), user_id,
-        tournament_name, season_year, matchDateSafe
+        tournament_name, season_year, matchDateSafe,
+        mom_player, mom_reason
       ]);
     }
 

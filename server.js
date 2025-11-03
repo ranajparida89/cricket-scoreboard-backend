@@ -1,6 +1,7 @@
 // ✅ server.js (CrickEdge Backend - FIXED CORS)
 // ✅ [Updated by Ranaj Parida | 15-April-2025 15:06 pm IST | CORS support for custom domains crickedge.in]
 // ✅ [2025-08-21 | Tournaments] Persist tournament fields in match_history + mount tournamentRoutes
+// ✅ [2025-11-04 | MoM] Persist mom_player, mom_reason in match_history
 
 require("dotenv").config();
 const express = require("express");
@@ -215,8 +216,16 @@ app.post("/api/submit-result", async (req, res) => {
       // ✅ [TOURNAMENT] new fields
       tournament_name = null,
       season_year = null,
-      match_date = null
+      match_date = null,
+      // ✅ [MoM] new fields
+      mom_player = null,
+      mom_reason = null
     } = req.body;
+
+    // ✅ enforce MoM (frontend is sending)
+    if (!mom_player || !mom_reason) {
+      return res.status(400).json({ error: "Man of the Match and Reason are required." });
+    }
 
     const matchResult = await pool.query("SELECT * FROM matches WHERE id = $1", [match_id]);
     if (matchResult.rows.length === 0) return res.status(400).json({ error: "Invalid match_id" });
@@ -329,19 +338,20 @@ app.post("/api/submit-result", async (req, res) => {
       `, [team, match_id]);
     }
 
-    // ✅ Save to match_history  (NOW includes tournament fields)
+    // ✅ Save to match_history  (NOW includes tournament fields + MoM)
     const matchDateSafe = match_date || new Date().toISOString().slice(0,10);
     await pool.query(`
       INSERT INTO match_history 
-        (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner, user_id, match_date, tournament_name, season_year)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner, user_id, match_date, tournament_name, season_year, mom_player, mom_reason)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
     `, [
       match_name, match_type,
       team1, runs1, actualOvers1, wickets1,
       team2, runs2, actualOvers2, wickets2,
       winner, user_id,
       matchDateSafe,
-      tournament_name, season_year
+      tournament_name, season_year,
+      mom_player, mom_reason
     ]);
 
     io.emit("matchUpdate", { match_id, winner });
@@ -482,7 +492,6 @@ app.get("/api/match-history", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch match history" });
   }
 });
-
 
 
 // ✅ Start the backend server
