@@ -2,6 +2,7 @@
 // ✅ [Ranaj Parida - 2025-04-15 | 11:55 PM] Ensures Test match inserts are visible in `teams` & `/ranking`
 // ✅ [2025-08-21 | Tournaments] Persist tournament_name, season_year, match_date into test_match_results
 // ✅ [2025-11-04 | MoM] Persist mom_player, mom_reason into test_match_results
+// ✅ [2025-11-04 | Ranking Fix] Test leaderboard now sorts by WINS first, then POINTS
 
 const express = require("express");
 const router = express.Router();
@@ -19,14 +20,34 @@ const convertOversToDecimal = (overs) => {
   return parseInt(fullOvers) + parseInt(balls) / 6;
 };
 
+// small helper to normalize winner strings
+const isDrawLike = (val) => {
+  if (!val) return false;
+  const v = val.toString().trim().toLowerCase();
+  return v === "draw" || v === "match draw" || v === "match drawn" || v === "tie";
+};
+
 router.post("/test-match", async (req, res) => {
   try {
     const {
-      match_id, match_type, team1, team2, winner, points,
-      runs1, overs1, wickets1,
-      runs2, overs2, wickets2,
-      runs1_2, overs1_2, wickets1_2,
-      runs2_2, overs2_2, wickets2_2,
+      match_id,
+      match_type,
+      team1,
+      team2,
+      winner,
+      points,
+      runs1,
+      overs1,
+      wickets1,
+      runs2,
+      overs2,
+      wickets2,
+      runs1_2,
+      overs1_2,
+      wickets1_2,
+      runs2_2,
+      overs2_2,
+      wickets2_2,
       total_overs_used,
       match_name,
       user_id,
@@ -36,14 +57,14 @@ router.post("/test-match", async (req, res) => {
       match_date = null,
       // ✅ [MoM] new fields (required from UI)
       mom_player = null,
-      mom_reason = null
+      mom_reason = null,
     } = req.body;
 
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
       return res.status(400).json({ error: "Missing required fields." });
     }
 
-    // ✅ MoM must be there (your UI makes it mandatory, keep backend strict)
+    // ✅ MoM is mandatory for your UI
     if (!mom_player || !mom_reason) {
       return res.status(400).json({ error: "Man of the Match and Reason are required." });
     }
@@ -56,18 +77,24 @@ router.post("/test-match", async (req, res) => {
     // ✅ 1. Ensure match is stored in matches with correct match_type = Test
     const matchRow = await pool.query("SELECT match_type FROM matches WHERE id = $1", [match_id]);
     if (matchRow.rows.length === 0) {
-      await pool.query(`
+      await pool.query(
+        `
         INSERT INTO matches (id, match_name, match_type)
         VALUES ($1, $2, 'Test')
-      `, [match_id, match_name?.toUpperCase() || "TEST MATCH"]);
+      `,
+        [match_id, match_name?.toUpperCase() || "TEST MATCH"]
+      );
     } else if (matchRow.rows[0].match_type !== "Test") {
-      await pool.query(`
+      await pool.query(
+        `
         UPDATE matches SET match_type = 'Test', match_name = $2
         WHERE id = $1
-      `, [match_id, match_name?.toUpperCase() || "TEST MATCH"]);
+      `,
+        [match_id, match_name?.toUpperCase() || "TEST MATCH"]
+      );
     }
 
-    // ✅ 2. Combine innings
+    // ✅ 2. Combine innings (kept for future use)
     const totalRuns1 = runs1 + runs1_2;
     const totalOvers1 = convertOversToDecimal(overs1) + convertOversToDecimal(overs1_2);
     const totalWickets1 = wickets1 + wickets1_2;
@@ -77,11 +104,12 @@ router.post("/test-match", async (req, res) => {
     const totalWickets2 = wickets2 + wickets2_2;
 
     // ✅ 3. Insert into test_match_results (NOW including tournament fields + MoM)
-    const matchDateSafe = match_date || new Date().toISOString().slice(0,10);
+    const matchDateSafe = match_date || new Date().toISOString().slice(0, 10);
 
-    if (winner === "Draw") {
-      // draw → 2 rows (for both teams) — keep same pattern, just append MoM
-      await pool.query(`
+    if (isDrawLike(winner)) {
+      // draw → 2 rows (for both teams)
+      await pool.query(
+        `
         INSERT INTO test_match_results (
           match_id, match_type, team1, team2, winner, points,
           runs1, overs1, wickets1,
@@ -92,20 +120,56 @@ router.post("/test-match", async (req, res) => {
           tournament_name, season_year, match_date,
           mom_player, mom_reason
         ) VALUES
-        ($1, $2, $3, $4, $5, 2, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25),
-        ($1, $2, $4, $3, $5, 2, $9, $10, $11, $6, $7, $8, $15, $16, $17, $12, $13, $14, $18, $19, $20, $21, $22, $23, $24, $25)
-      `, [
-        match_id, match_type, team1, team2, winner,
-        runs1, overs1, wickets1,
-        runs2, overs2, wickets2,
-        runs1_2, overs1_2, wickets1_2,
-        runs2_2, overs2_2, wickets2_2,
-        total_overs_used, match_name?.toUpperCase(), user_id,
-        tournament_name, season_year, matchDateSafe,
-        mom_player, mom_reason
-      ]);
+        ($1, $2, $3, $4, 'Draw', 2,
+          $5, $6, $7,
+          $8, $9, $10,
+          $11, $12, $13,
+          $14, $15, $16,
+          $17, $18, $19,
+          $20, $21, $22,
+          $23, $24
+        ),
+        ($1, $2, $4, $3, 'Draw', 2,
+          $8, $9, $10,
+          $5, $6, $7,
+          $14, $15, $16,
+          $11, $12, $13,
+          $17, $18, $19,
+          $20, $21, $22,
+          $23, $24
+        )
+      `,
+        [
+          match_id,
+          match_type,
+          team1,
+          team2,
+          // numbers start
+          runs1,
+          overs1,
+          wickets1,
+          runs2,
+          overs2,
+          wickets2,
+          runs1_2,
+          overs1_2,
+          wickets1_2,
+          runs2_2,
+          overs2_2,
+          wickets2_2,
+          total_overs_used,
+          match_name?.toUpperCase(),
+          user_id,
+          tournament_name,
+          season_year,
+          matchDateSafe,
+          mom_player,
+          mom_reason,
+        ]
+      );
     } else {
-      await pool.query(`
+      await pool.query(
+        `
         INSERT INTO test_match_results (
           match_id, match_type, team1, team2, winner, points,
           runs1, overs1, wickets1,
@@ -117,30 +181,51 @@ router.post("/test-match", async (req, res) => {
           mom_player, mom_reason
         ) VALUES (
           $1, $2, $3, $4, $5, $6,
-          $7, $8, $9, $10, $11, $12,
-          $13, $14, $15, $16, $17, $18,
+          $7, $8, $9,
+          $10, $11, $12,
+          $13, $14, $15,
+          $16, $17, $18,
           $19, $20, $21,
           $22, $23, $24,
           $25, $26
         )
-      `, [
-        match_id, match_type, team1, team2, winner, points,
-        runs1, overs1, wickets1,
-        runs2, overs2, wickets2,
-        runs1_2, overs1_2, wickets1_2,
-        runs2_2, overs2_2, wickets2_2,
-        total_overs_used, match_name?.toUpperCase(), user_id,
-        tournament_name, season_year, matchDateSafe,
-        mom_player, mom_reason
-      ]);
+      `,
+        [
+          match_id,
+          match_type,
+          team1,
+          team2,
+          winner,
+          points,
+          runs1,
+          overs1,
+          wickets1,
+          runs2,
+          overs2,
+          wickets2,
+          runs1_2,
+          overs1_2,
+          wickets1_2,
+          runs2_2,
+          overs2_2,
+          wickets2_2,
+          total_overs_used,
+          match_name?.toUpperCase(),
+          user_id,
+          tournament_name,
+          season_year,
+          matchDateSafe,
+          mom_player,
+          mom_reason,
+        ]
+      );
     }
 
-    const message = winner === "Draw"
+    const message = isDrawLike(winner)
       ? "🤝 The match ended in a draw!"
       : `✅ ${winner} won the test match!`;
 
     res.json({ message });
-
   } catch (err) {
     console.error("❌ Test Match Submission Error:", err.message);
     res.status(500).json({ error: "Server error while submitting test match." });
@@ -174,32 +259,50 @@ router.get("/test-match-history", async (req, res) => {
   }
 });
 
-// ✅ Accurate Test rankings from test_match_results table
+/* ------------------------------------------------------------------
+   ✅ Accurate Test rankings from test_match_results table
+   ✅ NOW: order by WINS DESC, then POINTS DESC (your requirement)
+   We also handle 'draw', 'match draw', 'match drawn', 'tie'
+------------------------------------------------------------------- */
 router.get("/rankings/test", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT
-        team AS team_name,
-        COUNT(*) AS matches,
-        SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) AS wins,
-        SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) AS losses,
-        SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) AS draws,
-        (SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) * 12 +
-         SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) * 6 +
-         SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) * 4) AS points,
-        ROUND(
-          (SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) * 12 +
-           SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) * 6 +
-           SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) * 4)::decimal / COUNT(*),
-          2
-        ) AS rating
-      FROM (
+      WITH all_teams AS (
         SELECT team1 AS team, winner FROM test_match_results
         UNION ALL
         SELECT team2 AS team, winner FROM test_match_results
-      ) AS all_teams
-      GROUP BY team
-      ORDER BY points DESC
+      ),
+      agg AS (
+        SELECT
+          team AS team_name,
+          COUNT(*) AS matches,
+          SUM(CASE WHEN LOWER(winner) = LOWER(team) THEN 1 ELSE 0 END) AS wins,
+          SUM(
+            CASE
+              WHEN LOWER(winner) NOT IN ('draw','match draw','match drawn','tie')
+                   AND LOWER(winner) <> LOWER(team)
+              THEN 1 ELSE 0
+            END
+          ) AS losses,
+          SUM(
+            CASE
+              WHEN LOWER(winner) IN ('draw','match draw','match drawn','tie')
+              THEN 1 ELSE 0
+            END
+          ) AS draws
+        FROM all_teams
+        GROUP BY team
+      )
+      SELECT
+        team_name,
+        matches,
+        wins,
+        losses,
+        draws,
+        (wins * 12 + losses * 6 + draws * 4) AS points,
+        ROUND( (wins * 12 + losses * 6 + draws * 4)::decimal / NULLIF(matches,0), 2 ) AS rating
+      FROM agg
+      ORDER BY wins DESC, points DESC;
     `);
     res.json(result.rows);
   } catch (err) {
@@ -208,40 +311,53 @@ router.get("/rankings/test", async (req, res) => {
   }
 });
 
-// ✅ Test leaderboard (dense rank)
+/* ------------------------------------------------------------------
+   ✅ Test leaderboard (dense rank)
+   ✅ NOW: rank() over (wins desc, points desc)
+------------------------------------------------------------------- */
 router.get("/leaderboard/test", async (req, res) => {
   try {
     const result = await pool.query(`
-      WITH TEST_MATCH_LEADERBOARD AS (
+      WITH all_teams AS (
+        SELECT team1 AS team, winner FROM test_match_results
+        UNION ALL
+        SELECT team2 AS team, winner FROM test_match_results
+      ),
+      agg AS (
         SELECT
           team AS team_name,
           COUNT(*) AS matches,
-          SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) AS wins,
-          SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) AS losses,
-          SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) AS draws,
-          (SUM(CASE WHEN winner = team THEN 1 ELSE 0 END) * 12 +
-           SUM(CASE WHEN winner != team AND winner != 'Draw' THEN 1 ELSE 0 END) * 6 +
-           SUM(CASE WHEN winner = 'Draw' THEN 1 ELSE 0 END) * 4) AS points
-        FROM (
-          SELECT team1 AS team, winner FROM test_match_results
-          UNION ALL
-          SELECT team2 AS team, winner FROM test_match_results
-        ) AS all_teams
+          SUM(CASE WHEN LOWER(winner) = LOWER(team) THEN 1 ELSE 0 END) AS wins,
+          SUM(
+            CASE
+              WHEN LOWER(winner) NOT IN ('draw','match draw','match drawn','tie')
+                   AND LOWER(winner) <> LOWER(team)
+              THEN 1 ELSE 0
+            END
+          ) AS losses,
+          SUM(
+            CASE
+              WHEN LOWER(winner) IN ('draw','match draw','match drawn','tie')
+              THEN 1 ELSE 0
+            END
+          ) AS draws
+        FROM all_teams
         GROUP BY team
       )
       SELECT
-        DENSE_RANK() OVER(ORDER BY points DESC) AS rank,
+        DENSE_RANK() OVER (ORDER BY wins DESC, (wins * 12 + losses * 6 + draws * 4) DESC) AS rank,
         team_name,
         matches,
         wins,
         losses,
         draws,
-        points
-      FROM TEST_MATCH_LEADERBOARD
-      ORDER BY rank ASC;
+        (wins * 12 + losses * 6 + draws * 4) AS points
+      FROM agg
+      ORDER BY wins DESC, points DESC;
     `);
     res.json(result.rows);
   } catch (err) {
+    console.error("❌ Failed to load Test Match Leaderboard", err);
     res.status(500).json({ error: "Failed to load Test Match Leaderboard" });
   }
 });
