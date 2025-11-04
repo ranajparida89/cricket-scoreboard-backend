@@ -1,17 +1,19 @@
 // src/routes/performanceRoutes.js
-// Adds: GET /api/tournaments (distinct), tournament_name + season_year handling,
-// NEW: five-wicket haul persistence + fiveW counts endpoint.
+// ✅ Adds bulk endpoint
+// ✅ Merges Test 1st+2nd innings
+// ✅ Adds double_century
+// ✅ Keeps five-wicket counts endpoint
 
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
-// ---- helpers ----
+// ----------------- helpers -----------------
 const toInt = (v, d = 0) => {
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : d;
 };
-// DB constraint expects: 'ODI' | 'T20' | 'Test'
+
 const normType = (t) => {
   const raw = String(t || "");
   const up = raw.toUpperCase();
@@ -20,25 +22,40 @@ const normType = (t) => {
   if (up === "TEST" || raw === "Test") return "Test";
   return "ODI";
 };
+
+const YEAR_RE = /(19|20)\d{2}/;
+const extractYear = (s = "") => {
+  const m = String(s).match(YEAR_RE);
+  return m ? Number(m[0]) : null;
+};
+
+// 🆕 milestones with double century
+function deriveMilestones(score) {
+  const s = Number.isFinite(score) ? score : 0;
+  const res = {
+    fifties: 0,
+    hundreds: 0,
+    double_century: 0,
+  };
+
+  if (s >= 200) {
+    res.hundreds = Math.floor(s / 100); // 200 -> 2, 250 -> 2, 300 -> 3
+    res.double_century = 1;
+  } else if (s >= 100) {
+    res.hundreds = 1;
+  } else if (s >= 50) {
+    res.fifties = 1;
+  }
+
+  return res;
+}
+
 const getUserIdFromReq = (req) => {
   const h = req.header("x-user-id") || req.header("X-User-Id");
   if (h && /^\d+$/.test(String(h))) return parseInt(h, 10);
   const b = req.body?.user_id;
   if (b && /^\d+$/.test(String(b))) return parseInt(b, 10);
   return null;
-};
-function deriveMilestones(score) {
-  const s = Number.isFinite(score) ? score : 0;
-  if (s >= 50 && s < 100) return { fifties: 1, hundreds: 0 };
-  if (s >= 100 && s < 200) return { fifties: 0, hundreds: 1 };
-  if (s >= 200 && s < 300) return { fifties: 0, hundreds: 2 };
-  if (s >= 300)           return { fifties: 0, hundreds: Math.floor(s / 100) };
-  return { fifties: 0, hundreds: 0 };
-}
-const YEAR_RE = /(19|20)\d{2}/;
-const extractYear = (s = "") => {
-  const m = String(s).match(YEAR_RE);
-  return m ? Number(m[0]) : null;
 };
 
 function buildFiveWMessage({ wickets_taken, runs_given, against_team, match_type }) {
@@ -95,7 +112,7 @@ async function getDistinctTournaments(client) {
   return rows.map((r) => r.tournament_name);
 }
 
-// ===== NEW: tournaments dropdown =====
+// ===== tournaments =====
 router.get("/tournaments", async (req, res) => {
   try {
     const list = await getDistinctTournaments(pool);
@@ -106,193 +123,213 @@ router.get("/tournaments", async (req, res) => {
   }
 });
 
-/**
- * POST /api/player-performance
- * Keeps all your current logic + adds tournament_name & season_year and 5W haul handling.
- */
+// ---------- shared insert helper ----------
+async function insertOnePerformance(client, payload) {
+  // player
+  const pRes = await client.query(
+    `SELECT id, player_name, team_name, user_id
+       FROM players
+      WHERE id = $1`,
+    [payload.player_id]
+  );
+  if (pRes.rows.length === 0) {
+    const err = new Error("Player not found.");
+    err.statusCode = 404;
+    throw err;
+  }
+  const playerRow = pRes.rows[0];
+
+  // user_id
+  let userId = playerRow.user_id;
+  if (userId == null && payload.user_id) {
+    const uRes = await client.query(`SELECT 1 FROM users WHERE id = $1`, [payload.user_id]);
+    if (uRes.rows.length) {
+      await client.query(
+        `UPDATE players SET user_id = $1 WHERE id = $2 AND user_id IS NULL`,
+        [payload.user_id, playerRow.id]
+      );
+      userId = payload.user_id;
+    }
+  }
+  if (userId == null) {
+    const err = new Error("User ID not found for this player.");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // tournament + year
+  let tournament_name = payload.tournament_name || null;
+  if (!tournament_name) {
+    tournament_name = await lookupTournamentByMatch(client, {
+      match_id: payload.match_id,
+      match_name: payload.match_name,
+    });
+  }
+  let season_year =
+    payload.season_year ||
+    extractYear(tournament_name) ||
+    extractYear(payload.match_name) ||
+    null;
+
+  // milestones
+  const { fifties, hundreds, double_century } = deriveMilestones(payload.run_scored);
+
+  // 5W
+  let is_five_wicket_haul = false;
+  let bowling_milestone = null;
+  if (payload.wickets_taken >= 5) {
+    is_five_wicket_haul = true;
+    bowling_milestone =
+      payload.bowling_milestone ||
+      buildFiveWMessage({
+        wickets_taken: payload.wickets_taken,
+        runs_given: payload.runs_given,
+        against_team: payload.against_team,
+        match_type: payload.match_type,
+      });
+  }
+
+  const insert = await client.query(
+    `INSERT INTO player_performance
+      (match_name, player_id, team_name, match_type, against_team,
+       run_scored, balls_faced, wickets_taken, runs_given,
+       fifties, hundreds, double_century,
+       dismissed, user_id, tournament_name, season_year,
+       is_five_wicket_haul, bowling_milestone)
+     VALUES
+      ($1,$2,$3,$4,$5,
+       $6,$7,$8,$9,
+       $10,$11,$12,
+       $13,$14,$15,$16,
+       $17,$18)
+     RETURNING *`,
+    [
+      String(payload.match_name).trim(),
+      payload.player_id,
+      String(payload.team_name).trim(),
+      normType(payload.match_type),
+      String(payload.against_team).trim(),
+      toInt(payload.run_scored),
+      toInt(payload.balls_faced),
+      toInt(payload.wickets_taken),
+      toInt(payload.runs_given),
+      fifties,
+      hundreds,
+      double_century,
+      (payload.dismissed && String(payload.dismissed).trim()) || "Out",
+      toInt(userId),
+      tournament_name,
+      season_year,
+      is_five_wicket_haul,
+      bowling_milestone,
+    ]
+  );
+  return insert.rows[0];
+}
+
+// ===== single =====
 router.post("/player-performance", async (req, res) => {
   res.set("X-Handler", "performanceRoutes");
-  const {
-    match_name,
-    match_id,            // optional
-    player_id,
-    team_name,
-    match_type,
-    against_team,
-    run_scored,
-    balls_faced,
-    wickets_taken,
-    runs_given,
-    dismissed,           // "Out" | "Not Out"
-    tournament_name,     // optional — server can resolve
-    season_year,         // optional — server can resolve
-
-    // NEW (optional from client; server will enforce anyway)
-    is_five_wicket_haul,
-    bowling_milestone
-  } = req.body;
+  const body = req.body;
 
   try {
-    // 1) validate basics
-    if (!match_name || !player_id || !team_name || !match_type || !against_team) {
+    if (
+      !body.match_name ||
+      !body.player_id ||
+      !body.team_name ||
+      !body.match_type ||
+      !body.against_team
+    ) {
       return res.status(400).json({ message: "⚠️ Missing required fields." });
     }
 
-    // 2) load selected player row
-    const pRes = await pool.query(
-      `SELECT id, player_name, team_name, user_id
-         FROM players
-        WHERE id = $1`,
-      [player_id]
-    );
-    if (pRes.rows.length === 0) {
-      return res.status(404).json({ message: "❌ Player not found." });
-    }
-    const playerRow = pRes.rows[0];
-
-    // 3) resolve user_id
-    let userId = playerRow.user_id;
-    if (userId == null) {
-      const fb = await pool.query(
-        `SELECT user_id
-           FROM players
-          WHERE lower(player_name) = lower($1)
-            AND team_name = $2
-            AND user_id IS NOT NULL
-          ORDER BY created_at DESC
-          LIMIT 1`,
-        [playerRow.player_name, playerRow.team_name]
-      );
-      if (fb.rows.length) userId = fb.rows[0].user_id;
-    }
-    if (userId == null) {
-      const hdrUserId = getUserIdFromReq(req);
-      if (hdrUserId != null) {
-        const uRes = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [hdrUserId]);
-        if (uRes.rows.length) {
-          const upd = await pool.query(
-            `UPDATE players
-                SET user_id = $1
-              WHERE id = $2
-                AND user_id IS NULL
-            RETURNING user_id`,
-            [hdrUserId, playerRow.id]
-          );
-          if (upd.rows.length) userId = upd.rows[0].user_id;
-        }
-      }
-    }
-    if (userId == null) {
-      return res.status(404).json({ message: "User ID not found for this player." });
-    }
-    const uRes2 = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
-    if (uRes2.rows.length === 0) {
-      return res.status(404).json({ message: "Linked user does not exist." });
-    }
-
-    // 4) normalize payload
-    const payload = {
-      match_name: String(match_name).trim(),
-      match_id: match_id ? toInt(match_id) : null,
-      player_id: toInt(player_id),
-      team_name: String(team_name).trim(),
-      match_type: normType(match_type),
-      against_team: String(against_team).trim(),
-      run_scored: toInt(run_scored),
-      balls_faced: toInt(balls_faced),
-      wickets_taken: toInt(wickets_taken),
-      runs_given: toInt(runs_given),
-      fifties: 0,
-      hundreds: 0,
-      dismissed: (dismissed && String(dismissed).trim()) || "Out",
-      user_id: toInt(userId),
-      tournament_name: (tournament_name && String(tournament_name).trim()) || null,
-      season_year: season_year ? toInt(season_year) : null,
-
-      // NEW
-      is_five_wicket_haul: false,
-      bowling_milestone: (bowling_milestone && String(bowling_milestone).trim()) || null
-    };
-
-    // 5) derive batting milestones
-    const derived = deriveMilestones(payload.run_scored);
-    payload.fifties = derived.fifties;
-    payload.hundreds = derived.hundreds;
-
-    // 6) resolve tournament + year if missing
-    if (!payload.tournament_name) {
-      payload.tournament_name = await lookupTournamentByMatch(pool, {
-        match_id: payload.match_id,
-        match_name: payload.match_name,
-      });
-    }
-    if (!payload.season_year) {
-      payload.season_year =
-        extractYear(payload.tournament_name) ??
-        extractYear(payload.match_name) ??
-        null;
-    }
-
-    // 7) enforce five-wicket logic server-side
-    if (payload.wickets_taken >= 5) {
-      payload.is_five_wicket_haul = true;
-      if (!payload.bowling_milestone) {
-        payload.bowling_milestone = buildFiveWMessage({
-          wickets_taken: payload.wickets_taken,
-          runs_given: payload.runs_given,
-          against_team: payload.against_team,
-          match_type: payload.match_type,
-        });
-      }
-    } else {
-      payload.is_five_wicket_haul = false;
-      payload.bowling_milestone = null; // store null if not a 5W
-    }
-
-    // 8) insert — includes new columns
-    const insert = await pool.query(
-      `INSERT INTO player_performance
-        (match_name, player_id, team_name, match_type, against_team,
-         run_scored, balls_faced, wickets_taken, runs_given, fifties, hundreds,
-         dismissed, user_id, tournament_name, season_year,
-         is_five_wicket_haul, bowling_milestone)
-       VALUES
-        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-       RETURNING *`,
-      [
-        payload.match_name,
-        payload.player_id,
-        payload.team_name,
-        payload.match_type,
-        payload.against_team,
-        payload.run_scored,
-        payload.balls_faced,
-        payload.wickets_taken,
-        payload.runs_given,
-        payload.fifties,
-        payload.hundreds,
-        payload.dismissed,
-        payload.user_id,
-        payload.tournament_name,
-        payload.season_year,
-        payload.is_five_wicket_haul,
-        payload.bowling_milestone
-      ]
-    );
+    const row = await insertOnePerformance(pool, {
+      ...body,
+      user_id: getUserIdFromReq(req) ?? body.user_id,
+    });
 
     return res.status(201).json({
       message: "✅ Player performance saved successfully.",
-      data: insert.rows[0],
+      data: row,
     });
   } catch (err) {
     console.error("❌ Server error while saving performance:", err);
-    return res.status(500).json({ message: "❌ Server error occurred." });
+    return res
+      .status(err.statusCode || 500)
+      .json({ message: err.message || "❌ Server error occurred." });
   }
 });
 
-/**
- * GET /api/player-performance
- */
+// ===== bulk =====
+router.post("/player-performance/bulk", async (req, res) => {
+  const { match, performances } = req.body || {};
+  if (!match || !Array.isArray(performances) || performances.length === 0) {
+    return res.status(400).json({ message: "match + performances[] required." });
+  }
+  if (!match.match_name || !match.match_type) {
+    return res.status(400).json({ message: "match_name and match_type are required in match." });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const mType = normType(match.match_type);
+    const aggregated = new Map();
+
+    for (const perf of performances) {
+      if (!perf.player_id || !perf.team_name || !perf.against_team) {
+        continue;
+      }
+      const key = `${perf.player_id}|${perf.team_name}`;
+      if (!aggregated.has(key)) {
+        aggregated.set(key, {
+          player_id: perf.player_id,
+          team_name: perf.team_name,
+          against_team: perf.against_team,
+          run_scored: 0,
+          balls_faced: 0,
+          wickets_taken: 0,
+          runs_given: 0,
+          dismissed: "Not Out",
+        });
+      }
+      const agg = aggregated.get(key);
+      agg.run_scored += toInt(perf.run_scored);
+      agg.balls_faced += toInt(perf.balls_faced);
+      agg.wickets_taken += toInt(perf.wickets_taken);
+      agg.runs_given += toInt(perf.runs_given);
+      if (perf.dismissed && String(perf.dismissed).toLowerCase() !== "not out") {
+        agg.dismissed = "Out";
+      }
+    }
+
+    const saved = [];
+    for (const [, agg] of aggregated) {
+      const row = await insertOnePerformance(client, {
+        ...match,
+        ...agg,
+        match_type: mType,
+      });
+      saved.push(row);
+    }
+
+    await client.query("COMMIT");
+    return res.json({
+      message: "✅ Bulk player performances saved.",
+      inserted: saved.length,
+      rows: saved,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    console.error("❌ bulk insert failed:", e);
+    return res.status(500).json({ message: "Bulk insert failed." });
+  } finally {
+    client.release();
+  }
+});
+
+// ===== list =====
 router.get("/player-performance", async (req, res) => {
   res.set("X-Handler", "performanceRoutes");
   const result = await pool.query(`
@@ -309,12 +346,13 @@ router.get("/player-performance", async (req, res) => {
       pp.runs_given,
       pp.fifties,
       pp.hundreds,
+      pp.double_century,
       pp.dismissed,
       pp.user_id,
       pp.tournament_name,
       pp.season_year,
-      pp.is_five_wicket_haul,      -- NEW
-      pp.bowling_milestone         -- NEW
+      pp.is_five_wicket_haul,
+      pp.bowling_milestone
     FROM player_performance pp
     JOIN players p ON p.id = pp.player_id
     ORDER BY pp.id DESC
@@ -322,18 +360,7 @@ router.get("/player-performance", async (req, res) => {
   res.json(result.rows);
 });
 
-/**
- * NEW: GET /api/player-performance/fivew-counts
- * Returns how many times a player took 5W+ — tournament-wise, year-wise, match_type-wise.
- *
- * Query params (all optional):
- *   player_id: number
- *   tournament_name: text
- *   season_year: number
- *   match_type: 'ODI' | 'T20' | 'Test'
- *
- * If nothing is provided, returns grouped counts for all players by (player, tournament, year, match_type).
- */
+// ===== five-w counts (unchanged logic, just placed here) =====
 router.get("/player-performance/fivew-counts", async (req, res) => {
   try {
     const playerId = req.query.player_id ? toInt(req.query.player_id, null) : null;
