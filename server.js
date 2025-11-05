@@ -62,6 +62,7 @@ const hallOfFameRoutes = require("./routes/hallOfFameRoutes");
 const teamMatchExplorerRoutes = require("./routes/teamMatchExplorerRoutes");
 const pitchRandomizerRoutes = require('./routes/pitchRandomizerRoutes'); // Randomizer
 const momInsightsRoutes = require("./routes/momInsightsRoutes"); // Man of the match 04/11/2025
+const homeHighlightsRoutes = require("./routes/homeHighlightsRoutes"); // landing page 4 card 05/11/2025
 
 const app = express();
 const server = http.createServer(app);
@@ -146,6 +147,7 @@ app.use("/api/boards/hof", hallOfFameRoutes);
 app.use("/api/team-match-explorer", teamMatchExplorerRoutes);
 app.use('/api/tools/pitch-randomizer', pitchRandomizerRoutes); // Randomizer
 app.use("/api", momInsightsRoutes); // man of the match 04/11/2025
+app.use("/api/home-highlights", homeHighlightsRoutes); // 4 card on landing page 05/11/2025
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
