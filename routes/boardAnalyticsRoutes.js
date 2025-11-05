@@ -520,4 +520,195 @@ router.get("/timeline", async (req, res) => {
   }
 });
 
+// ---------- GET /boards/analytics/home/top-board-insight ----------
+// lightweight endpoint just for homepage hero
+router.get("/home/top-board-insight", async (req, res) => {
+  try {
+    // 1. get all boards
+    const { rows: boardRows } = await pool.query(`
+      SELECT id AS board_id, board_name
+      FROM public.board_registration
+      ORDER BY board_name
+    `);
+    if (!boardRows.length) {
+      return res.json({ ok: true, insight: null });
+    }
+
+    const allBoardIds = boardRows.map((b) => b.board_id);
+
+    // 2. load the same daily leader logic as /timeline but scoped to last 90 days
+    const from = new Date();
+    from.setDate(from.getDate() - 90); // last 90 days
+    const fromStr = from.toISOString().slice(0, 10);
+
+    // map team -> boards
+    const teamQ = `
+      SELECT bt.board_id, LOWER(TRIM(bt.team_name)) AS team_name
+      FROM public.board_teams bt
+      WHERE bt.board_id = ANY($1::int[])
+    `;
+    const { rows: teamRows } = await pool.query(teamQ, [allBoardIds]);
+    const teamToBoards = new Map();
+    teamRows.forEach((r) => {
+      if (!teamToBoards.has(r.team_name)) teamToBoards.set(r.team_name, new Set());
+      teamToBoards.get(r.team_name).add(r.board_id);
+    });
+
+    // helper from your main file
+    const isDrawish = (w) =>
+      /\b(draw|tie|tied|no\s*result|abandon|abandoned)/i.test(String(w || "").trim());
+    const wordHit = (text, needle) => {
+      if (!text || !needle) return false;
+      const re = new RegExp(`\\b${String(needle).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+      return re.test(String(text));
+    };
+    const pointsForFormat = (fmt, outcome) => {
+      const f = String(fmt || "").toUpperCase();
+      if (f === "ODI" || f === "T20") {
+        return outcome === "win" ? 10 : outcome === "draw" ? 5 : outcome === "loss" ? 2 : 0;
+      }
+      if (f === "TEST") {
+        return outcome === "win" ? 18 : outcome === "draw" ? 9 : outcome === "loss" ? 4 : 0;
+      }
+      return 0;
+    };
+
+    // ODI/T20 last 90 days
+    const { rows: mhRows } = await pool.query(
+      `
+        SELECT
+          LOWER(TRIM(mh.team1)) AS team1,
+          LOWER(TRIM(mh.team2)) AS team2,
+          LOWER(TRIM(mh.winner)) AS winner,
+          UPPER(mh.match_type) AS fmt,
+          to_char(COALESCE(mh.match_date, mh.match_time::date), 'YYYY-MM-DD') AS d
+        FROM public.match_history mh
+        WHERE mh.status = 'approved'
+          AND (UPPER(mh.match_type) = 'ODI' OR UPPER(mh.match_type) = 'T20')
+          AND COALESCE(mh.match_date, mh.match_time::date) >= $1
+      `,
+      [fromStr]
+    );
+
+    // Test last 90 days
+    const { rows: tRows } = await pool.query(
+      `
+        SELECT
+          LOWER(TRIM(tm.team1)) AS team1,
+          LOWER(TRIM(tm.team2)) AS team2,
+          LOWER(TRIM(tm.winner)) AS winner,
+          'TEST'::text AS fmt,
+          to_char(COALESCE(tm.match_date, tm.created_at::date), 'YYYY-MM-DD') AS d
+        FROM public.test_match_results tm
+        WHERE tm.status = 'approved'
+          AND COALESCE(tm.match_date, tm.created_at::date) >= $1
+      `,
+      [fromStr]
+    );
+
+    // daily points: date -> Map(boardId -> pts)
+    const daily = new Map();
+
+    const addPoints = (date, bid, pts) => {
+      if (!daily.has(date)) daily.set(date, new Map());
+      const m = daily.get(date);
+      m.set(bid, (m.get(bid) || 0) + pts);
+    };
+
+    function handleMatch(row) {
+      const d = row.d;
+      const fmt = row.fmt;
+      const t1 = row.team1 || "";
+      const t2 = row.team2 || "";
+      const w = row.winner || "";
+
+      const boardsT1 = teamToBoards.get(t1) || new Set();
+      const boardsT2 = teamToBoards.get(t2) || new Set();
+      const involved = new Set([...boardsT1, ...boardsT2]);
+      if (!involved.size) return;
+
+      const draw = isDrawish(w);
+      const winnerIsT1 = wordHit(w, t1);
+      const winnerIsT2 = wordHit(w, t2);
+
+      for (const bid of involved) {
+        const won =
+          (winnerIsT1 && boardsT1.has(bid)) || (winnerIsT2 && boardsT2.has(bid));
+        if (draw) addPoints(d, bid, pointsForFormat(fmt, "draw"));
+        else if (won) addPoints(d, bid, pointsForFormat(fmt, "win"));
+        else if (w) addPoints(d, bid, pointsForFormat(fmt, "loss"));
+      }
+    }
+
+    mhRows.forEach(handleMatch);
+    tRows.forEach(handleMatch);
+
+    // build cumulative & detect leader per day
+    const dates = [...daily.keys()].sort((a, b) => new Date(a) - new Date(b));
+    const cum = new Map(allBoardIds.map((id) => [id, 0]));
+
+    const dailyLeaders = []; // {date, board_id}
+    dates.forEach((d) => {
+      const m = daily.get(d);
+      m.forEach((pts, bid) => {
+        cum.set(bid, (cum.get(bid) || 0) + pts);
+      });
+
+      let topBid = null;
+      let topPts = -Infinity;
+      cum.forEach((v, bid) => {
+        if (v > topPts) {
+          topPts = v;
+          topBid = bid;
+        }
+      });
+      if (topBid != null) dailyLeaders.push({ date: d, board_id: topBid });
+    });
+
+    // compute longest consecutive streak per board
+    const streakMap = new Map(); // bid -> maxStreak
+    let prevBid = null;
+    let running = 0;
+    dailyLeaders.forEach((entry) => {
+      if (entry.board_id === prevBid) {
+        running += 1;
+      } else {
+        running = 1;
+        prevBid = entry.board_id;
+      }
+      const prevBest = streakMap.get(entry.board_id) || 0;
+      if (running > prevBest) streakMap.set(entry.board_id, running);
+    });
+
+    if (!streakMap.size) {
+      return res.json({ ok: true, insight: null });
+    }
+
+    // pick the board with max streak
+    let bestBoardId = null;
+    let bestStreak = -1;
+    streakMap.forEach((val, bid) => {
+      if (val > bestStreak) {
+        bestStreak = val;
+        bestBoardId = bid;
+      }
+    });
+
+    const bestBoard = boardRows.find((b) => b.board_id === bestBoardId);
+    return res.json({
+      ok: true,
+      insight: {
+        board_id: bestBoardId,
+        board_name: bestBoard ? bestBoard.board_name : `Board #${bestBoardId}`,
+        days_at_top: bestStreak,
+        period_days: 90,
+      },
+    });
+  } catch (err) {
+    console.error("home/top-board-insight failed:", err);
+    res.status(500).json({ error: "Failed to compute home insight" });
+  }
+});
+
+
 module.exports = router;
