@@ -522,9 +522,11 @@ router.get("/timeline", async (req, res) => {
 
 // ---------- GET /boards/analytics/home/top-board-insight ----------
 // lightweight endpoint just for homepage hero
+// ---------- GET /boards/analytics/home/top-board-insight ----------
+// homepage helper: find the board that stayed #1 for the longest continuous stretch
 router.get("/home/top-board-insight", async (req, res) => {
   try {
-    // 1. get all boards
+    // 1) all boards
     const { rows: boardRows } = await pool.query(`
       SELECT id AS board_id, board_name
       FROM public.board_registration
@@ -533,33 +535,32 @@ router.get("/home/top-board-insight", async (req, res) => {
     if (!boardRows.length) {
       return res.json({ ok: true, insight: null });
     }
-
     const allBoardIds = boardRows.map((b) => b.board_id);
 
-    // 2. load the same daily leader logic as /timeline but scoped to last 90 days
-    const from = new Date();
-    from.setDate(from.getDate() - 90); // last 90 days
-    const fromStr = from.toISOString().slice(0, 10);
-
-    // map team -> boards
-    const teamQ = `
+    // 2) map team -> boards
+    const { rows: teamRows } = await pool.query(
+      `
       SELECT bt.board_id, LOWER(TRIM(bt.team_name)) AS team_name
       FROM public.board_teams bt
       WHERE bt.board_id = ANY($1::int[])
-    `;
-    const { rows: teamRows } = await pool.query(teamQ, [allBoardIds]);
+    `,
+      [allBoardIds]
+    );
     const teamToBoards = new Map();
     teamRows.forEach((r) => {
       if (!teamToBoards.has(r.team_name)) teamToBoards.set(r.team_name, new Set());
       teamToBoards.get(r.team_name).add(r.board_id);
     });
 
-    // helper from your main file
+    // helpers (scoped to this route)
     const isDrawish = (w) =>
       /\b(draw|tie|tied|no\s*result|abandon|abandoned)/i.test(String(w || "").trim());
     const wordHit = (text, needle) => {
       if (!text || !needle) return false;
-      const re = new RegExp(`\\b${String(needle).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+      const re = new RegExp(
+        `\\b${String(needle).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+        "i"
+      );
       return re.test(String(text));
     };
     const pointsForFormat = (fmt, outcome) => {
@@ -573,42 +574,33 @@ router.get("/home/top-board-insight", async (req, res) => {
       return 0;
     };
 
-    // ODI/T20 last 90 days
-    const { rows: mhRows } = await pool.query(
-      `
-        SELECT
-          LOWER(TRIM(mh.team1)) AS team1,
-          LOWER(TRIM(mh.team2)) AS team2,
-          LOWER(TRIM(mh.winner)) AS winner,
-          UPPER(mh.match_type) AS fmt,
-          to_char(COALESCE(mh.match_date, mh.match_time::date), 'YYYY-MM-DD') AS d
-        FROM public.match_history mh
-        WHERE mh.status = 'approved'
-          AND (UPPER(mh.match_type) = 'ODI' OR UPPER(mh.match_type) = 'T20')
-          AND COALESCE(mh.match_date, mh.match_time::date) >= $1
-      `,
-      [fromStr]
-    );
+    // 3) get ALL approved ODI/T20 matches (no 90-day filter)
+    const { rows: mhRows } = await pool.query(`
+      SELECT
+        LOWER(TRIM(mh.team1)) AS team1,
+        LOWER(TRIM(mh.team2)) AS team2,
+        LOWER(TRIM(mh.winner)) AS winner,
+        UPPER(mh.match_type) AS fmt,
+        to_char(COALESCE(mh.match_date, mh.match_time::date), 'YYYY-MM-DD') AS d
+      FROM public.match_history mh
+      WHERE mh.status = 'approved'
+        AND (UPPER(mh.match_type) = 'ODI' OR UPPER(mh.match_type) = 'T20')
+    `);
 
-    // Test last 90 days
-    const { rows: tRows } = await pool.query(
-      `
-        SELECT
-          LOWER(TRIM(tm.team1)) AS team1,
-          LOWER(TRIM(tm.team2)) AS team2,
-          LOWER(TRIM(tm.winner)) AS winner,
-          'TEST'::text AS fmt,
-          to_char(COALESCE(tm.match_date, tm.created_at::date), 'YYYY-MM-DD') AS d
-        FROM public.test_match_results tm
-        WHERE tm.status = 'approved'
-          AND COALESCE(tm.match_date, tm.created_at::date) >= $1
-      `,
-      [fromStr]
-    );
+    // 4) get ALL approved Test matches (no 90-day filter)
+    const { rows: tRows } = await pool.query(`
+      SELECT
+        LOWER(TRIM(tm.team1)) AS team1,
+        LOWER(TRIM(tm.team2)) AS team2,
+        LOWER(TRIM(tm.winner)) AS winner,
+        'TEST'::text AS fmt,
+        to_char(COALESCE(tm.match_date, tm.created_at::date), 'YYYY-MM-DD') AS d
+      FROM public.test_match_results tm
+      WHERE tm.status = 'approved'
+    `);
 
-    // daily points: date -> Map(boardId -> pts)
-    const daily = new Map();
-
+    // 5) daily points collector
+    const daily = new Map(); // date -> Map(board_id -> pts)
     const addPoints = (date, bid, pts) => {
       if (!daily.has(date)) daily.set(date, new Map());
       const m = daily.get(date);
@@ -643,7 +635,7 @@ router.get("/home/top-board-insight", async (req, res) => {
     mhRows.forEach(handleMatch);
     tRows.forEach(handleMatch);
 
-    // build cumulative & detect leader per day
+    // 6) build cumulative & detect daily leader
     const dates = [...daily.keys()].sort((a, b) => new Date(a) - new Date(b));
     const cum = new Map(allBoardIds.map((id) => [id, 0]));
 
@@ -662,11 +654,12 @@ router.get("/home/top-board-insight", async (req, res) => {
           topBid = bid;
         }
       });
+
       if (topBid != null) dailyLeaders.push({ date: d, board_id: topBid });
     });
 
-    // compute longest consecutive streak per board
-    const streakMap = new Map(); // bid -> maxStreak
+    // 7) longest consecutive streak per board
+    const streakMap = new Map();
     let prevBid = null;
     let running = 0;
     dailyLeaders.forEach((entry) => {
@@ -684,7 +677,7 @@ router.get("/home/top-board-insight", async (req, res) => {
       return res.json({ ok: true, insight: null });
     }
 
-    // pick the board with max streak
+    // 8) pick the board with biggest streak
     let bestBoardId = null;
     let bestStreak = -1;
     streakMap.forEach((val, bid) => {
@@ -701,7 +694,8 @@ router.get("/home/top-board-insight", async (req, res) => {
         board_id: bestBoardId,
         board_name: bestBoard ? bestBoard.board_name : `Board #${bestBoardId}`,
         days_at_top: bestStreak,
-        period_days: 90,
+        // we used "all time" here; you can change the label on frontend
+        period_days: null,
       },
     });
   } catch (err) {
@@ -709,6 +703,5 @@ router.get("/home/top-board-insight", async (req, res) => {
     res.status(500).json({ error: "Failed to compute home insight" });
   }
 });
-
 
 module.exports = router;
