@@ -6,8 +6,7 @@ const pool = require("../db"); // your existing pg pool
 // GET  /api/home-highlights
 router.get("/", async (req, res) => {
   try {
-    // 1) MOST RUNS (all formats)  -------------------------
-    // source: players + player_performance
+    // 1) MOST RUNS (all formats)
     const mostRunsQ = await pool.query(
       `
       SELECT
@@ -23,7 +22,7 @@ router.get("/", async (req, res) => {
       `
     );
 
-    // 2) HIGHEST WICKET TAKER (all formats)  --------------
+    // 2) HIGHEST WICKET TAKER (all formats)
     const mostWicketsQ = await pool.query(
       `
       SELECT
@@ -39,8 +38,7 @@ router.get("/", async (req, res) => {
       `
     );
 
-    // 3) MOST SUCCESSFUL PLAYER (max MoM count)  ----------
-    // from both match_history and test_match_results
+    // 3) MOST SUCCESSFUL PLAYER (max MoM count)
     const mostSuccessfulQ = await pool.query(
       `
       WITH all_mom AS (
@@ -62,8 +60,7 @@ router.get("/", async (req, res) => {
       `
     );
 
-    // 4) BEST TEAM (most wins) ----------------------------
-    // match_history winner needs extraction, test_match_results is already plain
+    // 4) BEST TEAM (most wins)
     const bestTeamQ = await pool.query(
       `
       WITH odi_t20 AS (
@@ -90,6 +87,49 @@ router.get("/", async (req, res) => {
       GROUP BY team_name
       ORDER BY total_wins DESC
       LIMIT 1;
+      `
+    );
+
+    // 5) 🔥 NEW: ALL ROUND PERFORMER (top per skill_type from ratings)
+    const allRoundQ = await pool.query(
+      `
+      WITH player_totals AS (
+        SELECT
+          p.id AS player_id,
+          p.player_name,
+          p.team_name,
+          p.skill_type,
+          SUM(COALESCE(pr.batting_rating, 0))    AS batting_total,
+          SUM(COALESCE(pr.bowling_rating, 0))    AS bowling_total,
+          SUM(COALESCE(pr.allrounder_rating, 0)) AS allrounder_total,
+          SUM(
+            COALESCE(pr.batting_rating, 0)
+            + COALESCE(pr.bowling_rating, 0)
+            + COALESCE(pr.allrounder_rating, 0)
+          ) AS total_rating
+        FROM player_ratings pr
+        JOIN players p ON pr.player_id = p.id
+        GROUP BY p.id, p.player_name, p.team_name, p.skill_type
+      ),
+      ranked AS (
+        SELECT
+          player_id,
+          player_name,
+          team_name,
+          skill_type,
+          batting_total,
+          bowling_total,
+          allrounder_total,
+          total_rating,
+          DENSE_RANK() OVER (PARTITION BY skill_type ORDER BY total_rating DESC) AS rnk
+        FROM player_totals
+      )
+      SELECT *
+      FROM ranked
+      WHERE rnk = 1
+        AND skill_type IS NOT NULL
+        AND skill_type <> ''
+      ORDER BY skill_type;
       `
     );
 
@@ -123,7 +163,7 @@ router.get("/", async (req, res) => {
       });
     }
 
-    // 3) most successful player (by MoM count)
+    // 3) most successful player
     if (mostSuccessfulQ.rows[0]) {
       const s = mostSuccessfulQ.rows[0];
       highlights.push({
@@ -144,6 +184,23 @@ router.get("/", async (req, res) => {
         title: b.team_name,
         subtitle: "Calculated from ODI/T20/Test wins",
         meta: [{ label: "Total Wins", value: b.total_wins }],
+      });
+    }
+
+    // 5) 🔥 add one highlight PER skill_type for all-round performer
+    if (allRoundQ.rows.length) {
+      allRoundQ.rows.forEach((row) => {
+        highlights.push({
+          tag: "All Round Performer",
+          type: "all_round_performer",
+          title: row.player_name,
+          subtitle: `Skill: ${row.skill_type}`,
+          meta: [
+            { label: "Rating Earned", value: row.total_rating },
+            { label: "Team", value: row.team_name },
+            { label: "Skill", value: row.skill_type },
+          ],
+        });
       });
     }
 
