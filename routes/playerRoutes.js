@@ -1,10 +1,5 @@
 // ✅ routes/playerRoutes.js
 // Purpose: Player CRUD + stats endpoints (NO performance insert here)
-// ----------------------------------------------------------------------------------
-// CHANGES (Aug-2025):
-// [DISABLED-PP] Removed duplicate POST /api/player-performance (now lives in performanceRoutes.js)
-// [NORM-TEST]   normFormat now returns 'ODI' | 'T20' | 'Test' to match DB + performanceRoutes
-// ----------------------------------------------------------------------------------
 
 const router = require("express").Router();
 const pool = require("../db");
@@ -27,9 +22,6 @@ const normFormat = (t) => {
 
 /* =========================================================
  * POST /api/add-player
- * - Creates a player row WITH user_id
- * - Enforces: max 15 per (team_name, lineup_type, user_id)
- * - Enforces: CI duplicate on (team_name, lineup_type, lower(player_name), user_id)
  * ======================================================= */
 router.post("/add-player", async (req, res) => {
   console.log("Received add-player req.body:", req.body);
@@ -43,21 +35,22 @@ router.post("/add-player", async (req, res) => {
     batting_style,
     is_captain,
     is_vice_captain,
-    user_id, // from frontend
+    user_id,
   } = req.body;
 
   try {
-    // Basic validations
     if (!player_name || !team_name || !lineup_type || !skill_type) {
       return res.status(400).json({ error: "Required fields missing" });
     }
     if (!user_id) {
-      return res.status(400).json({ error: "User not found. Please login again." });
+      return res
+        .status(400)
+        .json({ error: "User not found. Please login again." });
     }
 
     const fmt = normFormat(lineup_type);
 
-    // CI duplicate check for same team + format + name + user
+    // duplicate check
     const dup = await pool.query(
       `SELECT 1
          FROM players
@@ -68,10 +61,12 @@ router.post("/add-player", async (req, res) => {
       [team_name, fmt, player_name, user_id]
     );
     if (dup.rows.length) {
-      return res.status(409).json({ error: "Player already exists in this squad for this user." });
+      return res
+        .status(409)
+        .json({ error: "Player already exists in this squad for this user." });
     }
 
-    // Limit 15 per team+format+user
+    // limit 15
     const checkCount = await pool.query(
       `SELECT COUNT(*)::int AS n
          FROM players
@@ -81,10 +76,11 @@ router.post("/add-player", async (req, res) => {
       [team_name, fmt, user_id]
     );
     if (checkCount.rows[0].n >= 15) {
-      return res.status(400).json({ error: "Cannot add more than 15 players to this squad." });
+      return res
+        .status(400)
+        .json({ error: "Cannot add more than 15 players to this squad." });
     }
 
-    // Insert
     const result = await pool.query(
       `INSERT INTO players
         (lineup_type, player_name, team_name, skill_type,
@@ -104,7 +100,10 @@ router.post("/add-player", async (req, res) => {
       ]
     );
 
-    return res.json({ message: "Player added successfully", player: result.rows[0] });
+    return res.json({
+      message: "Player added successfully",
+      player: result.rows[0],
+    });
   } catch (err) {
     console.error("Add Player Error:", err);
     return res.status(500).json({ error: "Server error" });
@@ -113,8 +112,6 @@ router.post("/add-player", async (req, res) => {
 
 /* =========================================================
  * GET /api/players
- * - Optional filters: user_id, team_name, lineup_type
- * - Ordered by lower(player_name)
  * ======================================================= */
 router.get("/players", async (req, res) => {
   try {
@@ -151,16 +148,6 @@ router.get("/players", async (req, res) => {
 });
 
 /* =========================================================
- * ❌ REMOVED: POST /api/player-performance
- * Reason: Single source of truth is routes/performanceRoutes.js
- * (Mounted BEFORE this router in server.js so it wins.)
- * ======================================================= */
-// Do not add a handler here. If you want a guard instead, you could add:
-// router.post("/player-performance", (_req, res) =>
-//   res.status(410).json({ error: "Moved. Use /api/player-performance (performanceRoutes.js)" })
-// );
-
-/* =========================================================
  * PUT /api/players/:id
  * ======================================================= */
 router.put("/players/:id", async (req, res) => {
@@ -177,7 +164,6 @@ router.put("/players/:id", async (req, res) => {
   } = req.body;
 
   try {
-    // Optional: avoid CI duplicate in same team+format (excluding self)
     if (player_name && team_name && lineup_type) {
       const fmt = normFormat(lineup_type);
       const dup = await pool.query(
@@ -229,7 +215,6 @@ router.put("/players/:id", async (req, res) => {
 
 /* =========================================================
  * DELETE /api/delete-player/:id
- * (kept as-is for existing frontend usage)
  * ======================================================= */
 router.delete("/delete-player/:id", async (req, res) => {
   const playerId = req.params.id;
@@ -243,7 +228,7 @@ router.delete("/delete-player/:id", async (req, res) => {
 });
 
 /* =========================================================
- * PUT /api/update-player  (legacy helper)
+ * PUT /api/update-player (legacy)
  * ======================================================= */
 router.put("/update-player", async (req, res) => {
   const { id, player_name, team_name, skill_type, lineup_type } = req.body;
@@ -279,11 +264,18 @@ router.get("/player-stats", async (req, res) => {
         pp.*,
         p.player_name,
         pp.balls_faced,
-        ROUND(CASE WHEN pp.balls_faced > 0
-                   THEN (pp.run_scored::decimal / pp.balls_faced) * 100
-                   ELSE 0 END, 2) AS strike_rate,
-        MAX(CASE WHEN LOWER(pp.dismissed) = 'not out' THEN pp.run_scored ELSE pp.run_scored END)
-          OVER (PARTITION BY pp.player_id, pp.match_type) AS highest_score,
+        ROUND(
+          CASE WHEN pp.balls_faced > 0
+               THEN (pp.run_scored::decimal / pp.balls_faced) * 100
+               ELSE 0 END,
+          2
+        ) AS strike_rate,
+        MAX(
+          CASE WHEN LOWER(pp.dismissed) = 'not out'
+               THEN pp.run_scored
+               ELSE pp.run_scored
+          END
+        ) OVER (PARTITION BY pp.player_id, pp.match_type) AS highest_score,
         CASE WHEN LOWER(pp.dismissed) = 'not out'
              THEN CONCAT(pp.run_scored, '*')
              ELSE pp.run_scored::text
@@ -303,7 +295,7 @@ router.get("/player-stats", async (req, res) => {
       baseQuery += ` AND pp.team_name ILIKE $${params.length}`;
     }
     if (matchType && matchType !== "All") {
-      params.push(normFormat(matchType)); // 'ODI' | 'T20' | 'Test'
+      params.push(normFormat(matchType));
       baseQuery += ` AND pp.match_type = $${params.length}`;
     }
 
@@ -313,12 +305,16 @@ router.get("/player-stats", async (req, res) => {
     return res.json(result.rows);
   } catch (err) {
     console.error("❌ Error fetching player stats:", err);
-    return res.status(500).json({ message: "❌ Server error while fetching player stats." });
+    return res
+      .status(500)
+      .json({ message: "❌ Server error while fetching player stats." });
   }
 });
 
 /* =========================================================
  * GET /api/player-stats-summary
+ * - match-wise rows
+ * - ALSO: derived double_hundreds so UI can total 200s
  * ======================================================= */
 router.get("/player-stats-summary", async (_req, res) => {
   try {
@@ -336,12 +332,20 @@ router.get("/player-stats-summary", async (_req, res) => {
         pp.runs_given,
         pp.fifties,
         pp.hundreds,
+        CASE WHEN pp.run_scored >= 200 THEN 1 ELSE 0 END AS double_hundreds,
         pp.dismissed AS dismissed_status,
-        ROUND(CASE WHEN pp.balls_faced > 0
-                   THEN (pp.run_scored::decimal / pp.balls_faced) * 100
-                   ELSE 0 END, 2) AS strike_rate,
-        MAX(CASE WHEN LOWER(pp.dismissed) = 'not out' THEN pp.run_scored ELSE pp.run_scored END)
-          OVER (PARTITION BY pp.player_id, pp.match_type) AS highest_score,
+        ROUND(
+          CASE WHEN pp.balls_faced > 0
+               THEN (pp.run_scored::decimal / pp.balls_faced) * 100
+               ELSE 0 END,
+          2
+        ) AS strike_rate,
+        MAX(
+          CASE WHEN LOWER(pp.dismissed) = 'not out'
+               THEN pp.run_scored
+               ELSE pp.run_scored
+          END
+        ) OVER (PARTITION BY pp.player_id, pp.match_type) AS highest_score,
         CASE WHEN LOWER(pp.dismissed) = 'not out'
              THEN CONCAT(pp.run_scored, '*')
              ELSE pp.run_scored::text
@@ -356,7 +360,9 @@ router.get("/player-stats-summary", async (_req, res) => {
     return res.json(result.rows);
   } catch (err) {
     console.error("❌ Error fetching player stats summary:", err);
-    return res.status(500).json({ error: "Server error occurred while fetching stats." });
+    return res
+      .status(500)
+      .json({ error: "Server error occurred while fetching stats." });
   }
 });
 
@@ -375,9 +381,12 @@ router.get("/player-matches/:playerName", async (req, res) => {
         p.team_name,
         pp.against_team,
         pp.dismissed,
-        ROUND(CASE WHEN pp.balls_faced > 0
-                   THEN (pp.run_scored::decimal / pp.balls_faced) * 100
-                   ELSE 0 END, 2) AS strike_rate,
+        ROUND(
+          CASE WHEN pp.balls_faced > 0
+               THEN (pp.run_scored::decimal / pp.balls_faced) * 100
+               ELSE 0 END,
+          2
+        ) AS strike_rate,
         CASE WHEN LOWER(pp.dismissed) = 'not out'
              THEN CONCAT(pp.run_scored, '*')
              ELSE pp.run_scored::text
@@ -396,7 +405,9 @@ router.get("/player-matches/:playerName", async (req, res) => {
     return res.json(result.rows);
   } catch (err) {
     console.error("❌ Error fetching player match stats:", err);
-    return res.status(500).json({ error: "Server error occurred while fetching match data." });
+    return res
+      .status(500)
+      .json({ error: "Server error occurred while fetching match data." });
   }
 });
 
