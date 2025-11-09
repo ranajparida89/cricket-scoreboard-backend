@@ -1,8 +1,5 @@
 // ✅ routes/rankingRoutes.js
-// ✅ Purpose: unified team rankings for T20/ODI (from teams + matches)
-// ✅ and real Test rankings from test_match_results
-// ✅ 05-NOV-2025: expose wins/losses/draws for *all* formats so UI can sort properly
-// ✅ Test rows: we still award 12/6/4 but UI can now sort by wins first
+// Unified team rankings (ODI, T20, Test) with a derived `rating` column
 
 const express = require("express");
 const router = express.Router();
@@ -12,7 +9,7 @@ router.get("/team-rankings", async (req, res) => {
   try {
     const sql = `
       WITH limited AS (
-        -- ✅ Limited overs (ODI/T20) from teams + matches
+        -- ✅ Limited overs (ODI/T20)
         SELECT 
           t.name AS team_name,
           m.match_type,
@@ -32,40 +29,25 @@ router.get("/team-rankings", async (req, res) => {
         GROUP BY t.name, m.match_type
       ),
       test_appearances AS (
-        -- ✅ Get every team's appearance in a test match (team1 + team2)
-        SELECT
-          match_id,
-          team1 AS team_name,
-          winner,
-          'team1' AS side
-        FROM test_match_results
+        -- ✅ Each team’s appearance in a test
+        SELECT match_id, team1 AS team_name, winner FROM test_match_results
         UNION ALL
-        SELECT
-          match_id,
-          team2 AS team_name,
-          winner,
-          'team2' AS side
-        FROM test_match_results
+        SELECT match_id, team2 AS team_name, winner FROM test_match_results
       ),
       test_scored AS (
-        -- ✅ Score each appearance according to your rule:
-        -- Win = 12, Loss = 6, Draw = 4, anything else = 0
+        -- ✅ Score each test appearance
         SELECT
           team_name,
           CASE
-            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team_name)) THEN 12
+            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team_name)) THEN 12          -- win
             WHEN LOWER(TRIM(winner)) IN ('draw','match draw','match drawn','tie') THEN 4
-            WHEN winner IS NOT NULL AND TRIM(winner) <> '' THEN 6
+            WHEN winner IS NOT NULL AND TRIM(winner) <> '' THEN 6              -- loss
             ELSE 0
           END AS points,
+          CASE WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team_name)) THEN 1 ELSE 0 END AS win_flag,
+          CASE WHEN LOWER(TRIM(winner)) IN ('draw','match draw','match drawn','tie') THEN 1 ELSE 0 END AS draw_flag,
           CASE
-            WHEN LOWER(TRIM(winner)) = LOWER(TRIM(team_name)) THEN 1 ELSE 0
-          END AS win_flag,
-          CASE
-            WHEN LOWER(TRIM(winner)) IN ('draw','match draw','match drawn','tie') THEN 1 ELSE 0
-          END AS draw_flag,
-          CASE
-            WHEN winner IS NOT NULL AND TRIM(winner) <> '' 
+            WHEN winner IS NOT NULL AND TRIM(winner) <> ''
                  AND LOWER(TRIM(winner)) <> LOWER(TRIM(team_name))
                  AND LOWER(TRIM(winner)) NOT IN ('draw','match draw','match drawn','tie')
             THEN 1 ELSE 0
@@ -93,11 +75,15 @@ router.get("/team-rankings", async (req, res) => {
         losses,
         draws,
         points,
-        nrr
+        nrr,
+        -- ✅ derived rating so frontend can show something real
+        CASE 
+          WHEN matches > 0 THEN ROUND( (points::numeric / matches) * 10, 2 )
+          ELSE 0
+        END AS rating
       FROM (
         SELECT * FROM limited
         UNION ALL
-        -- ✅ Test doesn't have NRR, send NULL to keep shape
         SELECT
           team_name,
           match_type,
@@ -109,7 +95,6 @@ router.get("/team-rankings", async (req, res) => {
           NULL::numeric AS nrr
         FROM tests
       ) AS all_rows
-      -- ✅ let frontend decide final ordering per-format
       ORDER BY team_name ASC, match_type ASC;
     `;
 
