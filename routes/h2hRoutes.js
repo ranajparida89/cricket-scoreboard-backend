@@ -582,6 +582,13 @@ router.get("/meta/years", async (req, res) => {
  * Team Total Runs (Season-wise) + Leaderboard
  * ========================================================================= */
 
+/**
+ * ✅ CHANGE 1: include Test runs from test_match_results
+ * For tests we sum:
+ *   - if team is team1: runs1 + runs1_2
+ *   - if team is team2: runs2 + runs2_2
+ * and group by season_year / match_date year
+ */
 router.get("/team-total-runs", async (req, res) => {
   const team = String(req.query.team || "").trim();
   const upType = String(req.query.type || "ALL").toUpperCase();
@@ -597,6 +604,7 @@ router.get("/team-total-runs", async (req, res) => {
     const sql = `
       SELECT season_year, SUM(runs)::bigint AS runs
       FROM (
+        -- from limited-overs / match_history
         SELECT
           COALESCE(mh.season_year, EXTRACT(YEAR FROM mh.match_time))::int AS season_year,
           COALESCE(mh.runs1,0) AS runs
@@ -616,6 +624,27 @@ router.get("/team-total-runs", async (req, res) => {
           AND ($2 = 'ALL' OR UPPER(TRIM(mh.match_type)) = $2)
           AND ($3 = '' OR $3 = 'ALL' OR mh.tournament_name ILIKE $3)
           AND ($4::int IS NULL OR COALESCE(mh.season_year, EXTRACT(YEAR FROM mh.match_time))::int = $4::int)
+
+        -- ✅ NEW: from test_match_results
+        UNION ALL
+        SELECT
+          COALESCE(tmr.season_year, EXTRACT(YEAR FROM tmr.match_date))::int AS season_year,
+          (COALESCE(tmr.runs1,0) + COALESCE(tmr.runs1_2,0)) AS runs
+        FROM test_match_results tmr
+        WHERE LOWER(TRIM(tmr.team1)) = LOWER($1)
+          AND ($2 = 'ALL' OR $2 = 'TEST')
+          AND ($3 = '' OR $3 = 'ALL' OR tmr.tournament_name ILIKE $3)
+          AND ($4::int IS NULL OR COALESCE(tmr.season_year, EXTRACT(YEAR FROM tmr.match_date))::int = $4::int)
+
+        UNION ALL
+        SELECT
+          COALESCE(tmr.season_year, EXTRACT(YEAR FROM tmr.match_date))::int AS season_year,
+          (COALESCE(tmr.runs2,0) + COALESCE(tmr.runs2_2,0)) AS runs
+        FROM test_match_results tmr
+        WHERE LOWER(TRIM(tmr.team2)) = LOWER($1)
+          AND ($2 = 'ALL' OR $2 = 'TEST')
+          AND ($3 = '' OR $3 = 'ALL' OR tmr.tournament_name ILIKE $3)
+          AND ($4::int IS NULL OR COALESCE(tmr.season_year, EXTRACT(YEAR FROM tmr.match_date))::int = $4::int)
       ) t
       WHERE season_year IS NOT NULL
       GROUP BY season_year
@@ -650,6 +679,9 @@ router.get("/team-total-runs", async (req, res) => {
   }
 });
 
+/**
+ * ✅ CHANGE 2: include Test runs in the “all teams” version
+ */
 router.get("/team-total-runs/by-team", async (req, res) => {
   const upType = String(req.query.type || "ALL").toUpperCase();
   const tournament = String(req.query.tournament || "").trim();
@@ -662,19 +694,40 @@ router.get("/team-total-runs/by-team", async (req, res) => {
     const sql = `
       SELECT t.team, SUM(t.runs)::bigint AS total_runs
       FROM (
+        -- from match_history (team1)
         SELECT LOWER(TRIM(team1)) AS team,
                COALESCE(runs1,0) AS runs,
                UPPER(TRIM(match_type)) AS match_type,
                tournament_name,
                COALESCE(season_year, EXTRACT(YEAR FROM match_time))::int AS y
         FROM match_history
+
         UNION ALL
+        -- from match_history (team2)
         SELECT LOWER(TRIM(team2)) AS team,
                COALESCE(runs2,0) AS runs,
                UPPER(TRIM(match_type)) AS match_type,
                tournament_name,
                COALESCE(season_year, EXTRACT(YEAR FROM match_time))::int AS y
         FROM match_history
+
+        UNION ALL
+        -- ✅ NEW: from test_match_results (team1)
+        SELECT LOWER(TRIM(team1)) AS team,
+               (COALESCE(runs1,0) + COALESCE(runs1_2,0)) AS runs,
+               'TEST' AS match_type,
+               tournament_name,
+               COALESCE(season_year, EXTRACT(YEAR FROM match_date))::int AS y
+        FROM test_match_results
+
+        UNION ALL
+        -- ✅ NEW: from test_match_results (team2)
+        SELECT LOWER(TRIM(team2)) AS team,
+               (COALESCE(runs2,0) + COALESCE(runs2_2,0)) AS runs,
+               'TEST' AS match_type,
+               tournament_name,
+               COALESCE(season_year, EXTRACT(YEAR FROM match_date))::int AS y
+        FROM test_match_results
       ) AS t
       WHERE t.team IS NOT NULL AND t.team <> ''
         AND ($1 = 'ALL' OR t.match_type = $1)
@@ -714,21 +767,16 @@ router.get("/players/highlights", async (req, res) => {
   try {
     // ---------------------------------------------------------------------
     // CHANGED: canonicalize player names and aggregate by canon_id
-    //   - canon_name: trim -> collapse spaces -> lowercase
-    //   - display_name: initcap of canonical (for pretty UI)
-    //   - base: apply all filters FIRST, then aggregate across canon_id
-    //   - team_pick: choose a representative team where the player scored
-    //                the most runs (then by count, then alphabetically)
     // ---------------------------------------------------------------------
     const sql = `
       WITH canon_name AS (
         SELECT
           p.id AS player_id,
           MIN(p.id) OVER (
-            PARTITION BY lower(regexp_replace(trim(p.player_name), '\\\\s+', ' ', 'g'))
+            PARTITION BY lower(regexp_replace(trim(p.player_name), '\\s+', ' ', 'g'))
           ) AS canon_id,
-          lower(regexp_replace(trim(p.player_name), '\\\\s+', ' ', 'g')) AS canon_name,
-          initcap(lower(regexp_replace(trim(p.player_name), '\\\\s+', ' ', 'g'))) AS display_name
+          lower(regexp_replace(trim(p.player_name), '\\s+', ' ', 'g')) AS canon_name,
+          initcap(lower(regexp_replace(trim(p.player_name), '\\s+', ' ', 'g'))) AS display_name
         FROM players p
       ),
       base AS (
@@ -864,9 +912,9 @@ router.get("/players/highlights", async (req, res) => {
         SELECT
           p.id AS player_id,
           MIN(p.id) OVER (
-            PARTITION BY lower(regexp_replace(trim(p.player_name), '\\\\s+', ' ', 'g'))
+            PARTITION BY lower(regexp_replace(trim(p.player_name), '\\s+', ' ', 'g'))
           ) AS canon_id,
-          initcap(lower(regexp_replace(trim(p.player_name), '\\\\s+', ' ', 'g'))) AS player_name
+          initcap(lower(regexp_replace(trim(p.player_name), '\\s+', ' ', 'g'))) AS player_name
         FROM players p
       ),
       base AS (
