@@ -1,5 +1,5 @@
-// ✅ ratingRoutes.js (Cleaned & Merged with MoM bonus)
-// Author: Ranaj Parida | Updated: 14-Nov-2025
+// ✅ ratingRoutes.js (Cleaned & Merged with MoM bonus + MoM-only filter)
+// Author: Ranaj Parida | Updated: 15-Nov-2025
 // Purpose: Calculate and serve player rankings with MoM bonus
 
 const express = require("express");
@@ -92,10 +92,10 @@ router.get("/calculate", async (req, res) => {
    ============================================================ */
 
 // ✅ GET: Fetch player rankings by type and match format
-// Example: /api/rankings/players?type=batting&match_type=ODI
+// Example: /api/rankings/players?type=batting&match_type=ODI&mom_only=true
 router.get("/players", async (req, res) => {
   try {
-    const { type, match_type } = req.query;
+    const { type, match_type, mom_only } = req.query;
 
     if (!type || !match_type) {
       return res.status(400).json({ error: "Missing query parameters" });
@@ -191,13 +191,26 @@ router.get("/players", async (req, res) => {
         mom_awards: momAwards,
         mom_bonus: momBonus,
         rating: finalRating, // 👈 this is what UI uses
+        has_mom: momAwards > 0, // handy flag for UI / debugging
       };
     });
 
-    // Sort by final (base + MoM)
-    enriched.sort((a, b) => Number(b.rating) - Number(a.rating));
+    // 5) Optional: filter only MoM players if requested
+    const momOnlyFlag =
+      String(mom_only || "").toLowerCase() === "true" ||
+      mom_only === "1" ||
+      String(mom_only || "").toLowerCase() === "yes";
 
-    res.status(200).json(enriched);
+    let finalList = enriched;
+
+    if (momOnlyFlag) {
+      finalList = enriched.filter((p) => Number(p.mom_awards || 0) > 0);
+    }
+
+    // Sort by final (base + MoM)
+    finalList.sort((a, b) => Number(b.rating) - Number(a.rating));
+
+    res.status(200).json(finalList);
   } catch (err) {
     console.error("❌ Failed to fetch player rankings:", err);
     res.status(500).json({ error: "Internal Server Error" });
