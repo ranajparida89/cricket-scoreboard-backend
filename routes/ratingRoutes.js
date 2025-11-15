@@ -1,6 +1,6 @@
-// ✅ ratingRoutes.js (Cleaned & Merged with MoM bonus + MoM-only filter)
+// ✅ src/routes/ratingRoutes.js
+// Cleaned & merged with MoM bonus + optional MoM-only filter
 // Author: Ranaj Parida | Updated: 15-Nov-2025
-// Purpose: Calculate and serve player rankings with MoM bonus
 
 const express = require("express");
 const router = express.Router();
@@ -26,6 +26,7 @@ router.get("/calculate", async (req, res) => {
 
     const ratingsMap = new Map();
 
+    // aggregate per (player_id, match_type)
     for (const p of data) {
       if (!p.player_id || !p.match_type) continue;
 
@@ -48,6 +49,7 @@ router.get("/calculate", async (req, res) => {
       entry.total_hundreds += Number(p.hundreds || 0);
     }
 
+    // write into player_ratings
     for (const [, entry] of ratingsMap) {
       const {
         player_id,
@@ -58,7 +60,6 @@ router.get("/calculate", async (req, res) => {
         total_hundreds,
       } = entry;
 
-      // Base formulas (unchanged)
       const battingRating =
         total_runs * 1.0 + total_fifties * 10 + total_hundreds * 25;
       const bowlingRating = total_wickets * 20;
@@ -69,13 +70,19 @@ router.get("/calculate", async (req, res) => {
       );
 
       await pool.query(
-        `INSERT INTO player_ratings (player_id, match_type, batting_rating, bowling_rating, allrounder_rating)
+        `INSERT INTO player_ratings (
+            player_id,
+            match_type,
+            batting_rating,
+            bowling_rating,
+            allrounder_rating
+         )
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (player_id, match_type)
          DO UPDATE SET 
-           batting_rating = EXCLUDED.batting_rating,
-           bowling_rating = EXCLUDED.bowling_rating,
-           allrounder_rating = EXCLUDED.allrounder_rating;`,
+           batting_rating     = EXCLUDED.batting_rating,
+           bowling_rating     = EXCLUDED.bowling_rating,
+           allrounder_rating  = EXCLUDED.allrounder_rating;`,
         [player_id, match_type, battingRating, bowlingRating, allRounderRating]
       );
     }
@@ -104,6 +111,7 @@ router.get("/players", async (req, res) => {
     const typeRaw = String(type || "").toLowerCase();
     const matchTypeRaw = String(match_type || "").toLowerCase();
 
+    // which rating column to use
     let column;
     switch (typeRaw) {
       case "batting":
@@ -144,6 +152,11 @@ router.get("/players", async (req, res) => {
        ORDER BY r.${column} DESC`,
       [matchTypeRaw]
     );
+
+    // if no ratings, return empty cleanly
+    if (!ratingResult.rows || ratingResult.rows.length === 0) {
+      return res.status(200).json([]);
+    }
 
     // 2) MoM aggregation from view mom_awards_per_player
     const momResult = await pool.query(
@@ -190,8 +203,8 @@ router.get("/players", async (req, res) => {
         base_rating: baseRating,
         mom_awards: momAwards,
         mom_bonus: momBonus,
-        rating: finalRating, // 👈 this is what UI uses
-        has_mom: momAwards > 0, // handy flag for UI / debugging
+        rating: finalRating,          // 👈 UI uses this
+        has_mom: momAwards > 0,       // handy for UI / filters
       };
     });
 
@@ -202,12 +215,11 @@ router.get("/players", async (req, res) => {
       String(mom_only || "").toLowerCase() === "yes";
 
     let finalList = enriched;
-
     if (momOnlyFlag) {
       finalList = enriched.filter((p) => Number(p.mom_awards || 0) > 0);
     }
 
-    // Sort by final (base + MoM)
+    // Sort by final (base + MoM bonus)
     finalList.sort((a, b) => Number(b.rating) - Number(a.rating));
 
     res.status(200).json(finalList);
