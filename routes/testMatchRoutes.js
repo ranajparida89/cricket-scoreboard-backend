@@ -2,7 +2,7 @@
 // ✅ [Ranaj Parida - 2025-04-15 | 11:55 PM] Ensures Test match inserts are visible in `teams` & `/ranking`
 // ✅ [2025-08-21 | Tournaments] Persist tournament_name, season_year, match_date into test_match_results
 // ✅ [2025-11-04 | MoM] Persist mom_player, mom_reason into test_match_results
-// ✅ [2025-11-04 | Ranking Fix] Test leaderboard now sorts by WINS first, then POINTS
+// ✅ [2025-11-16 | MoM FK] Persist mom_player_id into test_match_results (Approach C)
 
 const express = require("express");
 const router = express.Router();
@@ -58,15 +58,22 @@ router.post("/test-match", async (req, res) => {
       // ✅ [MoM] new fields (required from UI)
       mom_player = null,
       mom_reason = null,
+      // ✅ [MoM - Approach C] FK to players.id
+      mom_player_id = null,
     } = req.body;
 
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
       return res.status(400).json({ error: "Missing required fields." });
     }
 
-    // ✅ MoM is mandatory for your UI
+    // ✅ MoM is mandatory for your UI + FK required (Approach C)
     if (!mom_player || !mom_reason) {
       return res.status(400).json({ error: "Man of the Match and Reason are required." });
+    }
+    if (!mom_player_id) {
+      return res
+        .status(400)
+        .json({ error: "Man of the Match player_id (mom_player_id) is required." });
     }
 
     const oversFields = [overs1, overs2, overs1_2, overs2_2];
@@ -94,7 +101,7 @@ router.post("/test-match", async (req, res) => {
       );
     }
 
-    // ✅ 2. Combine innings (kept for future use)
+    // ✅ 2. Combine innings (kept for future use / analytics)
     const totalRuns1 = runs1 + runs1_2;
     const totalOvers1 = convertOversToDecimal(overs1) + convertOversToDecimal(overs1_2);
     const totalWickets1 = wickets1 + wickets1_2;
@@ -103,7 +110,7 @@ router.post("/test-match", async (req, res) => {
     const totalOvers2 = convertOversToDecimal(overs2) + convertOversToDecimal(overs2_2);
     const totalWickets2 = wickets2 + wickets2_2;
 
-    // ✅ 3. Insert into test_match_results (NOW including tournament fields + MoM)
+    // ✅ 3. Insert into test_match_results (NOW including tournament fields + MoM + mom_player_id)
     const matchDateSafe = match_date || new Date().toISOString().slice(0, 10);
 
     if (isDrawLike(winner)) {
@@ -118,25 +125,27 @@ router.post("/test-match", async (req, res) => {
           runs2_2, overs2_2, wickets2_2,
           total_overs_used, match_name, user_id,
           tournament_name, season_year, match_date,
-          mom_player, mom_reason
+          mom_player, mom_player_id, mom_reason
         ) VALUES
-        ($1, $2, $3, $4, 'Draw', 2,
-          $5, $6, $7,
-          $8, $9, $10,
+        (
+          $1,  $2,  $3,  $4,  'Draw', 2,
+          $5,  $6,  $7,
+          $8,  $9,  $10,
           $11, $12, $13,
           $14, $15, $16,
           $17, $18, $19,
           $20, $21, $22,
-          $23, $24
+          $23, $24, $25
         ),
-        ($1, $2, $4, $3, 'Draw', 2,
-          $8, $9, $10,
-          $5, $6, $7,
+        (
+          $1,  $2,  $4,  $3,  'Draw', 2,
+          $8,  $9,  $10,
+          $5,  $6,  $7,
           $14, $15, $16,
           $11, $12, $13,
           $17, $18, $19,
           $20, $21, $22,
-          $23, $24
+          $23, $24, $25
         )
       `,
         [
@@ -164,6 +173,7 @@ router.post("/test-match", async (req, res) => {
           season_year,
           matchDateSafe,
           mom_player,
+          mom_player_id,
           mom_reason,
         ]
       );
@@ -178,16 +188,16 @@ router.post("/test-match", async (req, res) => {
           runs2_2, overs2_2, wickets2_2,
           total_overs_used, match_name, user_id,
           tournament_name, season_year, match_date,
-          mom_player, mom_reason
+          mom_player, mom_player_id, mom_reason
         ) VALUES (
-          $1, $2, $3, $4, $5, $6,
-          $7, $8, $9,
+          $1,  $2,  $3,  $4,  $5,  $6,
+          $7,  $8,  $9,
           $10, $11, $12,
           $13, $14, $15,
           $16, $17, $18,
           $19, $20, $21,
           $22, $23, $24,
-          $25, $26
+          $25, $26, $27
         )
       `,
         [
@@ -216,6 +226,7 @@ router.post("/test-match", async (req, res) => {
           season_year,
           matchDateSafe,
           mom_player,
+          mom_player_id,
           mom_reason,
         ]
       );
@@ -306,7 +317,7 @@ router.get("/rankings/test", async (req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    console.error("❌ Failed to fetch test rankings:", err.message);
+    console.error("❌ Failed to fetch player test rankings:", err.message);
     res.status(500).json({ error: "Test ranking error" });
   }
 });

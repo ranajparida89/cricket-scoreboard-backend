@@ -2,10 +2,11 @@
 // ✅ [Updated by Ranaj Parida | 15-April-2025 15:06 pm IST | CORS support for custom domains crickedge.in]
 // ✅ [2025-08-21 | Tournaments] Persist tournament fields in match_history + mount tournamentRoutes
 // ✅ [2025-11-04 | MoM] Persist mom_player, mom_reason in match_history
+// ✅ [2025-11-16 | MoM FK] Persist mom_player_id in match_history (Approach C)
 
 require("dotenv").config();
 const express = require("express");
-const path = require('path'); // added for the bug..
+const path = require("path"); // added for the bug..
 const cors = require("cors");
 const http = require("http");
 const socketIo = require("socket.io");
@@ -20,7 +21,7 @@ const playerRoutes = require("./routes/playerRoutes"); // Added for Players
 const performanceRoutes = require("./routes/performanceRoutes"); // ✅ New performance
 const upcomingMatchRoutes = require("./routes/upcomingMatchRoutes"); // upcomimg matches
 const ratingRoutes = require("./routes/ratingRoutes"); // player ratings routes
-const { startRatingScheduler } = require('./routes/ratingScheduler'); // scheduler 
+const { startRatingScheduler } = require("./routes/ratingScheduler"); // scheduler
 const matchStoryRoutes = require("./routes/matchStoryRoutes"); // for matchStory 14th MAY 2025 Ranaj Parida
 const playerInfoRoutes = require("./routes/playerInfoRoutes"); // for H2H comparison 15th MAY 2025 Ranaj Parida
 const h2hRoutes = require("./routes/h2hRoutes"); // for H2H comparison 15th MAY 2025 Ranaj Parida
@@ -32,35 +33,35 @@ const dashboardActivityRoutes = require("./routes/dashboardActivityRoutes"); // 
 const dashboardMyPostsRoutes = require("./routes/dashboardMyPostsRoutes"); // user post
 const dashboardProfileStatsRoutes = require("./routes/dashboardProfileStatsRoutes");
 const dashboardWidgetsRoutes = require("./routes/dashboardWidgetsRoutes");
-const dashboardSettingsRoutes = require("./routes/dashboardSettingsRoutes"); // user setting 
+const dashboardSettingsRoutes = require("./routes/dashboardSettingsRoutes"); // user setting
 const dashboardNotificationsRoutes = require("./routes/dashboardNotificationsRoutes");
-const userDashboardRoutes = require('./routes/userDashboardRoutes');
+const userDashboardRoutes = require("./routes/userDashboardRoutes");
 //const userDashboardV2Routes = require('./routes/userDashboardV2Routes');
-const topPerformerRoutes = require('./routes/topPerformerRoutes');
-const userTeamsRoutes = require("./routes/userTeamsRoutes"); // added new 
-const winLossTrendRoutes = require('./routes/winLossTrendRoutes');
-const teamListRoutes = require('./routes/teamListRoutes');
-const userAchievementsRoutes = require('./routes/userAchievementsRoutes');
-const teamMatchStatsRoutes = require('./routes/teamMatchStats');
-const adminRoutes = require('./routes/admin');  // ✅ At the top with your other requires
+const topPerformerRoutes = require("./routes/topPerformerRoutes");
+const userTeamsRoutes = require("./routes/userTeamsRoutes"); // added new
+const winLossTrendRoutes = require("./routes/winLossTrendRoutes");
+const teamListRoutes = require("./routes/teamListRoutes");
+const userAchievementsRoutes = require("./routes/userAchievementsRoutes");
+const teamMatchStatsRoutes = require("./routes/teamMatchStats");
+const adminRoutes = require("./routes/admin"); // ✅ At the top with your other requires
 const galleryRoutes = require("./routes/gallery"); // for gallary
 const schedulerRoutes = require("./routes/scheduler"); // ✅ Match Scheduler API
-const boardRoutes = require('./routes/boardRoutes'); // ✅ Board Registration APIs
+const boardRoutes = require("./routes/boardRoutes"); // ✅ Board Registration APIs
 // 🔁 moved to routes folder (Linux is case-sensitive, file must be exactly routes/auth.js)
-const { attachAdminIfPresent, requireAdminAuth } = require('./routes/auth');
+const { attachAdminIfPresent, requireAdminAuth } = require("./routes/auth");
 const boardAnalyticsRoutes = require("./routes/boardAnalyticsRoutes");
 
 const squadRoutes = require("./routes/squadRoutes");
-const playerAnalyticsRoutes = require('./routes/playerAnalyticsRoutes');
-// const squadImportRoutes = require("./routes/squadImportRoutes");  -- disbaled 
+const playerAnalyticsRoutes = require("./routes/playerAnalyticsRoutes");
+// const squadImportRoutes = require("./routes/squadImportRoutes");  -- disbaled
 
 // ✅ NEW (tournaments API powering UI /api.js)
 const tournamentRoutes = require("./routes/tournamentRoutes");
 //const teamLeaderboardRoutes = require("./routes/teamLeaderboardRoutes");
-const teamLeaderboardRoutes = require("./routes/teamLeaderboardRoutes");  // ✅ NEW
+const teamLeaderboardRoutes = require("./routes/teamLeaderboardRoutes"); // ✅ NEW
 const hallOfFameRoutes = require("./routes/hallOfFameRoutes");
 const teamMatchExplorerRoutes = require("./routes/teamMatchExplorerRoutes");
-const pitchRandomizerRoutes = require('./routes/pitchRandomizerRoutes'); // Randomizer
+const pitchRandomizerRoutes = require("./routes/pitchRandomizerRoutes"); // Randomizer
 const momInsightsRoutes = require("./routes/momInsightsRoutes"); // Man of the match 04/11/2025
 const homeHighlightsRoutes = require("./routes/homeHighlightsRoutes"); // landing page 4 card 05/11/2025
 const PastMatchesHubRoutes = require("./routes/PastMatchesHubRoutes");
@@ -70,12 +71,11 @@ const server = http.createServer(app);
 startRatingScheduler();
 app.set("db", pool); // ✅ make pg pool available to scheduler router
 
-
 // ✅ Enable CORS for Vercel + Custom Domains (Updated by Ranaj Parida | 15-April-2025)
 const allowedOrigins = [
   "https://cricket-scoreboard-frontend.vercel.app",
   "https://crickedge.in",
-  "https://www.crickedge.in"
+  "https://www.crickedge.in",
 ];
 
 app.use(
@@ -91,7 +91,6 @@ app.use(
     credentials: true,
   })
 );
-
 
 // ✅ Allow JSON requests
 app.use(express.json());
@@ -118,35 +117,36 @@ app.use("/api/dashboard/profile", dashboardProfileStatsRoutes);
 app.use("/api/dashboard/widgets", dashboardWidgetsRoutes);
 app.use("/api/dashboard/settings", dashboardSettingsRoutes); // user settings
 app.use("/api/dashboard/notifications", dashboardNotificationsRoutes);
-app.use('/api', userDashboardRoutes);
+app.use("/api", userDashboardRoutes);
 // app.use('/api', userDashboardV2Routes);
 app.use("/api", userTeamsRoutes); // added new
 app.use("/api", require("./routes/userRecentMatchesV2Routes"));
-app.use('/api', topPerformerRoutes);
-app.use('/api/win-loss-trend', winLossTrendRoutes);
-app.use('/api', teamListRoutes);
-app.use('/api/user-achievements', userAchievementsRoutes);
-app.use('/api/team-match-stats', teamMatchStatsRoutes);
-app.use('/api/admin', adminRoutes);              // ✅ With your other app.use() lines
+app.use("/api", topPerformerRoutes);
+app.use("/api/win-loss-trend", winLossTrendRoutes);
+app.use("/api", teamListRoutes);
+app.use("/api/user-achievements", userAchievementsRoutes);
+app.use("/api/team-match-stats", teamMatchStatsRoutes);
+app.use("/api/admin", adminRoutes); // ✅ With your other app.use() lines
 console.log("[ADMIN] adminRoutes mounted at /api/admin");
-app.use('/api/match', require('./routes/match')); // added for automated approval.
+app.use("/api/match", require("./routes/match")); // added for automated approval.
 
 // ✅ Mount tournaments API (NEW)
 app.use("/api/tournaments", tournamentRoutes);
 
-app.use('/uploads/gallery', express.static(path.join(__dirname, 'uploads/gallery'))); // serve images
+app.use(
+  "/uploads/gallery",
+  express.static(path.join(__dirname, "uploads/gallery"))
+); // serve images
 app.use("/api/gallery", galleryRoutes);
 app.use("/api/scheduler", schedulerRoutes); // ✅ /api/scheduler/*
-// app.use("/api/boards", boardRoutes); // ✅ Mount Board Registration APIs
 app.use("/api/boards", attachAdminIfPresent, boardRoutes);
 app.use("/api/boards/analytics", boardAnalyticsRoutes);
 app.use("/api/squads", attachAdminIfPresent, squadRoutes);
-app.use('/api/players', playerAnalyticsRoutes); // keeps /api/players/* namespace
-// app.use("/api/tournaments", tournamentRoutes);
+app.use("/api/players", playerAnalyticsRoutes); // keeps /api/players/* namespace
 app.use("/api", teamLeaderboardRoutes);
 app.use("/api/boards/hof", hallOfFameRoutes);
 app.use("/api/team-match-explorer", teamMatchExplorerRoutes);
-app.use('/api/tools/pitch-randomizer', pitchRandomizerRoutes); // Randomizer
+app.use("/api/tools/pitch-randomizer", pitchRandomizerRoutes); // Randomizer
 app.use("/api", momInsightsRoutes); // man of the match 04/11/2025
 app.use("/api/home-highlights", homeHighlightsRoutes); // 4 card on landing page 05/11/2025
 app.use("/api", PastMatchesHubRoutes);
@@ -164,7 +164,7 @@ const io = socketIo(server, {
     },
     methods: ["GET", "POST"],
     credentials: true,
-  }
+  },
 });
 
 // ✅ WebSocket listeners
@@ -211,13 +211,19 @@ app.post("/api/match", async (req, res) => {
   }
 });
 
-// ✅ Match Result Submission (T20/ODI)
+// ✅ Match Result Submission (T20/ODI) — NOW ALSO STORES mom_player_id (FK → players.id)
 app.post("/api/submit-result", async (req, res) => {
   try {
     const {
-      match_id, team1, team2,
-      runs1, overs1, wickets1,
-      runs2, overs2, wickets2,
+      match_id,
+      team1,
+      team2,
+      runs1,
+      overs1,
+      wickets1,
+      runs2,
+      overs2,
+      wickets2,
       user_id,
       // ✅ [TOURNAMENT] new fields
       tournament_name = null,
@@ -225,16 +231,30 @@ app.post("/api/submit-result", async (req, res) => {
       match_date = null,
       // ✅ [MoM] new fields
       mom_player = null,
-      mom_reason = null
+      mom_reason = null,
+      // ✅ [MoM - Approach C] FK to players.id
+      mom_player_id = null,
     } = req.body;
 
-    // ✅ enforce MoM (frontend is sending)
+    // ✅ enforce MoM from UI
     if (!mom_player || !mom_reason) {
-      return res.status(400).json({ error: "Man of the Match and Reason are required." });
+      return res
+        .status(400)
+        .json({ error: "Man of the Match and Reason are required." });
     }
 
-    const matchResult = await pool.query("SELECT * FROM matches WHERE id = $1", [match_id]);
-    if (matchResult.rows.length === 0) return res.status(400).json({ error: "Invalid match_id" });
+    // ✅ Approach C: must also have proper player_id
+    if (!mom_player_id) {
+      return res.status(400).json({
+        error: "Man of the Match player_id is required.",
+      });
+    }
+
+    const matchResult = await pool.query("SELECT * FROM matches WHERE id = $1", [
+      match_id,
+    ]);
+    if (matchResult.rows.length === 0)
+      return res.status(400).json({ error: "Invalid match_id" });
 
     const { match_name, match_type } = matchResult.rows[0];
     const maxOvers = match_type === "T20" ? 20 : 50;
@@ -243,16 +263,25 @@ app.post("/api/submit-result", async (req, res) => {
     const overs2DecimalRaw = sanitizeOversInput(overs2);
 
     // ✅ Use maxOvers if team is all out, otherwise actual overs used
-    const actualOvers1 = (wickets1 === 10) ? maxOvers : overs1DecimalRaw;
-    const actualOvers2 = (wickets2 === 10) ? maxOvers : overs2DecimalRaw;
+    const actualOvers1 = wickets1 === 10 ? maxOvers : overs1DecimalRaw;
+    const actualOvers2 = wickets2 === 10 ? maxOvers : overs2DecimalRaw;
 
     let winner = "Match Draw";
-    let points1 = 1, points2 = 1;
-    if (runs1 > runs2) { winner = `${team1} won the match!`; points1 = 2; points2 = 0; }
-    else if (runs2 > runs1) { winner = `${team2} won the match!`; points1 = 0; points2 = 2; }
+    let points1 = 1,
+      points2 = 1;
+    if (runs1 > runs2) {
+      winner = `${team1} won the match!`;
+      points1 = 2;
+      points2 = 0;
+    } else if (runs2 > runs1) {
+      winner = `${team2} won the match!`;
+      points1 = 0;
+      points2 = 2;
+    }
 
     // ✅ Insert team1 stats
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO teams (
         match_id, name, matches_played, wins, losses, points,
         total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id
@@ -269,21 +298,24 @@ app.post("/api/submit-result", async (req, res) => {
         total_runs_conceded = EXCLUDED.total_runs_conceded,
         total_overs_bowled = EXCLUDED.total_overs_bowled,
         user_id = EXCLUDED.user_id
-    `, [
-      match_id,
-      team1,
-      points1 === 2 ? 1 : 0,
-      points2 === 2 ? 1 : 0,
-      points1,
-      runs1,
-      actualOvers1,
-      runs2,
-      actualOvers2,
-      user_id
-    ]);
+    `,
+      [
+        match_id,
+        team1,
+        points1 === 2 ? 1 : 0,
+        points2 === 2 ? 1 : 0,
+        points1,
+        runs1,
+        actualOvers1,
+        runs2,
+        actualOvers2,
+        user_id,
+      ]
+    );
 
     // ✅ Insert team2 stats
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO teams (
         match_id, name, matches_played, wins, losses, points,
         total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id
@@ -300,22 +332,25 @@ app.post("/api/submit-result", async (req, res) => {
         total_runs_conceded = EXCLUDED.total_runs_conceded,
         total_overs_bowled = EXCLUDED.total_overs_bowled,
         user_id = EXCLUDED.user_id
-    `, [
-      match_id,
-      team2,
-      points2 === 2 ? 1 : 0,
-      points1 === 2 ? 1 : 0,
-      points2,
-      runs2,
-      actualOvers2,
-      runs1,
-      actualOvers1,
-      user_id
-    ]);
+    `,
+      [
+        match_id,
+        team2,
+        points2 === 2 ? 1 : 0,
+        points1 === 2 ? 1 : 0,
+        points2,
+        runs2,
+        actualOvers2,
+        runs1,
+        actualOvers1,
+        user_id,
+      ]
+    );
 
     // ✅ [NRR FIX | 17-July-2025 | by Ranaj Parida] Recalculate correct NRR for each team
     for (const team of [team1, team2]) {
-      await pool.query(`
+      await pool.query(
+        `
         WITH team_stats AS (
           SELECT 
             t.name,
@@ -341,24 +376,64 @@ app.post("/api/submit-result", async (req, res) => {
           WHERE ts.name = t.name
         )
         WHERE t.name = $1 AND t.match_id = $2
-      `, [team, match_id]);
+      `,
+        [team, match_id]
+      );
     }
 
-    // ✅ Save to match_history  (NOW includes tournament fields + MoM)
-    const matchDateSafe = match_date || new Date().toISOString().slice(0,10);
-    await pool.query(`
+    // ✅ Save to match_history  (NOW includes tournament fields + MoM + mom_player_id)
+    const matchDateSafe = match_date || new Date().toISOString().slice(0, 10);
+    await pool.query(
+      `
       INSERT INTO match_history 
-        (match_name, match_type, team1, runs1, overs1, wickets1, team2, runs2, overs2, wickets2, winner, user_id, match_date, tournament_name, season_year, mom_player, mom_reason)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-    `, [
-      match_name, match_type,
-      team1, runs1, actualOvers1, wickets1,
-      team2, runs2, actualOvers2, wickets2,
-      winner, user_id,
-      matchDateSafe,
-      tournament_name, season_year,
-      mom_player, mom_reason
-    ]);
+        (
+          match_name,
+          match_type,
+          team1,
+          runs1,
+          overs1,
+          wickets1,
+          team2,
+          runs2,
+          overs2,
+          wickets2,
+          winner,
+          user_id,
+          match_date,
+          tournament_name,
+          season_year,
+          mom_player,
+          mom_player_id,
+          mom_reason
+        )
+      VALUES (
+          $1,  $2,  $3,  $4,  $5,  $6,
+          $7,  $8,  $9,  $10, $11,
+          $12, $13, $14, $15,
+          $16, $17, $18
+      )
+    `,
+      [
+        match_name,
+        match_type,
+        team1,
+        runs1,
+        actualOvers1,
+        wickets1,
+        team2,
+        runs2,
+        actualOvers2,
+        wickets2,
+        winner,
+        user_id,
+        matchDateSafe,
+        tournament_name,
+        season_year,
+        mom_player,
+        mom_player_id,
+        mom_reason,
+      ]
+    );
 
     io.emit("matchUpdate", { match_id, winner });
     res.json({ message: winner });
@@ -366,7 +441,6 @@ app.post("/api/submit-result", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 // ✅ Leaderboard
 // ✅ Leaderboard with manual point calculation [Updated by Ranaj Parida - 19-April-2025]
@@ -400,7 +474,6 @@ app.get("/api/teams", async (req, res) => {
   }
 });
 
-
 // ✅ Point Table
 // ✅ Point Table with Manual Point Logic [Ranaj Parida - 19-April-2025]
 app.get("/api/points", async (req, res) => {
@@ -427,7 +500,6 @@ app.get("/api/points", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch point table" });
   }
 });
-
 
 // ✅ Test Match Ranking - Manual Calculation (Win=12, Loss=6, Draw=4) [Ranaj Parida - 19-April-2025]
 app.get("/api/rankings/test", async (req, res) => {
@@ -498,7 +570,6 @@ app.get("/api/match-history", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch match history" });
   }
 });
-
 
 // ✅ Start the backend server
 server.listen(5000, () => {
