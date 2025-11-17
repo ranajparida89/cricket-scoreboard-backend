@@ -1,9 +1,11 @@
 // ✅ src/routes/ratingRoutes.js
 // Cleaned & merged with MoM bonus + optional MoM-only filter
+// + New:
+//   - GET /api/rankings/players/mom-leaderboard → GLOBAL MoM leaderboard
 // + Fixes:
 //   - Normalises match_type to TEST/ODI/T20 to avoid duplicate rows
 //   - Includes players who ONLY have MoM awards (like Lakshmipati Balaji)
-// Author: Ranaj Parida | Updated: 16-Nov-2025
+// Author: Ranaj Parida | Updated: 17-Nov-2025
 
 const express = require("express");
 const router = express.Router();
@@ -137,7 +139,7 @@ router.get("/calculate", async (req, res) => {
 });
 
 /* ============================================================
-   2) FETCH RANKINGS WITH MoM BONUS
+   2) FETCH RANKINGS WITH MoM BONUS  (per format + role)
    ============================================================ */
 
 // ✅ GET: Fetch player rankings by type and match format
@@ -310,6 +312,108 @@ router.get("/players", async (req, res) => {
     res.status(200).json(finalList);
   } catch (err) {
     console.error("❌ Failed to fetch player rankings:", err);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/* ============================================================
+   3) GLOBAL MoM LEADERBOARD (ALL FORMATS & ROLES)
+   ============================================================ */
+
+// ✅ GET: Global MoM leaderboard across ALL formats & roles
+// Used by: PlayerRankings "MoM players only" toggle
+// URL: /api/rankings/players/mom-leaderboard
+router.get("/players/mom-leaderboard", async (req, res) => {
+  try {
+    // mom_awards_per_player should have: player_id, match_type, mom_count
+    const momAgg = await pool.query(
+      `
+      SELECT
+        m.player_id,
+        SUM(m.mom_count) AS total_mom,
+        ARRAY_AGG(DISTINCT normalize_match_type(m.match_type)) AS formats
+      FROM mom_awards_per_player m
+      GROUP BY m.player_id
+      HAVING SUM(m.mom_count) > 0
+    `
+    ).catch(async (err) => {
+      // If normalize_match_type() SQL function doesn't exist,
+      // fall back to raw match_type aggregation without normalisation.
+      console.warn(
+        "normalize_match_type() SQL func missing, using raw match_type:",
+        err.message
+      );
+      const fallback = await pool.query(
+        `
+        SELECT
+          m.player_id,
+          SUM(m.mom_count) AS total_mom,
+          ARRAY_AGG(DISTINCT m.match_type) AS formats
+        FROM mom_awards_per_player m
+        GROUP BY m.player_id
+        HAVING SUM(m.mom_count) > 0
+      `
+      );
+      return fallback;
+    });
+
+    const momRows = momAgg.rows || [];
+    if (momRows.length === 0) {
+      return res.status(200).json([]);
+    }
+
+    // Map: player_id -> { total_mom, formats[] }
+    const momMap = new Map();
+    const playerIds = [];
+    for (const row of momRows) {
+      const pid = Number(row.player_id);
+      playerIds.push(pid);
+      momMap.set(pid, {
+        total_mom: Number(row.total_mom || 0),
+        formats: Array.isArray(row.formats) ? row.formats : [],
+      });
+    }
+
+    // Fetch player basic info
+    const playersRes = await pool.query(
+      `
+      SELECT id AS player_id, player_name, team_name, skill_type
+      FROM players
+      WHERE id = ANY($1::int[])
+    `,
+      [playerIds]
+    );
+
+    const out = [];
+    for (const p of playersRes.rows || []) {
+      const pid = Number(p.player_id);
+      const momInfo = momMap.get(pid);
+      if (!momInfo) continue;
+
+      out.push({
+        player_id: pid,
+        player_name: p.player_name,
+        team_name: p.team_name,
+        skill_type: p.skill_type,
+        mom_awards: momInfo.total_mom,
+        formats: momInfo.formats,
+        // for compatibility with other views
+        base_rating: 0,
+        mom_bonus: 0,
+        rating: momInfo.total_mom,
+      });
+    }
+
+    // sort by total MoM desc, then name
+    out.sort((a, b) => {
+      const diff = Number(b.mom_awards || 0) - Number(a.mom_awards || 0);
+      if (diff !== 0) return diff;
+      return (a.player_name || "").localeCompare(b.player_name || "");
+    });
+
+    res.status(200).json(out);
+  } catch (err) {
+    console.error("❌ Failed to fetch global MoM leaderboard:", err);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
