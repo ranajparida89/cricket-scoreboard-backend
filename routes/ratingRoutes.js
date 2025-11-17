@@ -1,10 +1,47 @@
 // ✅ src/routes/ratingRoutes.js
 // Cleaned & merged with MoM bonus + optional MoM-only filter
-// Author: Ranaj Parida | Updated: 15-Nov-2025
+// + Fixes:
+//   - Normalises match_type to TEST/ODI/T20 to avoid duplicate rows
+//   - Includes players who ONLY have MoM awards (like Lakshmipati Balaji)
+// Author: Ranaj Parida | Updated: 16-Nov-2025
 
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+
+/* ------------------------------------------------------------
+   Small helpers
+------------------------------------------------------------ */
+
+// Normalise match type consistently
+function normalizeMatchType(mtRaw) {
+  const mt = String(mtRaw || "").trim().toUpperCase();
+  if (mt.startsWith("TEST")) return "TEST";
+  if (mt === "ODI" || mt.includes("ONE DAY")) return "ODI";
+  if (mt === "T20" || mt === "T-20") return "T20";
+  return mt || "ODI"; // safe default
+}
+
+// JS copy of skill filter logic (for players coming from MoM view only)
+function matchesSkillForTab(skillTypeRaw, typeRaw) {
+  const s = String(skillTypeRaw || "").toLowerCase();
+  const t = String(typeRaw || "").toLowerCase();
+
+  if (t === "batting") {
+    return (
+      s === "batsman" ||
+      s === "wicketkeeper/batsman" ||
+      s === "wk-batsman"
+    );
+  }
+  if (t === "bowling") {
+    return s === "bowler";
+  }
+  if (t === "allrounder" || t === "all-rounder") {
+    return s === "all rounder" || s === "all-rounder";
+  }
+  return true;
+}
 
 /* ============================================================
    1) CALCULATE BASE RATINGS FROM player_performance
@@ -26,15 +63,17 @@ router.get("/calculate", async (req, res) => {
 
     const ratingsMap = new Map();
 
-    // aggregate per (player_id, match_type)
+    // aggregate per (player_id, NORMALISED match_type)
     for (const p of data) {
       if (!p.player_id || !p.match_type) continue;
 
-      const key = `${p.player_id}-${p.match_type}`;
+      const mt = normalizeMatchType(p.match_type); // 🔁 normalise here
+      const key = `${p.player_id}-${mt}`;
+
       if (!ratingsMap.has(key)) {
         ratingsMap.set(key, {
           player_id: p.player_id,
-          match_type: p.match_type,
+          match_type: mt,
           total_runs: 0,
           total_wickets: 0,
           total_fifties: 0,
@@ -48,6 +87,9 @@ router.get("/calculate", async (req, res) => {
       entry.total_fifties += Number(p.fifties || 0);
       entry.total_hundreds += Number(p.hundreds || 0);
     }
+
+    // (optional) clean old inconsistent rows once before upserting
+    await pool.query("DELETE FROM player_ratings;");
 
     // write into player_ratings
     for (const [, entry] of ratingsMap) {
@@ -109,7 +151,7 @@ router.get("/players", async (req, res) => {
     }
 
     const typeRaw = String(type || "").toLowerCase();
-    const matchTypeRaw = String(match_type || "").toLowerCase();
+    const matchTypeNorm = normalizeMatchType(match_type);
 
     // which rating column to use
     let column;
@@ -128,52 +170,56 @@ router.get("/players", async (req, res) => {
         return res.status(400).json({ error: "Invalid rating type" });
     }
 
-    // 🔎 Skill-type filter
+    // 🔎 Skill-type filter for SQL
     let skillFilter = "";
     if (typeRaw === "batting") {
       skillFilter =
-        "AND (LOWER(p.skill_type) = 'batsman' OR LOWER(p.skill_type) = 'wicketkeeper/batsman')";
+        "AND (LOWER(p.skill_type) = 'batsman' OR LOWER(p.skill_type) = 'wicketkeeper/batsman' OR LOWER(p.skill_type) = 'wk-batsman')";
     } else if (typeRaw === "bowling") {
       skillFilter = "AND LOWER(p.skill_type) = 'bowler'";
     } else if (typeRaw === "allrounder" || typeRaw === "all-rounder") {
-      skillFilter = "AND LOWER(p.skill_type) = 'all rounder'";
+      skillFilter =
+        "AND (LOWER(p.skill_type) = 'all rounder' OR LOWER(p.skill_type) = 'all-rounder')";
     }
 
-    // 1) Base ratings from player_ratings
+    // 1) Base ratings from player_ratings (normalised format)
     const ratingResult = await pool.query(
       `SELECT r.player_id,
               p.player_name,
               p.team_name,
+              p.skill_type,
               r.${column} AS rating
        FROM player_ratings r
        JOIN players p ON r.player_id = p.id
-       WHERE LOWER(r.match_type) = LOWER($1)
+       WHERE r.match_type = $1
        ${skillFilter}
        ORDER BY r.${column} DESC`,
-      [matchTypeRaw]
+      [matchTypeNorm]
     );
 
-    // if no ratings, return empty cleanly
-    if (!ratingResult.rows || ratingResult.rows.length === 0) {
-      return res.status(200).json([]);
-    }
+    // build a quick map to know who already has a rating row
+    const baseRows = ratingResult.rows || [];
+    const baseMap = new Map();
+    baseRows.forEach((row) => {
+      baseMap.set(Number(row.player_id), row);
+    });
 
     // 2) MoM aggregation from view mom_awards_per_player
     const momResult = await pool.query(
       `SELECT player_id, match_type, mom_count
        FROM mom_awards_per_player
-       WHERE LOWER(match_type) = LOWER($1)`,
-      [matchTypeRaw]
+       WHERE match_type = $1`,
+      [matchTypeNorm]
     );
 
-    const momMap = new Map();
-    for (const row of momResult.rows) {
+    const momMap = new Map(); // player_id -> mom_count
+    for (const row of momResult.rows || []) {
       momMap.set(Number(row.player_id), Number(row.mom_count || 0));
     }
 
     // 3) Decide bonus per MoM for this format + category
     const getMomBonusPerAward = (mt, cat) => {
-      const mtUpper = String(mt || "").toUpperCase();
+      const mtUpper = normalizeMatchType(mt); // TEST/ODI/T20
       const catLower = String(cat || "").toLowerCase();
 
       let base; // base per MoM for batting & bowling
@@ -188,10 +234,10 @@ router.get("/players", async (req, res) => {
       return base; // batting/bowling
     };
 
-    const perAward = getMomBonusPerAward(match_type, typeRaw);
+    const perAward = getMomBonusPerAward(matchTypeNorm, typeRaw);
 
-    // 4) Merge MoM bonus into final rating
-    const enriched = ratingResult.rows.map((row) => {
+    // 4) Enrich base rows with MoM bonus
+    let enriched = baseRows.map((row) => {
       const baseRating = Number(row.rating || 0);
       const playerId = Number(row.player_id);
       const momAwards = momMap.get(playerId) || 0;
@@ -199,14 +245,53 @@ router.get("/players", async (req, res) => {
       const finalRating = baseRating + momBonus;
 
       return {
-        ...row,
+        player_id: playerId,
+        player_name: row.player_name,
+        team_name: row.team_name,
+        skill_type: row.skill_type,
         base_rating: baseRating,
         mom_awards: momAwards,
         mom_bonus: momBonus,
-        rating: finalRating,          // 👈 UI uses this
-        has_mom: momAwards > 0,       // handy for UI / filters
+        rating: finalRating,
+        has_mom: momAwards > 0,
       };
     });
+
+    // 4b) 🔁 Add players who ONLY have MoM awards (no player_ratings row)
+    const extraMomPlayerIds = (momResult.rows || [])
+      .map((r) => Number(r.player_id))
+      .filter((pid) => !baseMap.has(pid)); // no base rating row
+
+    if (extraMomPlayerIds.length > 0) {
+      // fetch their basic info
+      const extraPlayersRes = await pool.query(
+        `SELECT id AS player_id, player_name, team_name, skill_type
+         FROM players
+         WHERE id = ANY($1::int[])`,
+        [extraMomPlayerIds]
+      );
+
+      for (const p of extraPlayersRes.rows || []) {
+        if (!matchesSkillForTab(p.skill_type, typeRaw)) continue; // respect tab
+
+        const pid = Number(p.player_id);
+        const momAwards = momMap.get(pid) || 0;
+        if (momAwards <= 0) continue;
+
+        const momBonus = momAwards * perAward;
+        enriched.push({
+          player_id: pid,
+          player_name: p.player_name,
+          team_name: p.team_name,
+          skill_type: p.skill_type,
+          base_rating: 0,
+          mom_awards: momAwards,
+          mom_bonus: momBonus,
+          rating: momBonus, // only bonus
+          has_mom: true,
+        });
+      }
+    }
 
     // 5) Optional: filter only MoM players if requested
     const momOnlyFlag =
