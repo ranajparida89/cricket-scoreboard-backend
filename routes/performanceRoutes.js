@@ -58,7 +58,12 @@ const getUserIdFromReq = (req) => {
   return null;
 };
 
-function buildFiveWMessage({ wickets_taken, runs_given, against_team, match_type }) {
+function buildFiveWMessage({
+  wickets_taken,
+  runs_given,
+  against_team,
+  match_type,
+}) {
   const wk = Number.isFinite(wickets_taken) ? wickets_taken : 0;
   const rg = Number.isFinite(runs_given) ? runs_given : 0;
   const vs = (against_team || "").trim();
@@ -142,7 +147,9 @@ async function insertOnePerformance(client, payload) {
   // user_id
   let userId = playerRow.user_id;
   if (userId == null && payload.user_id) {
-    const uRes = await client.query(`SELECT 1 FROM users WHERE id = $1`, [payload.user_id]);
+    const uRes = await client.query(`SELECT 1 FROM users WHERE id = $1`, [
+      payload.user_id,
+    ]);
     if (uRes.rows.length) {
       await client.query(
         `UPDATE players SET user_id = $1 WHERE id = $2 AND user_id IS NULL`,
@@ -172,7 +179,9 @@ async function insertOnePerformance(client, payload) {
     null;
 
   // milestones
-  const { fifties, hundreds, double_century } = deriveMilestones(payload.run_scored);
+  const { fifties, hundreds, double_century } = deriveMilestones(
+    payload.run_scored
+  );
 
   // 5W
   let is_five_wicket_haul = false;
@@ -263,12 +272,26 @@ router.post("/player-performance", async (req, res) => {
 // ===== bulk =====
 router.post("/player-performance/bulk", async (req, res) => {
   const { match, performances } = req.body || {};
+
+  // 🔑 get user_id (for old players where players.user_id is null)
+  const userIdFromReq = getUserIdFromReq(req);
+
   if (!match || !Array.isArray(performances) || performances.length === 0) {
-    return res.status(400).json({ message: "match + performances[] required." });
+    return res
+      .status(400)
+      .json({ message: "match + performances[] required." });
   }
   if (!match.match_name || !match.match_type) {
-    return res.status(400).json({ message: "match_name and match_type are required in match." });
+    return res.status(400).json({
+      message: "match_name and match_type are required in match.",
+    });
   }
+
+  // Ensure match object carries user_id for insertOnePerformance
+  const baseMatch = {
+    ...match,
+    user_id: userIdFromReq ?? match.user_id ?? null,
+  };
 
   const client = await pool.connect();
   try {
@@ -299,7 +322,10 @@ router.post("/player-performance/bulk", async (req, res) => {
       agg.balls_faced += toInt(perf.balls_faced);
       agg.wickets_taken += toInt(perf.wickets_taken);
       agg.runs_given += toInt(perf.runs_given);
-      if (perf.dismissed && String(perf.dismissed).toLowerCase() !== "not out") {
+      if (
+        perf.dismissed &&
+        String(perf.dismissed).toLowerCase() !== "not out"
+      ) {
         agg.dismissed = "Out";
       }
     }
@@ -307,7 +333,7 @@ router.post("/player-performance/bulk", async (req, res) => {
     const saved = [];
     for (const [, agg] of aggregated) {
       const row = await insertOnePerformance(client, {
-        ...match,
+        ...baseMatch, // ✅ now includes user_id
         ...agg,
         match_type: mType,
       });
