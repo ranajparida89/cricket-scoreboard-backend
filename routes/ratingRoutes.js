@@ -5,7 +5,14 @@
 // + Fixes:
 //   - Normalises match_type to TEST/ODI/T20 to avoid duplicate rows
 //   - Includes players who ONLY have MoM awards (like Lakshmipati Balaji)
-// Author: Ranaj Parida | Updated: 17-Nov-2025
+// + [20-Nov-2025 Ranaj Parida]
+//   - Player photo support:
+//       • /api/rankings/players now returns p.photo_key
+//       • /api/rankings/players/mom-leaderboard now returns p.photo_key
+//       • All enriched ranking objects include photo_key so UI can show
+//         hero image for #1 player in any view.
+//
+// Author: Ranaj Parida | Updated: 20-Nov-2025
 
 const express = require("express");
 const router = express.Router();
@@ -190,6 +197,7 @@ router.get("/players", async (req, res) => {
               p.player_name,
               p.team_name,
               p.skill_type,
+              p.photo_key,          -- 🆕 include photo key for UI hero
               r.${column} AS rating
        FROM player_ratings r
        JOIN players p ON r.player_id = p.id
@@ -251,6 +259,7 @@ router.get("/players", async (req, res) => {
         player_name: row.player_name,
         team_name: row.team_name,
         skill_type: row.skill_type,
+        photo_key: row.photo_key || null, // 🆕 carry photo_key forward
         base_rating: baseRating,
         mom_awards: momAwards,
         mom_bonus: momBonus,
@@ -265,9 +274,9 @@ router.get("/players", async (req, res) => {
       .filter((pid) => !baseMap.has(pid)); // no base rating row
 
     if (extraMomPlayerIds.length > 0) {
-      // fetch their basic info
+      // fetch their basic info (including photo_key)
       const extraPlayersRes = await pool.query(
-        `SELECT id AS player_id, player_name, team_name, skill_type
+        `SELECT id AS player_id, player_name, team_name, skill_type, photo_key
          FROM players
          WHERE id = ANY($1::int[])`,
         [extraMomPlayerIds]
@@ -286,6 +295,7 @@ router.get("/players", async (req, res) => {
           player_name: p.player_name,
           team_name: p.team_name,
           skill_type: p.skill_type,
+          photo_key: p.photo_key || null, // 🆕 include photo_key
           base_rating: 0,
           mom_awards: momAwards,
           mom_bonus: momBonus,
@@ -326,8 +336,9 @@ router.get("/players", async (req, res) => {
 router.get("/players/mom-leaderboard", async (req, res) => {
   try {
     // mom_awards_per_player should have: player_id, match_type, mom_count
-    const momAgg = await pool.query(
-      `
+    const momAgg = await pool
+      .query(
+        `
       SELECT
         m.player_id,
         SUM(m.mom_count) AS total_mom,
@@ -336,15 +347,16 @@ router.get("/players/mom-leaderboard", async (req, res) => {
       GROUP BY m.player_id
       HAVING SUM(m.mom_count) > 0
     `
-    ).catch(async (err) => {
-      // If normalize_match_type() SQL function doesn't exist,
-      // fall back to raw match_type aggregation without normalisation.
-      console.warn(
-        "normalize_match_type() SQL func missing, using raw match_type:",
-        err.message
-      );
-      const fallback = await pool.query(
-        `
+      )
+      .catch(async (err) => {
+        // If normalize_match_type() SQL function doesn't exist,
+        // fall back to raw match_type aggregation without normalisation.
+        console.warn(
+          "normalize_match_type() SQL func missing, using raw match_type:",
+          err.message
+        );
+        const fallback = await pool.query(
+          `
         SELECT
           m.player_id,
           SUM(m.mom_count) AS total_mom,
@@ -353,9 +365,9 @@ router.get("/players/mom-leaderboard", async (req, res) => {
         GROUP BY m.player_id
         HAVING SUM(m.mom_count) > 0
       `
-      );
-      return fallback;
-    });
+        );
+        return fallback;
+      });
 
     const momRows = momAgg.rows || [];
     if (momRows.length === 0) {
@@ -374,10 +386,10 @@ router.get("/players/mom-leaderboard", async (req, res) => {
       });
     }
 
-    // Fetch player basic info
+    // Fetch player basic info (with photo_key)
     const playersRes = await pool.query(
       `
-      SELECT id AS player_id, player_name, team_name, skill_type
+      SELECT id AS player_id, player_name, team_name, skill_type, photo_key
       FROM players
       WHERE id = ANY($1::int[])
     `,
@@ -395,6 +407,7 @@ router.get("/players/mom-leaderboard", async (req, res) => {
         player_name: p.player_name,
         team_name: p.team_name,
         skill_type: p.skill_type,
+        photo_key: p.photo_key || null, // 🆕 global MoM also has photo_key
         mom_awards: momInfo.total_mom,
         formats: momInfo.formats,
         // for compatibility with other views
