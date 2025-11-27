@@ -34,12 +34,6 @@ const buildMatchFilter = (matchTypeRaw, startIndex = 1) => {
   return { where: `pp.match_type = $${startIndex}`, params: [mt] };
 };
 
-// NOTE: Right now we are **not** filtering by user_id,
-// because this module is meant to show global Crickedge
-// stats. If later you want per-user isolation, we can
-// add an optional ?userId= query param and append
-// `AND p.user_id = $N` in each query.
-
 // ======================================================
 // 1) Individual Highest Score (ODI by default)
 // GET /api/player-report-card/highest-score?matchType=ODI
@@ -424,22 +418,22 @@ router.get("/most-balls-faced", async (_req, res) => {
 });
 
 // ======================================================
-// 10) Most Double Centuries (200s) – Test only
-// GET /api/player-report-card/most-double-tons
-// Assumes `double_century` flag in player_performance for Test rows
+// 10) Most 200s (double hundreds) – Test only
+// GET /api/player-report-card/most-200s
+// NOTE: assumes test_match_results.double_century holds
+//       number of 200+ scores for that player in that match.
 // ======================================================
 
-router.get("/most-double-tons", async (_req, res) => {
+router.get("/most-200s", async (_req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(pp.double_century) AS total_double_centuries
-    FROM player_performance pp
+      SUM(COALESCE(tmr.double_century, 0)) AS total_double_centuries
+    FROM test_match_results tmr
     JOIN players p
-      ON pp.player_id = p.id
-    WHERE pp.match_type = 'Test'
+      ON tmr.player_id = p.id
     GROUP BY p.player_name
-    HAVING SUM(pp.double_century) > 0
+    HAVING SUM(COALESCE(tmr.double_century, 0)) > 0
     ORDER BY total_double_centuries DESC, p.player_name ASC
     LIMIT 10;
   `;
@@ -449,91 +443,155 @@ router.get("/most-double-tons", async (_req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
-      totalDoubleCenturies: Number(row.total_double_centuries),
+      doubleCenturies: Number(row.total_double_centuries),
     }));
     res.json(payload);
   } catch (err) {
-    console.error("Error in /most-double-tons:", err);
-    res
-      .status(500)
-      .json({ error: "Failed to fetch most double centuries." });
+    console.error("Error in /most-200s:", err);
+    res.status(500).json({ error: "Failed to fetch most double centuries." });
   }
 });
 
 // ======================================================
-// 11) Fastest Fifty / Hundred (by balls faced)
-// GET /api/player-report-card/fastest-milestones
-//   ?milestone=FIFTY|HUNDRED  (default FIFTY)
-//   ?matchType=ALL|ODI|T20|Test
+// 11) Fastest Fifty
+// GET /api/player-report-card/fastest-fifty?matchType=ALL|ODI|T20|Test
+// Per player: best (min balls) innings with >= 50 runs
 // ======================================================
 
-router.get("/fastest-milestones", async (req, res) => {
+router.get("/fastest-fifty", async (req, res) => {
   const matchTypeRaw = req.query.matchType || "ALL";
-  const milestoneRaw = String(req.query.milestone || "FIFTY").toUpperCase();
   const { where, params } = buildMatchFilter(matchTypeRaw, 1);
-
-  const minRuns = milestoneRaw === "HUNDRED" ? 100 : 50;
-  const nextIndex = params.length + 1;
 
   const sql = `
     SELECT
-      p.player_name,
-      pp.run_scored,
-      pp.balls_faced,
-      pp.match_type
-    FROM player_performance pp
-    JOIN players p
-      ON pp.player_id = p.id
-    WHERE ${where}
-      AND pp.balls_faced > 0
-      AND pp.run_scored >= $${nextIndex}
-    ORDER BY pp.balls_faced ASC,
-             pp.run_scored DESC,
-             p.player_name ASC
+      player_name,
+      runs,
+      balls,
+      match_type
+    FROM (
+      SELECT
+        p.player_name,
+        pp.run_scored AS runs,
+        pp.balls_faced AS balls,
+        pp.match_type,
+        ROW_NUMBER() OVER (
+          PARTITION BY p.id
+          ORDER BY pp.balls_faced ASC, pp.run_scored DESC
+        ) AS rn
+      FROM player_performance pp
+      JOIN players p
+        ON pp.player_id = p.id
+      WHERE ${where}
+        AND pp.run_scored >= 50
+        AND pp.balls_faced > 0
+    ) sub
+    WHERE rn = 1
+    ORDER BY balls ASC, runs DESC, player_name ASC
     LIMIT 10;
   `;
 
   try {
-    const { rows } = await pool.query(sql, [...params, minRuns]);
+    const { rows } = await pool.query(sql, params);
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
-      runs: Number(row.run_scored),
-      balls: Number(row.balls_faced),
+      runs: Number(row.runs),
+      balls: Number(row.balls),
       matchType: row.match_type,
       strikeRate:
-        row.balls_faced > 0
-          ? Number(((row.run_scored * 100) / row.balls_faced).toFixed(2))
+        row.balls > 0
+          ? Number(((row.runs * 100.0) / row.balls).toFixed(2))
           : null,
     }));
     res.json(payload);
   } catch (err) {
-    console.error("Error in /fastest-milestones:", err);
-    res.status(500).json({ error: "Failed to fetch fastest milestones." });
+    console.error("Error in /fastest-fifty:", err);
+    res.status(500).json({ error: "Failed to fetch fastest fifties." });
   }
 });
 
 // ======================================================
-// 12) Highest Strike Rate (min X balls)
+// 12) Fastest Hundred
+// GET /api/player-report-card/fastest-hundred?matchType=ALL|ODI|T20|Test
+// ======================================================
+
+router.get("/fastest-hundred", async (req, res) => {
+  const matchTypeRaw = req.query.matchType || "ALL";
+  const { where, params } = buildMatchFilter(matchTypeRaw, 1);
+
+  const sql = `
+    SELECT
+      player_name,
+      runs,
+      balls,
+      match_type
+    FROM (
+      SELECT
+        p.player_name,
+        pp.run_scored AS runs,
+        pp.balls_faced AS balls,
+        pp.match_type,
+        ROW_NUMBER() OVER (
+          PARTITION BY p.id
+          ORDER BY pp.balls_faced ASC, pp.run_scored DESC
+        ) AS rn
+      FROM player_performance pp
+      JOIN players p
+        ON pp.player_id = p.id
+      WHERE ${where}
+        AND pp.run_scored >= 100
+        AND pp.balls_faced > 0
+    ) sub
+    WHERE rn = 1
+    ORDER BY balls ASC, runs DESC, player_name ASC
+    LIMIT 10;
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, params);
+    const payload = rows.map((row, idx) => ({
+      rank: idx + 1,
+      playerName: row.player_name,
+      runs: Number(row.runs),
+      balls: Number(row.balls),
+      matchType: row.match_type,
+      strikeRate:
+        row.balls > 0
+          ? Number(((row.runs * 100.0) / row.balls).toFixed(2))
+          : null,
+    }));
+    res.json(payload);
+  } catch (err) {
+    console.error("Error in /fastest-hundred:", err);
+    res.status(500).json({ error: "Failed to fetch fastest hundreds." });
+  }
+});
+
+// ======================================================
+// 13) Highest Strike Rate (min X balls)
 // GET /api/player-report-card/highest-strike-rate
 //   ?matchType=ALL|ODI|T20|Test
-//   ?minBalls=300 (optional, default 300)
+//   &minBalls=250   (optional, default 250)
 // ======================================================
 
 router.get("/highest-strike-rate", async (req, res) => {
   const matchTypeRaw = req.query.matchType || "ALL";
-  const minBalls = Number(req.query.minBalls || 300);
   const { where, params } = buildMatchFilter(matchTypeRaw, 1);
-  const nextIndex = params.length + 1;
+
+  const rawMin = parseInt(req.query.minBalls, 10);
+  const minBalls = Number.isFinite(rawMin) && rawMin > 0 ? rawMin : 250;
+  const minIdx = params.length + 1;
+  params.push(minBalls);
 
   const sql = `
     SELECT
       p.player_name,
-      SUM(pp.run_scored) AS total_runs,
+      SUM(pp.run_scored)  AS total_runs,
       SUM(pp.balls_faced) AS total_balls,
       ROUND(
-        (SUM(pp.run_scored)::numeric * 100)
-        / NULLIF(SUM(pp.balls_faced), 0),
+        SUM(pp.run_scored)::numeric
+        / NULLIF(SUM(pp.balls_faced), 0)
+        * 100,
         2
       ) AS strike_rate
     FROM player_performance pp
@@ -541,54 +599,10 @@ router.get("/highest-strike-rate", async (req, res) => {
       ON pp.player_id = p.id
     WHERE ${where}
     GROUP BY p.player_name
-    HAVING SUM(pp.balls_faced) >= $${nextIndex}
+    HAVING SUM(pp.balls_faced) >= $${minIdx}
     ORDER BY strike_rate DESC,
              total_runs DESC,
-             p.player_name ASC
-    LIMIT 10;
-  `;
-
-  try {
-    const { rows } = await pool.query(sql, [...params, minBalls]);
-    const payload = rows.map((row, idx) => ({
-      rank: idx + 1,
-      playerName: row.player_name,
-      totalRuns: Number(row.total_runs),
-      totalBalls: Number(row.total_balls),
-      strikeRate:
-        row.strike_rate !== null ? Number(row.strike_rate) : null,
-    }));
-    res.json(payload);
-  } catch (err) {
-    console.error("Error in /highest-strike-rate:", err);
-    res.status(500).json({ error: "Failed to fetch highest strike rates." });
-  }
-});
-
-// ======================================================
-// 13) Best Bowling Figures in a Single Innings
-// GET /api/player-report-card/best-figures
-//   ?matchType=ALL|ODI|T20|Test
-// Order: most wickets, then least runs
-// ======================================================
-
-router.get("/best-figures", async (req, res) => {
-  const matchTypeRaw = req.query.matchType || "ALL";
-  const { where, params } = buildMatchFilter(matchTypeRaw, 1);
-
-  const sql = `
-    SELECT
-      p.player_name,
-      pp.wickets_taken,
-      pp.runs_given,
-      pp.match_type
-    FROM player_performance pp
-    JOIN players p
-      ON pp.player_id = p.id
-    WHERE ${where}
-      AND COALESCE(pp.wickets_taken, 0) > 0
-    ORDER BY pp.wickets_taken DESC,
-             pp.runs_given ASC,
+             total_balls DESC,
              p.player_name ASC
     LIMIT 10;
   `;
@@ -598,14 +612,73 @@ router.get("/best-figures", async (req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
-      wickets: Number(row.wickets_taken),
-      runs: Number(row.runs_given),
+      totalRuns: Number(row.total_runs),
+      totalBalls: Number(row.total_balls),
+      strikeRate:
+        row.strike_rate != null ? Number(row.strike_rate) : null,
+      minBalls,
+    }));
+    res.json(payload);
+  } catch (err) {
+    console.error("Error in /highest-strike-rate:", err);
+    res
+      .status(500)
+      .json({ error: "Failed to fetch highest strike rates." });
+  }
+});
+
+// ======================================================
+// 14) Best Bowling Figures in an Innings
+// GET /api/player-report-card/best-bowling-figures?matchType=ALL|ODI|T20|Test
+// One best spell per player (most wkts, then least runs)
+// ======================================================
+
+router.get("/best-bowling-figures", async (req, res) => {
+  const matchTypeRaw = req.query.matchType || "ALL";
+  const { where, params } = buildMatchFilter(matchTypeRaw, 1);
+
+  const sql = `
+    SELECT
+      player_name,
+      wickets,
+      runs,
+      match_type
+    FROM (
+      SELECT
+        p.player_name,
+        pp.wickets_taken AS wickets,
+        pp.runs_given     AS runs,
+        pp.match_type,
+        ROW_NUMBER() OVER (
+          PARTITION BY p.id
+          ORDER BY pp.wickets_taken DESC, pp.runs_given ASC
+        ) AS rn
+      FROM player_performance pp
+      JOIN players p
+        ON pp.player_id = p.id
+      WHERE ${where}
+        AND pp.wickets_taken > 0
+    ) sub
+    WHERE rn = 1
+    ORDER BY wickets DESC, runs ASC, player_name ASC
+    LIMIT 10;
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, params);
+    const payload = rows.map((row, idx) => ({
+      rank: idx + 1,
+      playerName: row.player_name,
+      wickets: Number(row.wickets),
+      runs: Number(row.runs),
       matchType: row.match_type,
     }));
     res.json(payload);
   } catch (err) {
-    console.error("Error in /best-figures:", err);
-    res.status(500).json({ error: "Failed to fetch best bowling figures." });
+    console.error("Error in /best-bowling-figures:", err);
+    res
+      .status(500)
+      .json({ error: "Failed to fetch best bowling figures." });
   }
 });
 
