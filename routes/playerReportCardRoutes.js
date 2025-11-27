@@ -418,22 +418,23 @@ router.get("/most-balls-faced", async (_req, res) => {
 });
 
 // ======================================================
-// 10) Most 200s (double hundreds) – Test only
+// 10) Most 200s (double hundreds) – from player_performance
 // GET /api/player-report-card/most-200s
-// NOTE: assumes test_match_results.double_century holds
-//       number of 200+ scores for that player in that match.
+// Uses player_performance.double_century (Test innings)
 // ======================================================
 
 router.get("/most-200s", async (_req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(COALESCE(tmr.double_century, 0)) AS total_double_centuries
-    FROM test_match_results tmr
+      SUM(COALESCE(pp.double_century, 0)) AS total_double_centuries
+    FROM player_performance pp
     JOIN players p
-      ON tmr.player_id = p.id
+      ON pp.player_id = p.id
+    -- if you want only Test 200s, keep this line:
+    WHERE pp.match_type = 'Test'
     GROUP BY p.player_name
-    HAVING SUM(COALESCE(tmr.double_century, 0)) > 0
+    HAVING SUM(COALESCE(pp.double_century, 0)) > 0
     ORDER BY total_double_centuries DESC, p.player_name ASC
     LIMIT 10;
   `;
@@ -448,7 +449,9 @@ router.get("/most-200s", async (_req, res) => {
     res.json(payload);
   } catch (err) {
     console.error("Error in /most-200s:", err);
-    res.status(500).json({ error: "Failed to fetch most double centuries." });
+    res
+      .status(500)
+      .json({ error: "Failed to fetch most double centuries." });
   }
 });
 
