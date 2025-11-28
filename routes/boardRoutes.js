@@ -3,26 +3,11 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const { v4: uuidv4 } = require("uuid");
+// ✅ use the same admin guard used everywhere else
+const { requireAdminAuth } = require("./auth");
 
 /* ---------------- Helpers ---------------- */
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "");
-
-const adminOnly = (req, res, next) => {
-  const tokenAdmin =
-    req.admin &&
-    (req.admin.role === "admin" ||
-      req.admin.is_super_admin === true ||
-      req.admin.isAdmin === true);
-
-  const sessionAdmin =
-    req.user &&
-    (req.user.role === "admin" || req.user.isAdmin === true);
-
-  if (!tokenAdmin && !sessionAdmin) {
-    return res.status(403).json({ error: "Access denied. Admins only." });
-  }
-  next();
-};
 
 function sanitizeTeams(teams) {
   if (!Array.isArray(teams)) return [];
@@ -63,9 +48,16 @@ function startOfToday() {
  * --------------------------------------------- */
 router.post("/register", async (req, res) => {
   try {
-    if (!req.body) return res.status(400).json({ error: "Missing request body." });
+    if (!req.body)
+      return res.status(400).json({ error: "Missing request body." });
 
-    let { board_name, owner_name, registration_date, owner_email, teams } = req.body;
+    let {
+      board_name,
+      owner_name,
+      registration_date,
+      owner_email,
+      teams,
+    } = req.body;
 
     board_name = String(board_name || "").trim();
     owner_name = String(owner_name || "").trim();
@@ -84,11 +76,15 @@ router.post("/register", async (req, res) => {
 
     const isoDate = toIsoDateString(registration_date);
     if (!isoDate) {
-      return res.status(400).json({ error: "Invalid registration date. Use DD-MM-YYYY or YYYY-MM-DD." });
+      return res.status(400).json({
+        error: "Invalid registration date. Use DD-MM-YYYY or YYYY-MM-DD.",
+      });
     }
     const regDateObj = new Date(isoDate);
     if (regDateObj < startOfToday()) {
-      return res.status(400).json({ error: "Registration date must be today or in the future." });
+      return res
+        .status(400)
+        .json({ error: "Registration date must be today or in the future." });
     }
 
     const registration_id = uuidv4();
@@ -111,7 +107,7 @@ router.post("/register", async (req, res) => {
       ]);
       const br = ins.rows[0];
 
-      // ✅ Insert teams with BOTH keys to satisfy NOT NULL(board_id)
+      // Insert teams with both keys
       const insertTeam = `
         INSERT INTO board_teams (board_id, registration_id, team_name)
         VALUES ($1, $2, $3)
@@ -137,14 +133,26 @@ router.post("/register", async (req, res) => {
       if (err.code === "23505") {
         if ((err.constraint || "").includes("board_registration_board_name_key"))
           return res.status(409).json({ error: "Board name already exists." });
-        if ((err.constraint || "").includes("board_registration_owner_email_key"))
-          return res.status(409).json({ error: "Owner email already used." });
-        return res.status(409).json({ error: "Duplicate data violates a unique constraint." });
+        if (
+          (err.constraint || "").includes(
+            "board_registration_owner_email_key"
+          )
+        )
+          return res
+            .status(409)
+            .json({ error: "Owner email already used." });
+        return res
+          .status(409)
+          .json({ error: "Duplicate data violates a unique constraint." });
       }
-      if (err.code === "23502") // not_null_violation
-        return res.status(400).json({ error: "Missing required data (likely board_id on board_teams)." });
+      if (err.code === "23502")
+        return res.status(400).json({
+          error: "Missing required data (likely board_id on board_teams).",
+        });
       if (err.code === "22P02")
-        return res.status(400).json({ error: "Bad value for one of the fields (check date/UUID formats)." });
+        return res.status(400).json({
+          error: "Bad value for one of the fields (check date/UUID formats).",
+        });
       if (err.code === "42804")
         return res.status(400).json({ error: "Data type mismatch." });
 
@@ -189,10 +197,16 @@ router.get("/all", async (req, res) => {
 /* ---------------------------------------------
  * Update Board (ADMIN ONLY) — replaces teams
  * --------------------------------------------- */
-router.put("/update/:registration_id", adminOnly, async (req, res) => {
+router.put("/update/:registration_id", requireAdminAuth, async (req, res) => {
   try {
     const { registration_id } = req.params;
-    let { board_name, owner_name, registration_date, owner_email, teams } = req.body;
+    let {
+      board_name,
+      owner_name,
+      registration_date,
+      owner_email,
+      teams,
+    } = req.body;
 
     board_name = String(board_name || "").trim();
     owner_name = String(owner_name || "").trim();
@@ -211,7 +225,9 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
 
     const isoDate = toIsoDateString(registration_date);
     if (!isoDate) {
-      return res.status(400).json({ error: "Invalid registration date. Use DD-MM-YYYY or YYYY-MM-DD." });
+      return res.status(400).json({
+        error: "Invalid registration date. Use DD-MM-YYYY or YYYY-MM-DD.",
+      });
     }
 
     const client = await pool.connect();
@@ -241,7 +257,7 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
         [board_name, owner_name, isoDate, owner_email, registration_id]
       );
 
-      // Delete by either key (covers any historical rows)
+      // Delete existing teams for this board
       await client.query(
         "DELETE FROM board_teams WHERE board_id = $1 OR registration_id = $2",
         [br.id, br.registration_id]
@@ -269,11 +285,17 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
       });
 
       if (err.code === "23505")
-        return res.status(409).json({ error: "Duplicate value violates a unique constraint." });
+        return res.status(409).json({
+          error: "Duplicate value violates a unique constraint.",
+        });
       if (err.code === "23502")
-        return res.status(400).json({ error: "Missing required data (likely board_id on board_teams)." });
+        return res.status(400).json({
+          error: "Missing required data (likely board_id on board_teams).",
+        });
       if (err.code === "22P02")
-        return res.status(400).json({ error: "Bad value for one of the fields." });
+        return res
+          .status(400)
+          .json({ error: "Bad value for one of the fields." });
       if (err.code === "42804")
         return res.status(400).json({ error: "Data type mismatch." });
 
@@ -290,7 +312,7 @@ router.put("/update/:registration_id", adminOnly, async (req, res) => {
 /* ---------------------------------------------
  * Delete Board (ADMIN ONLY)
  * --------------------------------------------- */
-router.delete("/delete/:registration_id", adminOnly, async (req, res) => {
+router.delete("/delete/:registration_id", requireAdminAuth, async (req, res) => {
   try {
     const { registration_id } = req.params;
     const client = await pool.connect();
