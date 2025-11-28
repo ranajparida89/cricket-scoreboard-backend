@@ -89,7 +89,7 @@ app.use(
         callback(new Error("Not allowed by CORS"));
       }
     },
-    methods: "*", // ✅ Allow all HTTP methods (GET, POST, PUT, DELETE, OPTIONS etc.)
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // 👈 updated
     credentials: true,
   })
 );
