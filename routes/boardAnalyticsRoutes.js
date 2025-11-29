@@ -1,6 +1,7 @@
 // routes/boardAnalyticsRoutes.js
 // 10-AUG-2025 — CrickEdge Board Analytics (schema-aligned)
 // 29-NOV-2025 — Updated to respect board_teams.joined_at / left_at
+// 30-NOV-2025 — Fix: normalize match dates to 'YYYY-MM-DD' in /summary
 // - Outcome points: ODI/T20 win/draw/loss = 10/5/2; TEST = 18/9/4
 // - Championship bonus via Hall of Fame: ODI/T20 +25, TEST +50
 // - Date-safe windows, robust winner parsing, graceful fallbacks
@@ -75,7 +76,7 @@ const isDrawish = (w) =>
 
 // helper for joined_at/left_at comparisons (YYYY-MM-DD strings or null)
 const isActiveInterval = (joined, left, dateStr) => {
-  const d = String(dateStr);
+  const d = String(dateStr); // 'YYYY-MM-DD'
   const j = joined ? String(joined) : null;
   const l = left ? String(left) : null;
   return (!j || j <= d) && (!l || l >= d);
@@ -107,8 +108,10 @@ router.get("/summary", async (req, res) => {
     const from = req.query.from ? String(req.query.from) : null;
     const to = req.query.to ? String(req.query.to) : null;
 
-    if (from && !isISODate(from)) return res.status(400).json({ error: "from must be YYYY-MM-DD" });
-    if (to && !isISODate(to)) return res.status(400).json({ error: "to must be YYYY-MM-DD" });
+    if (from && !isISODate(from))
+      return res.status(400).json({ error: "from must be YYYY-MM-DD" });
+    if (to && !isISODate(to))
+      return res.status(400).json({ error: "to must be YYYY-MM-DD" });
     if (from && to && new Date(from) > new Date(to)) {
       return res.status(400).json({ error: "from must be <= to" });
     }
@@ -153,7 +156,7 @@ router.get("/summary", async (req, res) => {
     const getParticipantsForMatch = (team1, team2, dateStr) => {
       const t1 = String(team1 || "").trim().toLowerCase();
       const t2 = String(team2 || "").trim().toLowerCase();
-      const d = String(dateStr);
+      const d = String(dateStr); // 'YYYY-MM-DD'
       const participants = [];
 
       boardIds.forEach((bid) => {
@@ -169,8 +172,9 @@ router.get("/summary", async (req, res) => {
       return participants;
     };
 
-    // ODI/T20 matches (date-safe)
-    const mhRange = addDateRange("COALESCE(mh.match_date, mh.match_time::date)", from, to);
+    // ---------- ODI/T20 matches (date-safe, normalized d) ----------
+    const mhDateExpr = "COALESCE(mh.match_date, mh.match_time::date)";
+    const mhRange = addDateRange(mhDateExpr, from, to);
     const mhQ = `
       SELECT
         mh.id,
@@ -180,7 +184,7 @@ router.get("/summary", async (req, res) => {
         LOWER(TRIM(mh.team2)) AS team2,
         mh.runs2, mh.wickets2, mh.runs2_2, mh.wickets2_2,
         LOWER(TRIM(mh.winner)) AS winner,
-        COALESCE(mh.match_date, mh.match_time::date) AS d
+        to_char(${mhDateExpr}, 'YYYY-MM-DD') AS d
       FROM public.match_history mh
       WHERE mh.status = 'approved'
         AND (UPPER(mh.match_type) = 'ODI' OR UPPER(mh.match_type) = 'T20')
@@ -188,8 +192,9 @@ router.get("/summary", async (req, res) => {
     `;
     const { rows: mhRows } = await pool.query(mhQ, mhRange.params);
 
-    // Test matches (date-safe)
-    const tRange = addDateRange("COALESCE(tm.match_date, tm.created_at::date)", from, to);
+    // ---------- Test matches (date-safe, normalized d) ----------
+    const tDateExpr = "COALESCE(tm.match_date, tm.created_at::date)";
+    const tRange = addDateRange(tDateExpr, from, to);
     const tQ = `
       SELECT
         tm.id,
@@ -198,7 +203,7 @@ router.get("/summary", async (req, res) => {
         LOWER(TRIM(tm.team2)) AS team2,
         tm.runs2, tm.runs2_2,
         LOWER(TRIM(tm.winner)) AS winner,
-        COALESCE(tm.match_date, tm.created_at::date) AS d
+        to_char(${tDateExpr}, 'YYYY-MM-DD') AS d
       FROM public.test_match_results tm
       WHERE tm.status = 'approved'
         ${tRange.sql}
@@ -282,9 +287,8 @@ router.get("/summary", async (req, res) => {
       const t1 = m.team1 || "",
         t2 = m.team2 || "",
         w = m.winner || "";
-      const d = m.d;
+      const d = m.d; // 'YYYY-MM-DD'
 
-      // Which boards participated (respecting joined_at/left_at)?
       const participants = getParticipantsForMatch(t1, t2, d);
       if (!participants.length) return;
 
@@ -337,7 +341,7 @@ router.get("/summary", async (req, res) => {
       const t1 = m.team1 || "",
         t2 = m.team2 || "",
         w = m.winner || "";
-      const d = m.d;
+      const d = m.d; // 'YYYY-MM-DD'
 
       const participants = getParticipantsForMatch(t1, t2, d);
       if (!participants.length) return;
@@ -475,7 +479,8 @@ router.get("/timeline", async (req, res) => {
   try {
     const from = req.query.from ? String(req.query.from) : null;
     const to = req.query.to ? String(req.query.to) : null;
-    if (from && !isISODate(from)) return res.status(400).json({ error: "from must be YYYY-MM-DD" });
+    if (from && !isISODate(from))
+      return res.status(400).json({ error: "from must be YYYY-MM-DD" });
     if (to && !isISODate(to)) return res.status(400).json({ error: "to must be YYYY-MM-DD" });
     if (from && to && new Date(from) > new Date(to)) {
       return res.status(400).json({ error: "from must be <= to" });
@@ -807,8 +812,7 @@ router.get("/home/top-board-insight", async (req, res) => {
 
       for (const bid of involved) {
         const won =
-          (winnerIsT1 && boardsT1.includes(bid)) ||
-          (winnerIsT2 && boardsT2.includes(bid));
+          (winnerIsT1 && boardsT1.includes(bid)) || (winnerIsT2 && boardsT2.includes(bid));
         if (draw) addPoints(d, bid, pointsForFormatLocal(fmt, "draw"));
         else if (won) addPoints(d, bid, pointsForFormatLocal(fmt, "win"));
         else if (w) addPoints(d, bid, pointsForFormatLocal(fmt, "loss"));
