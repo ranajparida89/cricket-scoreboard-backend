@@ -614,4 +614,114 @@ router.post("/move-team", async (req, res) => {
   }
 });
 
+/* ===========================================================
+ * 6) REMOVE TEAM FROM A BOARD (SOFT REMOVE)
+ *    - Closes the *active* membership (left_at) for that board
+ *    - If already archived, it simply reports "already removed"
+ *    - Match history remains preserved
+ * =========================================================== */
+
+router.post("/remove-team", async (req, res) => {
+  try {
+    let { registration_id, team_name, effective_date } = req.body;
+
+    registration_id = String(registration_id || "").trim();
+    team_name = String(team_name || "").trim();
+
+    if (!registration_id || !team_name) {
+      return res.status(400).json({
+        error: "registration_id and team_name are required.",
+      });
+    }
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const isoDate = toIsoDateString(effective_date || todayIso);
+    if (!isoDate) {
+      return res.status(400).json({
+        error: "Invalid effective_date. Use DD-MM-YYYY or YYYY-MM-DD.",
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Find board
+      const brRes = await client.query(
+        "SELECT id, registration_id, board_name FROM board_registration WHERE registration_id = $1",
+        [registration_id]
+      );
+
+      if (brRes.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Board not found." });
+      }
+
+      const br = brRes.rows[0];
+
+      // All memberships for this team on this board
+      const memberRes = await client.query(
+        `
+          SELECT id, joined_at, left_at
+          FROM board_teams
+          WHERE (board_id = $1 OR registration_id = $2)
+            AND LOWER(TRIM(team_name)) = LOWER(TRIM($3))
+          ORDER BY joined_at DESC
+        `,
+        [br.id, br.registration_id, team_name]
+      );
+
+      if (memberRes.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          error: "Team is not registered under this board.",
+        });
+      }
+
+      // Look for an active membership
+      const active = memberRes.rows.find((r) => !r.left_at);
+
+      if (active) {
+        // Close the active membership
+        await client.query(
+          `
+            UPDATE board_teams
+            SET left_at = to_date($2,'YYYY-MM-DD')
+            WHERE id = $1
+          `,
+          [active.id, isoDate]
+        );
+
+        await client.query("COMMIT");
+        return res.status(200).json({
+          message: "Team removed from board (active membership closed).",
+          registration_id: br.registration_id,
+          board_name: br.board_name,
+          team_name,
+          effective_date: isoDate,
+        });
+      }
+
+      // No active membership → already archived, just report success
+      await client.query("COMMIT");
+      return res.status(200).json({
+        message: "Team is already archived for this board.",
+        registration_id: br.registration_id,
+        board_name: br.board_name,
+        team_name,
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("remove-team transaction failed:", err);
+      return res.status(500).json({ error: "Failed to remove team." });
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error("Server error (remove-team):", err);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+
 module.exports = router;
