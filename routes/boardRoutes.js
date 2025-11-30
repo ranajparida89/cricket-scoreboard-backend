@@ -1,79 +1,79 @@
 // routes/boardRoutes.js
+// Board Registration + Teams + Membership History (joined_at / left_at)
+
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const { v4: uuidv4 } = require("uuid");
 
-/* ---------------- Helpers ---------------- */
-const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "");
+/* ----------------- helpers ----------------- */
 
-// NOTE: adminOnly is no longer used for now, but kept here if we re-enable later.
-const adminOnly = (req, res, next) => {
-  const tokenAdmin =
-    req.admin &&
-    (req.admin.role === "admin" ||
-      req.admin.is_super_admin === true ||
-      req.admin.isAdmin === true);
-
-  const sessionAdmin =
-    req.user &&
-    (req.user.role === "admin" || req.user.isAdmin === true);
-
-  if (!tokenAdmin && !sessionAdmin) {
-    return res.status(403).json({ error: "Access denied. Admins only." });
-  }
-  next();
-};
-
-function sanitizeTeams(teams) {
+const sanitizeTeams = (teams) => {
   if (!Array.isArray(teams)) return [];
   const seen = new Set();
   const out = [];
-  for (const t of teams) {
-    const s = String(t || "").trim();
-    if (s && !seen.has(s)) {
-      seen.add(s);
-      out.push(s);
-    }
-  }
-  return out;
-}
 
-// Parse DD-MM-YYYY or YYYY-MM-DD → YYYY-MM-DD
-function toIsoDateString(input) {
-  if (!input) return null;
-  const s = String(input).trim();
-  const dmy = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-  if (dmy) {
-    const [, dd, mm, yyyy] = dmy;
+  teams.forEach((t) => {
+    const s = String(t || "").trim();
+    if (!s) return;
+    const key = s.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(s);
+  });
+
+  return out;
+};
+
+const isValidEmail = (email) => {
+  if (!email) return false;
+  const s = String(email).trim();
+  // basic but enough for validation
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+};
+
+// Accepts "YYYY-MM-DD" or "DD-MM-YYYY" and returns "YYYY-MM-DD" or null
+const toIsoDateString = (raw) => {
+  if (!raw) return null;
+  let s = String(raw).trim();
+
+  // If already YYYY-MM-DD, return as is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // DD-MM-YYYY
+  const m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(s);
+  if (m) {
+    const [_, dd, mm, yyyy] = m;
     return `${yyyy}-${mm}-${dd}`;
   }
-  const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (ymd) return s;
-  const dt = new Date(s);
-  return isNaN(dt.getTime()) ? null : dt.toISOString().slice(0, 10);
-}
-function startOfToday() {
-  const t = new Date();
-  t.setHours(0, 0, 0, 0);
-  return t;
-}
 
-/* ---------------------------------------------
- * Register a New Board (OPEN)
- * --------------------------------------------- */
+  // Fallback: try Date parsing
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+};
+
+const startOfToday = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+/* ===========================================================
+ * 1) REGISTER NEW BOARD (OPEN)
+ *    - Inserts into board_registration
+ *    - Inserts teams into board_teams with joined_at = registration_date
+ * ===========================================================
+ */
+
 router.post("/register", async (req, res) => {
   try {
-    if (!req.body)
+    if (!req.body) {
       return res.status(400).json({ error: "Missing request body." });
+    }
 
-    let {
-      board_name,
-      owner_name,
-      registration_date,
-      owner_email,
-      teams,
-    } = req.body;
+    let { board_name, owner_name, registration_date, owner_email, teams } =
+      req.body;
 
     board_name = String(board_name || "").trim();
     owner_name = String(owner_name || "").trim();
@@ -83,11 +83,13 @@ router.post("/register", async (req, res) => {
     if (!board_name || !owner_name || !registration_date || !owner_email) {
       return res.status(400).json({ error: "All fields are required." });
     }
+
     if (!Array.isArray(teams) || teams.length === 0) {
       return res
         .status(400)
         .json({ error: "At least one team is required." });
     }
+
     if (!isValidEmail(owner_email)) {
       return res.status(400).json({ error: "Invalid email format." });
     }
@@ -98,6 +100,7 @@ router.post("/register", async (req, res) => {
         error: "Invalid registration date. Use DD-MM-YYYY or YYYY-MM-DD.",
       });
     }
+
     const regDateObj = new Date(isoDate);
     if (regDateObj < startOfToday()) {
       return res.status(400).json({
@@ -107,6 +110,7 @@ router.post("/register", async (req, res) => {
 
     const registration_id = uuidv4();
     const client = await pool.connect();
+
     try {
       await client.query("BEGIN");
 
@@ -115,6 +119,7 @@ router.post("/register", async (req, res) => {
         VALUES ($1, $2, $3, to_date($4,'YYYY-MM-DD'), $5)
         RETURNING id, registration_id
       `;
+
       const ins = await client.query(insertBoard, [
         registration_id,
         board_name,
@@ -122,17 +127,25 @@ router.post("/register", async (req, res) => {
         isoDate,
         owner_email,
       ]);
+
       const br = ins.rows[0];
 
       const insertTeam = `
-        INSERT INTO board_teams (board_id, registration_id, team_name)
-        VALUES ($1, $2, $3)
+        INSERT INTO board_teams (board_id, registration_id, team_name, joined_at)
+        VALUES ($1, $2, $3, to_date($4,'YYYY-MM-DD'))
       `;
+
       for (const team of teams) {
-        await client.query(insertTeam, [br.id, br.registration_id, team]);
+        await client.query(insertTeam, [
+          br.id,
+          br.registration_id,
+          team,
+          isoDate,
+        ]);
       }
 
       await client.query("COMMIT");
+
       return res.status(201).json({
         message: "Board registered successfully.",
         registration_id: br.registration_id,
@@ -151,7 +164,11 @@ router.post("/register", async (req, res) => {
           return res
             .status(409)
             .json({ error: "Board name already exists." });
-        if ((err.constraint || "").includes("board_registration_owner_email_key"))
+        if (
+          (err.constraint || "").includes(
+            "board_registration_owner_email_key"
+          )
+        )
           return res
             .status(409)
             .json({ error: "Owner email already used." });
@@ -159,19 +176,22 @@ router.post("/register", async (req, res) => {
           .status(409)
           .json({ error: "Duplicate data violates a unique constraint." });
       }
-      if (err.code === "23502")
+
+      if (err.code === "23502") {
         return res.status(400).json({
-          error:
-            "Missing required data (likely board_id on board_teams).",
+          error: "Missing required data (check all mandatory fields).",
         });
-      if (err.code === "22P02")
+      }
+
+      if (err.code === "22P02") {
         return res.status(400).json({
           error: "Bad value for one of the fields (check date/UUID formats).",
         });
-      if (err.code === "42804")
-        return res
-          .status(400)
-          .json({ error: "Data type mismatch." });
+      }
+
+      if (err.code === "42804") {
+        return res.status(400).json({ error: "Data type mismatch." });
+      }
 
       return res.status(500).json({ error: "Error during registration." });
     } finally {
@@ -183,48 +203,73 @@ router.post("/register", async (req, res) => {
   }
 });
 
-/* ---------------------------------------------
- * Get All Boards with Their Teams (legacy)
- * --------------------------------------------- */
-router.get("/all", async (req, res) => {
+/* ===========================================================
+ * 2) GET ALL BOARDS (OPEN)
+ *    - Returns boards with CURRENT active teams only (left_at IS NULL)
+ * ===========================================================
+ */
+
+router.get("/all-boards", async (_req, res) => {
   try {
-    const query = `
-      SELECT 
+    const sql = `
+      SELECT
+        br.id,
+        br.registration_id,
+        br.board_name,
+        br.owner_name,
+        to_char(br.registration_date,'YYYY-MM-DD') AS registration_date,
+        br.owner_email,
+        COALESCE(
+          json_agg(bt.team_name ORDER BY bt.team_name)
+            FILTER (WHERE bt.team_name IS NOT NULL AND bt.left_at IS NULL),
+          '[]'
+        ) AS teams
+      FROM board_registration br
+      LEFT JOIN board_teams bt
+        ON bt.board_id = br.id
+      GROUP BY
         br.id,
         br.registration_id,
         br.board_name,
         br.owner_name,
         br.registration_date,
-        br.owner_email,
-        ARRAY_REMOVE(ARRAY_AGG(bt.team_name), NULL) AS teams
-      FROM board_registration br
-      LEFT JOIN board_teams bt 
-        ON (bt.registration_id = br.registration_id OR bt.board_id = br.id)
-      GROUP BY br.id, br.registration_id, br.board_name, br.owner_name, br.registration_date, br.owner_email
-      ORDER BY br.registration_date DESC
+        br.owner_email
+      ORDER BY br.registration_date DESC, br.board_name ASC
     `;
-    const result = await pool.query(query);
-    res.status(200).json(result.rows);
+
+    const { rows } = await pool.query(sql);
+
+    const boards = rows.map((r) => ({
+      id: r.id,
+      registration_id: r.registration_id,
+      board_name: r.board_name,
+      owner_name: r.owner_name,
+      registration_date: r.registration_date,
+      owner_email: r.owner_email,
+      teams: Array.isArray(r.teams) ? r.teams : [],
+    }));
+
+    res.json({ boards });
   } catch (err) {
-    console.error("Fetch boards error (/all):", err);
-    res.status(500).json({ error: "Failed to fetch boards." });
+    console.error("Error fetching boards:", err);
+    res.status(500).json({ error: "Error fetching board list." });
   }
 });
 
-/* ---------------------------------------------
- * Update Board — replaces teams
- *  ❌ NO admin check for now (to avoid auth issues)
- * --------------------------------------------- */
+/* ===========================================================
+ * 3) UPDATE BOARD
+ *    - Updates board_registration metadata
+ *    - Membership logic on board_teams:
+ *      • Active teams NOT in new list  → left_at = registration_date
+ *      • New teams NOT currently active → new row with joined_at = registration_date
+ * ===========================================================
+ */
+
 router.put("/update/:registration_id", async (req, res) => {
   try {
     const { registration_id } = req.params;
-    let {
-      board_name,
-      owner_name,
-      registration_date,
-      owner_email,
-      teams,
-    } = req.body;
+    let { board_name, owner_name, registration_date, owner_email, teams } =
+      req.body;
 
     board_name = String(board_name || "").trim();
     owner_name = String(owner_name || "").trim();
@@ -234,9 +279,11 @@ router.put("/update/:registration_id", async (req, res) => {
     if (!board_name || !owner_name || !registration_date || !owner_email) {
       return res.status(400).json({ error: "All fields are required." });
     }
+
     if (!Array.isArray(teams)) {
       return res.status(400).json({ error: "Teams must be an array." });
     }
+
     if (!isValidEmail(owner_email)) {
       return res.status(400).json({ error: "Invalid email format." });
     }
@@ -249,6 +296,7 @@ router.put("/update/:registration_id", async (req, res) => {
     }
 
     const client = await pool.connect();
+
     try {
       await client.query("BEGIN");
 
@@ -256,12 +304,15 @@ router.put("/update/:registration_id", async (req, res) => {
         "SELECT id, registration_id FROM board_registration WHERE registration_id = $1",
         [registration_id]
       );
+
       if (getBoard.rowCount === 0) {
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "Board not found." });
       }
+
       const br = getBoard.rows[0];
 
+      // Update board metadata
       await client.query(
         `
           UPDATE board_registration
@@ -274,19 +325,70 @@ router.put("/update/:registration_id", async (req, res) => {
         [board_name, owner_name, isoDate, owner_email, registration_id]
       );
 
-      await client.query(
-        "DELETE FROM board_teams WHERE board_id = $1 OR registration_id = $2",
+      // Existing memberships
+      const existingRes = await client.query(
+        `
+          SELECT
+            id,
+            LOWER(TRIM(team_name)) AS team_name,
+            to_char(joined_at,'YYYY-MM-DD') AS joined_at,
+            to_char(left_at,'YYYY-MM-DD')   AS left_at
+          FROM board_teams
+          WHERE board_id = $1 OR registration_id = $2
+        `,
         [br.id, br.registration_id]
       );
 
-      if (teams.length > 0) {
-        const insertTeam = `
-          INSERT INTO board_teams (board_id, registration_id, team_name)
-          VALUES ($1, $2, $3)
-        `;
-        for (const team of teams) {
-          await client.query(insertTeam, [br.id, br.registration_id, team]);
+      const existing = existingRes.rows;
+
+      const activeNow = new Set(
+        existing
+          .filter((r) => !r.left_at)
+          .map((r) => r.team_name)
+      );
+
+      const newNormNames = teams.map((t) =>
+        String(t || "").trim().toLowerCase()
+      );
+      const newNormSet = new Set(newNormNames);
+
+      // 1) Close memberships that are active now but NOT present in new list
+      for (const name of activeNow) {
+        if (!newNormSet.has(name)) {
+          await client.query(
+            `
+              UPDATE board_teams
+              SET left_at = to_date($3,'YYYY-MM-DD')
+              WHERE (board_id = $1 OR registration_id = $2)
+                AND LOWER(TRIM(team_name)) = $4
+                AND left_at IS NULL
+            `,
+            [br.id, br.registration_id, isoDate, name]
+          );
         }
+      }
+
+      // 2) Add memberships that are in the new list but not active now
+      const insertTeam = `
+        INSERT INTO board_teams (board_id, registration_id, team_name, joined_at)
+        VALUES ($1, $2, $3, to_date($4,'YYYY-MM-DD'))
+      `;
+
+      for (const normName of newNormSet) {
+        if (activeNow.has(normName)) continue; // already active
+
+        const originalName =
+          teams.find(
+            (t) =>
+              String(t || "").trim().toLowerCase() === normName
+          ) || normName;
+
+        await client.query(insertTeam, [
+          br.id,
+          br.registration_id,
+          originalName,
+          isoDate,
+        ]);
       }
 
       await client.query("COMMIT");
@@ -300,23 +402,28 @@ router.put("/update/:registration_id", async (req, res) => {
         constraint: err.constraint,
       });
 
-      if (err.code === "23505")
-        return res
-          .status(409)
-          .json({ error: "Duplicate value violates a unique constraint." });
-      if (err.code === "23502")
+      if (err.code === "23505") {
+        return res.status(409).json({
+          error: "Duplicate value violates a unique constraint.",
+        });
+      }
+
+      if (err.code === "23502") {
         return res.status(400).json({
           error:
-            "Missing required data (likely board_id on board_teams).",
+            "Missing required data (likely board_id or team_name on board_teams).",
         });
-      if (err.code === "22P02")
+      }
+
+      if (err.code === "22P02") {
         return res
           .status(400)
           .json({ error: "Bad value for one of the fields." });
-      if (err.code === "42804")
-        return res
-          .status(400)
-          .json({ error: "Data type mismatch." });
+      }
+
+      if (err.code === "42804") {
+        return res.status(400).json({ error: "Data type mismatch." });
+      }
 
       res.status(500).json({ error: "Error updating board." });
     } finally {
@@ -328,46 +435,47 @@ router.put("/update/:registration_id", async (req, res) => {
   }
 });
 
-/* ---------------------------------------------
- * Delete Board — also NO admin check for now
- * --------------------------------------------- */
+/* ===========================================================
+ * 4) DELETE BOARD (ADMIN USE)
+ *    - Hard deletes from board_registration and board_teams
+ *    - If you want soft-delete, we can change this later
+ * ===========================================================
+ */
+
 router.delete("/delete/:registration_id", async (req, res) => {
   try {
     const { registration_id } = req.params;
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const getBoard = await client.query(
-        "SELECT id, registration_id FROM board_registration WHERE registration_id = $1",
+      const boardRes = await client.query(
+        "SELECT id FROM board_registration WHERE registration_id = $1",
         [registration_id]
       );
-      if (getBoard.rowCount === 0) {
+
+      if (boardRes.rowCount === 0) {
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "Board not found." });
       }
-      const br = getBoard.rows[0];
 
+      const boardId = boardRes.rows[0].id;
+
+      await client.query("DELETE FROM board_teams WHERE board_id = $1", [
+        boardId,
+      ]);
       await client.query(
-        "DELETE FROM board_teams WHERE board_id = $1 OR registration_id = $2",
-        [br.id, br.registration_id]
-      );
-      await client.query(
-        "DELETE FROM board_registration WHERE registration_id = $1",
-        [registration_id]
+        "DELETE FROM board_registration WHERE id = $1",
+        [boardId]
       );
 
       await client.query("COMMIT");
-      res.status(200).json({ message: "Board deleted successfully." });
+      res.json({ message: "Board deleted successfully." });
     } catch (err) {
       await client.query("ROLLBACK");
-      console.error("Delete transaction failed:", {
-        code: err.code,
-        message: err.message,
-        detail: err.detail,
-        constraint: err.constraint,
-      });
-      res.status(500).json({ error: "Failed to delete board." });
+      console.error("Delete transaction failed:", err);
+      res.status(500).json({ error: "Error deleting board." });
     } finally {
       client.release();
     }
@@ -377,31 +485,117 @@ router.delete("/delete/:registration_id", async (req, res) => {
   }
 });
 
-/* ---------------------------------------------
- * Get All Boards (clean)
- * --------------------------------------------- */
-router.get("/all-boards", async (req, res) => {
+/* ===========================================================
+ * 5) MOVE TEAM (TRANSFER MEMBERSHIP BETWEEN BOARDS)
+ *    - Closes membership in source board (left_at)
+ *    - Opens membership in target board (joined_at)
+ * ===========================================================
+ */
+
+router.post("/move-team", async (req, res) => {
   try {
+    let {
+      team_name,
+      from_registration_id,
+      to_registration_id,
+      effective_date,
+    } = req.body;
+
+    team_name = String(team_name || "").trim();
+    from_registration_id = String(from_registration_id || "").trim();
+    to_registration_id = String(to_registration_id || "").trim();
+
+    if (!team_name || !from_registration_id || !to_registration_id) {
+      return res.status(400).json({
+        error:
+          "team_name, from_registration_id and to_registration_id are required.",
+      });
+    }
+
+    if (from_registration_id === to_registration_id) {
+      return res
+        .status(400)
+        .json({ error: "Source and target boards must be different." });
+    }
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const isoDate = toIsoDateString(effective_date || todayIso);
+    if (!isoDate) {
+      return res.status(400).json({
+        error: "Invalid effective_date. Use DD-MM-YYYY or YYYY-MM-DD.",
+      });
+    }
+
     const client = await pool.connect();
-    const result = await client.query(`
-      SELECT 
-        br.registration_id,
-        br.board_name,
-        br.owner_name,
-        TO_CHAR(br.registration_date, 'YYYY-MM-DD') AS registration_date,
-        br.owner_email,
-        ARRAY_REMOVE(ARRAY_AGG(bt.team_name), NULL) AS teams
-      FROM board_registration br
-      LEFT JOIN board_teams bt 
-        ON (bt.registration_id = br.registration_id OR bt.board_id = br.id)
-      GROUP BY br.registration_id, br.board_name, br.owner_name, br.registration_date, br.owner_email
-      ORDER BY br.registration_date DESC
-    `);
-    client.release();
-    res.status(200).json({ boards: result.rows });
-  } catch (error) {
-    console.error("Error fetching boards (/all-boards):", error);
-    res.status(500).json({ error: "Error fetching boards." });
+
+    try {
+      await client.query("BEGIN");
+
+      const srcRes = await client.query(
+        "SELECT id, registration_id FROM board_registration WHERE registration_id = $1",
+        [from_registration_id]
+      );
+      const dstRes = await client.query(
+        "SELECT id, registration_id FROM board_registration WHERE registration_id = $1",
+        [to_registration_id]
+      );
+
+      if (srcRes.rowCount === 0 || dstRes.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res
+          .status(404)
+          .json({ error: "Source or target board not found." });
+      }
+
+      const src = srcRes.rows[0];
+      const dst = dstRes.rows[0];
+
+      // Close membership in source board
+      const closeRes = await client.query(
+        `
+          UPDATE board_teams
+          SET left_at = to_date($4,'YYYY-MM-DD')
+          WHERE (board_id = $1 OR registration_id = $2)
+            AND LOWER(TRIM(team_name)) = LOWER(TRIM($3))
+            AND left_at IS NULL
+        `,
+        [src.id, src.registration_id, team_name, isoDate]
+      );
+
+      if (closeRes.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          error: "Active membership for this team in source board not found.",
+        });
+      }
+
+      // Open membership in target board
+      await client.query(
+        `
+          INSERT INTO board_teams (board_id, registration_id, team_name, joined_at)
+          VALUES ($1, $2, $3, to_date($4,'YYYY-MM-DD'))
+        `,
+        [dst.id, dst.registration_id, team_name, isoDate]
+      );
+
+      await client.query("COMMIT");
+      res.status(200).json({
+        message: "Team moved successfully.",
+        team_name,
+        from_board: src.registration_id,
+        to_board: dst.registration_id,
+        effective_date: isoDate,
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("Move-team transaction failed:", err);
+      res.status(500).json({ error: "Failed to move team." });
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error("Server error (move-team):", err);
+    res.status(500).json({ error: "Internal server error." });
   }
 });
 
