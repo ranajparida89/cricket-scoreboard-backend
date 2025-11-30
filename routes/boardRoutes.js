@@ -209,6 +209,13 @@ router.post("/register", async (req, res) => {
  * ===========================================================
  */
 
+/* ===========================================================
+ * 2) GET ALL BOARDS (OPEN)
+ *    - Returns boards with ALL teams (active + archived)
+ *      teams = [{ id, team_name, joined_at, left_at }]
+ * ===========================================================
+ */
+
 router.get("/all-boards", async (_req, res) => {
   try {
     const sql = `
@@ -220,9 +227,17 @@ router.get("/all-boards", async (_req, res) => {
         to_char(br.registration_date,'YYYY-MM-DD') AS registration_date,
         br.owner_email,
         COALESCE(
-          json_agg(bt.team_name ORDER BY bt.team_name)
-            FILTER (WHERE bt.team_name IS NOT NULL AND bt.left_at IS NULL),
-          '[]'
+          json_agg(
+            json_build_object(
+              'id',       bt.id,
+              'team_name', bt.team_name,
+              'joined_at', to_char(bt.joined_at,'YYYY-MM-DD'),
+              'left_at',   to_char(bt.left_at,'YYYY-MM-DD')
+            )
+            ORDER BY bt.team_name
+          )
+          FILTER (WHERE bt.team_name IS NOT NULL),
+          '[]'::json
         ) AS teams
       FROM board_registration br
       LEFT JOIN board_teams bt
