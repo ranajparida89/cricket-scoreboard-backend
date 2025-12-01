@@ -1,5 +1,5 @@
 // routes/UpcomingtournamnetRoutes.js
-// ✅ Ongoing Tournament start / pause / resume / get-current
+// ✅ Ongoing Tournament start / pause / resume / get-current / delete
 
 const express = require("express");
 const router = express.Router();
@@ -248,6 +248,50 @@ router.post("/resume", async (req, res) => {
   } catch (err) {
     console.error("POST /api/tournament/resume failed:", err);
     res.status(500).json({ error: "Failed to resume tournament." });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/tournament/delete
+router.post("/delete", async (req, res) => {
+  const client = await pool.connect();
+  const { id } = req.body || {};
+
+  try {
+    await client.query("BEGIN");
+
+    if (id) {
+      // mark specific tournament as completed (timer disappears from UI)
+      await client.query(
+        `
+        UPDATE ongoing_tournament
+        SET status = 'completed',
+            remaining_ms = 0,
+            updated_at = now()
+        WHERE id = $1
+        `,
+        [id]
+      );
+    } else {
+      // fallback: complete any running/paused tournament
+      await client.query(
+        `
+        UPDATE ongoing_tournament
+        SET status = 'completed',
+            remaining_ms = 0,
+            updated_at = now()
+        WHERE status IN ('running', 'paused')
+        `
+      );
+    }
+
+    await client.query("COMMIT");
+    return res.json({ success: true });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("POST /api/tournament/delete failed:", err);
+    res.status(500).json({ error: "Failed to delete tournament." });
   } finally {
     client.release();
   }
