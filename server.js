@@ -66,6 +66,7 @@ const momInsightsRoutes = require("./routes/momInsightsRoutes"); // Man of the m
 const homeHighlightsRoutes = require("./routes/homeHighlightsRoutes"); // landing page 4 card 05/11/2025
 const PastMatchesHubRoutes = require("./routes/PastMatchesHubRoutes");
 const playerReportCardRoutes = require("./routes/playerReportCardRoutes");
+const upcomingTournamentRoutes = require("./routes/UpcomingtournamnetRoutes");
 
 
 const app = express();
@@ -154,6 +155,7 @@ app.use("/api", momInsightsRoutes); // man of the match 04/11/2025
 app.use("/api/home-highlights", homeHighlightsRoutes); // 4 card on landing page 05/11/2025
 app.use("/api", PastMatchesHubRoutes);
 app.use("/api/player-report-card", playerReportCardRoutes); // Added backend module for Player reports 27/11/2025 
+app.use("/api/tournament", upcomingTournamentRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
