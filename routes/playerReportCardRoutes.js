@@ -45,12 +45,16 @@ router.get("/highest-score", async (req, res) => {
   const sql = `
     SELECT
       player_name,
+      team_name,
+      opponent_team,
       highest_score,
       not_out
     FROM (
       SELECT
         p.player_name,
-        pp.run_scored AS highest_score,
+        COALESCE(pp.team_name, '')       AS team_name,
+        COALESCE(pp.against_team, '')    AS opponent_team,
+        pp.run_scored                    AS highest_score,
         (COALESCE(pp.dismissed, '') NOT ILIKE '%out%') AS not_out,
         ROW_NUMBER() OVER (
           PARTITION BY p.id
@@ -71,6 +75,8 @@ router.get("/highest-score", async (req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       score: Number(row.highest_score),
       notOut: row.not_out === true,
     }));
@@ -94,8 +100,10 @@ router.get("/bowling-average", async (req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(pp.runs_given)   AS total_runs_given,
-      SUM(pp.wickets_taken) AS total_wickets,
+      MAX(COALESCE(pp.team_name, ''))       AS team_name,
+      MAX(COALESCE(pp.against_team, ''))    AS opponent_team,
+      SUM(pp.runs_given)                    AS total_runs_given,
+      SUM(pp.wickets_taken)                 AS total_wickets,
       ROUND(
         SUM(pp.runs_given)::numeric / NULLIF(SUM(pp.wickets_taken), 0),
         2
@@ -115,6 +123,8 @@ router.get("/bowling-average", async (req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       bowlingAvg: row.bowling_avg !== null ? Number(row.bowling_avg) : null,
       totalWickets: Number(row.total_wickets),
       totalRunsGiven: Number(row.total_runs_given),
@@ -129,7 +139,6 @@ router.get("/bowling-average", async (req, res) => {
 // ======================================================
 // 3 & 7) Most Wickets (combined / per format)
 // GET /api/player-report-card/most-wickets?matchType=ALL|ODI|T20|Test
-//   - Used by "Most Wickets" and "Most Wickets (Overall)" tabs
 // ======================================================
 
 router.get("/most-wickets", async (req, res) => {
@@ -139,7 +148,9 @@ router.get("/most-wickets", async (req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(pp.wickets_taken) AS total_wickets
+      MAX(COALESCE(pp.team_name, ''))       AS team_name,
+      MAX(COALESCE(pp.against_team, ''))    AS opponent_team,
+      SUM(pp.wickets_taken)                 AS total_wickets
     FROM player_performance pp
     JOIN players p
       ON pp.player_id = p.id
@@ -155,6 +166,8 @@ router.get("/most-wickets", async (req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       totalWickets: Number(row.total_wickets),
     }));
     res.json(payload);
@@ -177,8 +190,10 @@ router.get("/batting-average", async (req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(pp.run_scored) AS total_runs,
-      COUNT(*)          AS innings,
+      MAX(COALESCE(pp.team_name, ''))       AS team_name,
+      MAX(COALESCE(pp.against_team, ''))    AS opponent_team,
+      SUM(pp.run_scored)                    AS total_runs,
+      COUNT(*)                              AS innings,
       SUM(
         CASE
           WHEN COALESCE(pp.dismissed, '') ILIKE '%out%' THEN 1
@@ -218,6 +233,8 @@ router.get("/batting-average", async (req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       battingAvg:
         row.batting_avg !== null ? Number(row.batting_avg) : null,
       totalRuns: Number(row.total_runs),
@@ -240,7 +257,9 @@ router.get("/top-run-scorers", async (_req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(pp.run_scored) AS total_runs
+      MAX(COALESCE(pp.team_name, ''))       AS team_name,
+      MAX(COALESCE(pp.against_team, ''))    AS opponent_team,
+      SUM(pp.run_scored)                    AS total_runs
     FROM player_performance pp
     JOIN players p
       ON pp.player_id = p.id
@@ -255,6 +274,8 @@ router.get("/top-run-scorers", async (_req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       totalRuns: Number(row.total_runs),
     }));
     res.json(payload);
@@ -267,14 +288,15 @@ router.get("/top-run-scorers", async (_req, res) => {
 // ======================================================
 // 6) Most Fifties (combined ODI+T20+Test)
 // GET /api/player-report-card/most-fifties
-// Uses `fifties` column in player_performance
 // ======================================================
 
 router.get("/most-fifties", async (_req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(pp.fifties) AS total_fifties
+      MAX(COALESCE(pp.team_name, ''))       AS team_name,
+      MAX(COALESCE(pp.against_team, ''))    AS opponent_team,
+      SUM(pp.fifties)                       AS total_fifties
     FROM player_performance pp
     JOIN players p
       ON pp.player_id = p.id
@@ -289,6 +311,8 @@ router.get("/most-fifties", async (_req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       totalFifties: Number(row.total_fifties),
     }));
     res.json(payload);
@@ -301,14 +325,15 @@ router.get("/most-fifties", async (_req, res) => {
 // ======================================================
 // 7) Most Hundreds (combined ODI+T20+Test)
 // GET /api/player-report-card/most-hundreds
-// Uses `hundreds` column in player_performance
 // ======================================================
 
 router.get("/most-hundreds", async (_req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(pp.hundreds) AS total_hundreds
+      MAX(COALESCE(pp.team_name, ''))       AS team_name,
+      MAX(COALESCE(pp.against_team, ''))    AS opponent_team,
+      SUM(pp.hundreds)                      AS total_hundreds
     FROM player_performance pp
     JOIN players p
       ON pp.player_id = p.id
@@ -323,6 +348,8 @@ router.get("/most-hundreds", async (_req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       totalHundreds: Number(row.total_hundreds),
     }));
     res.json(payload);
@@ -335,13 +362,14 @@ router.get("/most-hundreds", async (_req, res) => {
 // ======================================================
 // 8) Most Ducks (combined)
 // GET /api/player-report-card/most-ducks
-// duck = 0 runs AND dismissed like '%out%'
 // ======================================================
 
 router.get("/most-ducks", async (_req, res) => {
   const sql = `
     SELECT
       p.player_name,
+      MAX(COALESCE(pp.team_name, ''))       AS team_name,
+      MAX(COALESCE(pp.against_team, ''))    AS opponent_team,
       SUM(
         CASE
           WHEN COALESCE(pp.run_scored, 0) = 0
@@ -371,6 +399,8 @@ router.get("/most-ducks", async (_req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       ducks: Number(row.ducks),
     }));
     res.json(payload);
@@ -383,14 +413,15 @@ router.get("/most-ducks", async (_req, res) => {
 // ======================================================
 // 9) Most Balls Faced in Test
 // GET /api/player-report-card/most-balls-faced
-// Only Test matches
 // ======================================================
 
 router.get("/most-balls-faced", async (_req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(pp.balls_faced) AS total_balls
+      MAX(COALESCE(pp.team_name, ''))       AS team_name,
+      MAX(COALESCE(pp.against_team, ''))    AS opponent_team,
+      SUM(pp.balls_faced)                   AS total_balls
     FROM player_performance pp
     JOIN players p
       ON pp.player_id = p.id
@@ -406,6 +437,8 @@ router.get("/most-balls-faced", async (_req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       totalBalls: Number(row.total_balls),
     }));
     res.json(payload);
@@ -418,21 +451,22 @@ router.get("/most-balls-faced", async (_req, res) => {
 });
 
 // ======================================================
-// 10) Most 200s (double hundreds) – from player_performance
+// 10) Most 200s (double hundreds)
 // GET /api/player-report-card/most-200s
-// Uses player_performance.double_century (Test innings)
 // ======================================================
 
 router.get("/most-200s", async (_req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(COALESCE(pp.double_century, 0)) AS total_double_centuries
+      SUM(COALESCE(pp.double_century, 0))   AS total_double_centuries,
+      MAX(COALESCE(pp.team_name, ''))       AS team_name,
+      MAX(COALESCE(pp.against_team, ''))    AS opponent_team
     FROM player_performance pp
     JOIN players p
       ON pp.player_id = p.id
-    -- if you want only Test 200s, keep this line:
     WHERE pp.match_type = 'Test'
+      AND COALESCE(pp.double_century, 0) > 0
     GROUP BY p.player_name
     HAVING SUM(COALESCE(pp.double_century, 0)) > 0
     ORDER BY total_double_centuries DESC, p.player_name ASC
@@ -444,6 +478,8 @@ router.get("/most-200s", async (_req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       doubleCenturies: Number(row.total_double_centuries),
     }));
     res.json(payload);
@@ -458,7 +494,6 @@ router.get("/most-200s", async (_req, res) => {
 // ======================================================
 // 11) Fastest Fifty
 // GET /api/player-report-card/fastest-fifty?matchType=ALL|ODI|T20|Test
-// Per player: best (min balls) innings with >= 50 runs
 // ======================================================
 
 router.get("/fastest-fifty", async (req, res) => {
@@ -468,14 +503,18 @@ router.get("/fastest-fifty", async (req, res) => {
   const sql = `
     SELECT
       player_name,
+      team_name,
+      opponent_team,
       runs,
       balls,
       match_type
     FROM (
       SELECT
         p.player_name,
-        pp.run_scored AS runs,
-        pp.balls_faced AS balls,
+        COALESCE(pp.team_name, '')       AS team_name,
+        COALESCE(pp.against_team, '')    AS opponent_team,
+        pp.run_scored                    AS runs,
+        pp.balls_faced                   AS balls,
         pp.match_type,
         ROW_NUMBER() OVER (
           PARTITION BY p.id
@@ -498,6 +537,8 @@ router.get("/fastest-fifty", async (req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       runs: Number(row.runs),
       balls: Number(row.balls),
       matchType: row.match_type,
@@ -525,14 +566,18 @@ router.get("/fastest-hundred", async (req, res) => {
   const sql = `
     SELECT
       player_name,
+      team_name,
+      opponent_team,
       runs,
       balls,
       match_type
     FROM (
       SELECT
         p.player_name,
-        pp.run_scored AS runs,
-        pp.balls_faced AS balls,
+        COALESCE(pp.team_name, '')       AS team_name,
+        COALESCE(pp.against_team, '')    AS opponent_team,
+        pp.run_scored                    AS runs,
+        pp.balls_faced                   AS balls,
         pp.match_type,
         ROW_NUMBER() OVER (
           PARTITION BY p.id
@@ -555,6 +600,8 @@ router.get("/fastest-hundred", async (req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       runs: Number(row.runs),
       balls: Number(row.balls),
       matchType: row.match_type,
@@ -573,8 +620,6 @@ router.get("/fastest-hundred", async (req, res) => {
 // ======================================================
 // 13) Highest Strike Rate (min X balls)
 // GET /api/player-report-card/highest-strike-rate
-//   ?matchType=ALL|ODI|T20|Test
-//   &minBalls=250   (optional, default 250)
 // ======================================================
 
 router.get("/highest-strike-rate", async (req, res) => {
@@ -589,8 +634,10 @@ router.get("/highest-strike-rate", async (req, res) => {
   const sql = `
     SELECT
       p.player_name,
-      SUM(pp.run_scored)  AS total_runs,
-      SUM(pp.balls_faced) AS total_balls,
+      MAX(COALESCE(pp.team_name, ''))       AS team_name,
+      MAX(COALESCE(pp.against_team, ''))    AS opponent_team,
+      SUM(pp.run_scored)                    AS total_runs,
+      SUM(pp.balls_faced)                   AS total_balls,
       ROUND(
         SUM(pp.run_scored)::numeric
         / NULLIF(SUM(pp.balls_faced), 0)
@@ -615,6 +662,8 @@ router.get("/highest-strike-rate", async (req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       totalRuns: Number(row.total_runs),
       totalBalls: Number(row.total_balls),
       strikeRate:
@@ -632,8 +681,7 @@ router.get("/highest-strike-rate", async (req, res) => {
 
 // ======================================================
 // 14) Best Bowling Figures in an Innings
-// GET /api/player-report-card/best-bowling-figures?matchType=ALL|ODI|T20|Test
-// One best spell per player (most wkts, then least runs)
+// GET /api/player-report-card/best-bowling-figures
 // ======================================================
 
 router.get("/best-bowling-figures", async (req, res) => {
@@ -643,14 +691,18 @@ router.get("/best-bowling-figures", async (req, res) => {
   const sql = `
     SELECT
       player_name,
+      team_name,
+      opponent_team,
       wickets,
       runs,
       match_type
     FROM (
       SELECT
         p.player_name,
-        pp.wickets_taken AS wickets,
-        pp.runs_given     AS runs,
+        COALESCE(pp.team_name, '')       AS team_name,
+        COALESCE(pp.against_team, '')    AS opponent_team,
+        pp.wickets_taken                 AS wickets,
+        pp.runs_given                    AS runs,
         pp.match_type,
         ROW_NUMBER() OVER (
           PARTITION BY p.id
@@ -672,6 +724,8 @@ router.get("/best-bowling-figures", async (req, res) => {
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
       playerName: row.player_name,
+      teamName: row.team_name || null,
+      opponentTeam: row.opponent_team || null,
       wickets: Number(row.wickets),
       runs: Number(row.runs),
       matchType: row.match_type,
