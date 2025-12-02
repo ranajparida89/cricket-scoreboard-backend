@@ -236,7 +236,8 @@ router.get("/batting-average", async (req, res) => {
       playerName: row.player_name,
       teamName: row.team_name || null,
       opponentTeam: row.opponent_team || null,
-      battingAvg: row.batting_avg !== null ? Number(row.batting_avg) : null,
+      battingAvg:
+        row.batting_avg !== null ? Number(row.batting_avg) : null,
       totalRuns: Number(row.total_runs),
       innings: Number(row.innings),
       outs: Number(row.outs),
@@ -675,7 +676,8 @@ router.get("/highest-strike-rate", async (req, res) => {
       opponentTeam: row.opponent_team || null,
       totalRuns: Number(row.total_runs),
       totalBalls: Number(row.total_balls),
-      strikeRate: row.strike_rate != null ? Number(row.strike_rate) : null,
+      strikeRate:
+        row.strike_rate != null ? Number(row.strike_rate) : null,
       minBalls,
     }));
     res.json(payload);
