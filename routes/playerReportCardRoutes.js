@@ -455,21 +455,57 @@ router.get("/most-balls-faced", async (_req, res) => {
 // GET /api/player-report-card/most-200s
 // ======================================================
 
+// ======================================================
+// 10) Most 200s (double hundreds)  -- REPLACED (returns a representative innings)
+// GET /api/player-report-card/most-200s
+// ======================================================
+
 router.get("/most-200s", async (_req, res) => {
   const sql = `
+    WITH player_double_counts AS (
+      -- total count per player
+      SELECT
+        p.id AS player_id,
+        p.player_name,
+        SUM(COALESCE(pp.double_century, 0)) AS total_double_centuries
+      FROM player_performance pp
+      JOIN players p ON pp.player_id = p.id
+      WHERE pp.match_type = 'Test'
+        AND COALESCE(pp.double_century, 0) > 0
+      GROUP BY p.id, p.player_name
+    ),
+    representative_innings AS (
+      -- pick a representative innings per player (choose highest runs among double-centuries)
+      SELECT
+        pp.player_id,
+        pp.run_scored   AS runs,
+        pp.balls_faced  AS balls,
+        COALESCE(pp.team_name, '')      AS team_name,
+        COALESCE(pp.against_team, '')   AS opponent_team,
+        pp.match_type,
+        ROW_NUMBER() OVER (
+          PARTITION BY pp.player_id
+          ORDER BY pp.run_scored DESC, pp.balls_faced ASC
+        ) AS rn
+      FROM player_performance pp
+      WHERE pp.match_type = 'Test'
+        AND COALESCE(pp.double_century, 0) > 0
+    )
     SELECT
-      p.player_name,
-      SUM(COALESCE(pp.double_century, 0))   AS total_double_centuries,
-      MAX(COALESCE(pp.team_name, ''))       AS team_name,
-      MAX(COALESCE(pp.against_team, ''))    AS opponent_team
-    FROM player_performance pp
-    JOIN players p
-      ON pp.player_id = p.id
-    WHERE pp.match_type = 'Test'
-      AND COALESCE(pp.double_century, 0) > 0
-    GROUP BY p.player_name
-    HAVING SUM(COALESCE(pp.double_century, 0)) > 0
-    ORDER BY total_double_centuries DESC, p.player_name ASC
+      pdc.player_name,
+      pdc.total_double_centuries,
+      ri.team_name,
+      ri.opponent_team,
+      ri.runs,
+      ri.balls,
+      ri.match_type
+    FROM player_double_counts pdc
+    LEFT JOIN representative_innings ri
+      ON ri.player_id = (
+        SELECT id FROM players WHERE player_name = pdc.player_name LIMIT 1
+      )
+      AND ri.rn = 1
+    ORDER BY pdc.total_double_centuries DESC, pdc.player_name ASC
     LIMIT 10;
   `;
 
@@ -480,16 +516,23 @@ router.get("/most-200s", async (_req, res) => {
       playerName: row.player_name,
       teamName: row.team_name || null,
       opponentTeam: row.opponent_team || null,
-      doubleCenturies: Number(row.total_double_centuries),
+      doubleCenturies: Number(row.total_double_centuries || 0),
+      runs: row.runs !== null ? Number(row.runs) : null,
+      balls: row.balls !== null ? Number(row.balls) : null,
+      matchType: row.match_type || "Test",
+      /* convenience field UI may like: a formatted string */
+      sampleInnings:
+        row.runs !== null
+          ? `${row.opponent_team || ""} - ${row.runs} (${row.balls || "NA"} balls)`
+          : null,
     }));
     res.json(payload);
   } catch (err) {
     console.error("Error in /most-200s:", err);
-    res
-      .status(500)
-      .json({ error: "Failed to fetch most double centuries." });
+    res.status(500).json({ error: "Failed to fetch most double centuries." });
   }
 });
+
 
 // ======================================================
 // 11) Fastest Fifty
