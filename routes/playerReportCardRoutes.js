@@ -451,19 +451,14 @@ router.get("/most-balls-faced", async (_req, res) => {
 });
 
 // ======================================================
-// 10) Most 200s (double hundreds)
-// GET /api/player-report-card/most-200s
-// ======================================================
-
-// ======================================================
-// 10) Most 200s (double hundreds)  -- REPLACED (returns a representative innings)
+// 10) Most 200s (double hundreds)  -- FIXED (join by player_id)
 // GET /api/player-report-card/most-200s
 // ======================================================
 
 router.get("/most-200s", async (_req, res) => {
   const sql = `
     WITH player_double_counts AS (
-      -- total count per player
+      -- total count per player (keep player_id)
       SELECT
         p.id AS player_id,
         p.player_name,
@@ -492,6 +487,7 @@ router.get("/most-200s", async (_req, res) => {
         AND COALESCE(pp.double_century, 0) > 0
     )
     SELECT
+      pdc.player_id,
       pdc.player_name,
       pdc.total_double_centuries,
       ri.team_name,
@@ -501,9 +497,7 @@ router.get("/most-200s", async (_req, res) => {
       ri.match_type
     FROM player_double_counts pdc
     LEFT JOIN representative_innings ri
-      ON ri.player_id = (
-        SELECT id FROM players WHERE player_name = pdc.player_name LIMIT 1
-      )
+      ON ri.player_id = pdc.player_id
       AND ri.rn = 1
     ORDER BY pdc.total_double_centuries DESC, pdc.player_name ASC
     LIMIT 10;
@@ -513,6 +507,7 @@ router.get("/most-200s", async (_req, res) => {
     const { rows } = await pool.query(sql);
     const payload = rows.map((row, idx) => ({
       rank: idx + 1,
+      playerId: row.player_id || null,
       playerName: row.player_name,
       teamName: row.team_name || null,
       opponentTeam: row.opponent_team || null,
@@ -520,7 +515,6 @@ router.get("/most-200s", async (_req, res) => {
       runs: row.runs !== null ? Number(row.runs) : null,
       balls: row.balls !== null ? Number(row.balls) : null,
       matchType: row.match_type || "Test",
-      /* convenience field UI may like: a formatted string */
       sampleInnings:
         row.runs !== null
           ? `${row.opponent_team || ""} - ${row.runs} (${row.balls || "NA"} balls)`
@@ -532,7 +526,6 @@ router.get("/most-200s", async (_req, res) => {
     res.status(500).json({ error: "Failed to fetch most double centuries." });
   }
 });
-
 
 // ======================================================
 // 11) Fastest Fifty
