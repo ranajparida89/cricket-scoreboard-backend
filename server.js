@@ -67,7 +67,8 @@ const homeHighlightsRoutes = require("./routes/homeHighlightsRoutes"); // landin
 const PastMatchesHubRoutes = require("./routes/PastMatchesHubRoutes");
 const playerReportCardRoutes = require("./routes/playerReportCardRoutes");
 const upcomingTournamentRoutes = require("./routes/UpcomingtournamnetRoutes");
-const auctionRoutes = require("./routes/auctionRoutes"); // Auction Module
+// const auctionRoutes = require("./routes/auctionRoutes"); // Auction Module
+const simpleAuctionRoutes = require("./routes/simpleAuctionRoutes");
 
 
 const app = express();
@@ -157,7 +158,8 @@ app.use("/api/home-highlights", homeHighlightsRoutes); // 4 card on landing page
 app.use("/api", PastMatchesHubRoutes);
 app.use("/api/player-report-card", playerReportCardRoutes); // Added backend module for Player reports 27/11/2025 
 app.use("/api/tournament", upcomingTournamentRoutes);
-app.use("/api/auction", auctionRoutes);
+// app.use("/api/auction", auctionRoutes);
+app.use("/api/auction", simpleAuctionRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
