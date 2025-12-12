@@ -782,6 +782,7 @@ router.post("/sessions/:auctionId/participants", async (req, res) => {
 
 /**
  * POST /api/auction/sessions/:auctionId/start
+ * FIXED VERSION – AUTO-RESET + CLEAN FIRST LIVE PLAYER
  */
 router.post("/sessions/:auctionId/start", async (req, res) => {
   const client = await pool.connect();
@@ -789,20 +790,60 @@ router.post("/sessions/:auctionId/start", async (req, res) => {
     const { auctionId } = req.params;
     await client.query("BEGIN");
 
+    // 1) Load auction
     const auction = await getAuctionById(client, auctionId);
     if (!auction) {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Auction session not found." });
     }
 
-    if (auction.status !== "NOT_STARTED") {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ error: `Auction is already ${auction.status}.` });
+    // 💥 FIX: If DB got stuck with RUNNING but no valid LIVE state, auto-reset everything
+    if (auction.status === "RUNNING") {
+      await client.query(
+        `
+        UPDATE auction_sessions
+        SET
+          status = 'NOT_STARTED',
+          current_live_session_player_id = NULL,
+          current_round_started_at = NULL,
+          current_round_ends_at = NULL,
+          updated_at = NOW()
+        WHERE auction_id = $1
+      `,
+        [auctionId]
+      );
     }
 
+    // Now reload clean state
+    const freshAuction = await getAuctionById(client, auctionId);
+
+    if (freshAuction.status !== "NOT_STARTED") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: `Auction already ${freshAuction.status}.`,
+      });
+    }
+
+    // 💥 FIX: Make sure NO player is accidentally in LIVE/UNFINISHED state
+    await client.query(
+      `
+      UPDATE auction_session_players
+      SET status = 'PENDING',
+          live_started_at = NULL,
+          live_ends_at = NULL,
+          last_highest_bid_amount = NULL,
+          last_highest_bid_user_id = NULL,
+          updated_at = NOW()
+      WHERE auction_id = $1
+        AND status IN ('LIVE')
+    `,
+      [auctionId]
+    );
+
+    // 2) Pick first PENDING player
     const pRes = await client.query(
       `
-      SELECT session_player_id, pool_player_id
+      SELECT session_player_id
       FROM auction_session_players
       WHERE auction_id = $1
         AND status = 'PENDING'
@@ -814,13 +855,17 @@ router.post("/sessions/:auctionId/start", async (req, res) => {
 
     if (pRes.rowCount === 0) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "No players available to start the auction." });
+      return res.status(400).json({
+        error: "No players available to start auction.",
+      });
     }
 
     const sessionPlayerId = pRes.rows[0].session_player_id;
+
+    // 3) Set LIVE + Round timer
     const now = new Date();
-    const bidTimerSeconds = auction.bid_timer_seconds || 30;
-    const endsAt = new Date(now.getTime() + bidTimerSeconds * 1000);
+    const duration = freshAuction.bid_timer_seconds || 30;
+    const endsAt = new Date(now.getTime() + duration * 1000);
 
     await client.query(
       `
@@ -851,6 +896,7 @@ router.post("/sessions/:auctionId/start", async (req, res) => {
       [sessionPlayerId, now, endsAt]
     );
 
+    // Fetch live player details
     const liveRes = await client.query(
       `
       SELECT
@@ -878,13 +924,13 @@ router.post("/sessions/:auctionId/start", async (req, res) => {
 
     const timeRemainingSeconds = Math.max(
       0,
-      Math.floor((new Date(livePlayer.live_ends_at).getTime() - Date.now()) / 1000)
+      Math.floor((new Date(livePlayer.live_ends_at) - Date.now()) / 1000)
     );
 
     return res.json({
       message: "Auction started.",
       auction: {
-        auctionId: auction.auction_id,
+        auctionId: freshAuction.auction_id,
         status: "RUNNING",
       },
       livePlayer: {
