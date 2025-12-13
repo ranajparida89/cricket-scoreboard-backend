@@ -157,7 +157,7 @@ app.use("/api", PastMatchesHubRoutes);
 app.use("/api/player-report-card", playerReportCardRoutes); // Added backend module for Player reports 27/11/2025 
 app.use("/api/tournament", upcomingTournamentRoutes);
 // app.use("/api/auction", auctionRoutes);
-app.use("/api/simple-auction", simpleAuctionRoutes);
+app.use("/api/auction", simpleAuctionRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
