@@ -818,7 +818,7 @@ router.get("/players/highlights", async (req, res) => {
         SELECT
           canon_id,
           MAX(player_name) AS player_name,
-          COUNT(DISTINCT match_name) AS innings,
+          COUNT(*)         AS matches,
           SUM(run_scored)  AS total_runs,
           MAX(run_scored)  AS highest_score,
           SUM(wickets_taken) AS total_wickets,
@@ -856,11 +856,7 @@ router.get("/players/highlights", async (req, res) => {
         a.balls,
         a.outs,
         a.success_matches,
-              ROUND(
-        CASE WHEN a.innings > 0
-        THEN a.total_runs::numeric / a.innings
-        END, 2
-      ) AS batting_avg,
+        ROUND(CASE WHEN a.outs > 0   THEN a.total_runs::numeric / a.outs END, 2) AS batting_avg,
         ROUND(CASE WHEN a.balls > 0  THEN (a.total_runs::numeric * 100.0) / a.balls END, 2) AS strike_rate,
         ROUND(CASE WHEN a.total_wickets > 0 THEN a.total_runs_given::numeric / a.total_wickets END, 2) AS bowling_avg,
         ROUND(CASE WHEN a.matches > 0 THEN a.success_matches::numeric / a.matches END, 3) AS success_rate
