@@ -791,7 +791,8 @@ router.get("/players/highlights", async (req, res) => {
           pp.fifties,
           pp.hundreds,
           COALESCE(pp.balls_faced, 0)         AS balls_faced,
-          CASE WHEN COALESCE(pp.dismissed,'') ILIKE '%out%' THEN 1 ELSE 0 END AS outs
+          CASE WHEN COALESCE(pp.dismissed,'') ILIKE '%out%' THEN 1 ELSE 0 END AS outs,
+          1 AS innings 
         FROM player_performance pp
         JOIN canon_name cn ON cn.player_id = pp.player_id
         LEFT JOIN match_history mh ON mh.id = pp.match_id
@@ -818,7 +819,7 @@ router.get("/players/highlights", async (req, res) => {
         SELECT
           canon_id,
           MAX(player_name) AS player_name,
-          COUNT(*)         AS matches,
+          SUM(innings) AS innings,
           SUM(run_scored)  AS total_runs,
           MAX(run_scored)  AS highest_score,
           SUM(wickets_taken) AS total_wickets,
@@ -856,7 +857,11 @@ router.get("/players/highlights", async (req, res) => {
         a.balls,
         a.outs,
         a.success_matches,
-        ROUND(CASE WHEN a.outs > 0   THEN a.total_runs::numeric / a.outs END, 2) AS batting_avg,
+                ROUND(
+          CASE WHEN a.innings > 0
+          THEN a.total_runs::numeric / a.innings
+          END, 2
+        ) AS batting_avg,
         ROUND(CASE WHEN a.balls > 0  THEN (a.total_runs::numeric * 100.0) / a.balls END, 2) AS strike_rate,
         ROUND(CASE WHEN a.total_wickets > 0 THEN a.total_runs_given::numeric / a.total_wickets END, 2) AS bowling_avg,
         ROUND(CASE WHEN a.matches > 0 THEN a.success_matches::numeric / a.matches END, 3) AS success_rate
