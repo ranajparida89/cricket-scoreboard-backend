@@ -222,6 +222,7 @@ app.post("/api/match", async (req, res) => {
 });
 
 // ✅ Match Result Submission (T20/ODI) — NOW ALSO STORES mom_player_id (FK → players.id)
+// ✅ Match Result Submission (T20/ODI) — SAFE OVERS FIX (UI vs NRR SEPARATION)
 app.post("/api/submit-result", async (req, res) => {
   try {
     const {
@@ -235,70 +236,62 @@ app.post("/api/submit-result", async (req, res) => {
       overs2,
       wickets2,
       user_id,
-      // ✅ [TOURNAMENT] new fields
       tournament_name = null,
       season_year = null,
       match_date = null,
-      // ✅ [MoM] new fields
       mom_player = null,
       mom_reason = null,
-      // ✅ [MoM - Approach C] FK to players.id
       mom_player_id = null,
     } = req.body;
 
-    // ✅ enforce MoM from UI
-    if (!mom_player || !mom_reason) {
-      return res
-        .status(400)
-        .json({ error: "Man of the Match and Reason are required." });
-    }
+    if (!mom_player || !mom_reason)
+      return res.status(400).json({ error: "Man of the Match and Reason are required." });
 
-    // ✅ Approach C: must also have proper player_id
-    if (!mom_player_id) {
-      return res.status(400).json({
-        error: "Man of the Match player_id is required.",
-      });
-    }
+    if (!mom_player_id)
+      return res.status(400).json({ error: "Man of the Match player_id is required." });
 
-    const matchResult = await pool.query("SELECT * FROM matches WHERE id = $1", [
-      match_id,
-    ]);
-    if (matchResult.rows.length === 0)
+    const matchResult = await pool.query("SELECT * FROM matches WHERE id = $1", [match_id]);
+    if (!matchResult.rows.length)
       return res.status(400).json({ error: "Invalid match_id" });
 
     const { match_name, match_type } = matchResult.rows[0];
     const maxOvers = match_type === "T20" ? 20 : 50;
 
-    const overs1DecimalRaw = sanitizeOversInput(overs1);
-    const overs2DecimalRaw = sanitizeOversInput(overs2);
+    // ✅ Convert UI overs input (e.g. 29.4 → decimal)
+    const overs1Decimal = sanitizeOversInput(overs1);
+    const overs2Decimal = sanitizeOversInput(overs2);
 
-    // ✅ Use maxOvers if team is all out, otherwise actual overs used
-    const actualOvers1 = wickets1 === 10 ? maxOvers : overs1DecimalRaw;
-    const actualOvers2 = wickets2 === 10 ? maxOvers : overs2DecimalRaw;
+    // =====================================================
+    // 🔥 CRITICAL FIX (DO NOT MERGE THESE VALUES)
+    // =====================================================
+
+    // ✅ UI / Match history overs (ALWAYS actual overs played)
+    const displayOvers1 = overs1Decimal;
+    const displayOvers2 = overs2Decimal;
+
+    // ✅ NRR overs (ICC rule: all-out = full quota)
+    const nrrOvers1 = wickets1 === 10 ? maxOvers : overs1Decimal;
+    const nrrOvers2 = wickets2 === 10 ? maxOvers : overs2Decimal;
+
+    // =====================================================
 
     let winner = "Match Draw";
-    let points1 = 1,
-      points2 = 1;
+    let points1 = 1, points2 = 1;
+
     if (runs1 > runs2) {
       winner = `${team1} won the match!`;
-      points1 = 2;
-      points2 = 0;
+      points1 = 2; points2 = 0;
     } else if (runs2 > runs1) {
       winner = `${team2} won the match!`;
-      points1 = 0;
-      points2 = 2;
+      points1 = 0; points2 = 2;
     }
 
-    // ✅ Insert team1 stats
-    await pool.query(
-      `
+    // ✅ TEAM 1 (NRR uses nrrOvers)
+    await pool.query(`
       INSERT INTO teams (
         match_id, name, matches_played, wins, losses, points,
         total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id
-      ) VALUES (
-        $1, $2, 1, $3, $4, $5,
-        $6, $7, $8, $9, $10
-      )
+      ) VALUES ($1,$2,1,$3,$4,$5,$6,$7,$8,$9,$10)
       ON CONFLICT (match_id, name) DO UPDATE SET
         wins = EXCLUDED.wins,
         losses = EXCLUDED.losses,
@@ -308,31 +301,22 @@ app.post("/api/submit-result", async (req, res) => {
         total_runs_conceded = EXCLUDED.total_runs_conceded,
         total_overs_bowled = EXCLUDED.total_overs_bowled,
         user_id = EXCLUDED.user_id
-    `,
-      [
-        match_id,
-        team1,
-        points1 === 2 ? 1 : 0,
-        points2 === 2 ? 1 : 0,
-        points1,
-        runs1,
-        actualOvers1,
-        runs2,
-        actualOvers2,
-        user_id,
-      ]
-    );
+    `, [
+      match_id, team1,
+      points1 === 2 ? 1 : 0,
+      points2 === 2 ? 1 : 0,
+      points1,
+      runs1, nrrOvers1,
+      runs2, nrrOvers2,
+      user_id
+    ]);
 
-    // ✅ Insert team2 stats
-    await pool.query(
-      `
+    // ✅ TEAM 2 (NRR uses nrrOvers)
+    await pool.query(`
       INSERT INTO teams (
         match_id, name, matches_played, wins, losses, points,
         total_runs, total_overs, total_runs_conceded, total_overs_bowled, user_id
-      ) VALUES (
-        $1, $2, 1, $3, $4, $5,
-        $6, $7, $8, $9, $10
-      )
+      ) VALUES ($1,$2,1,$3,$4,$5,$6,$7,$8,$9,$10)
       ON CONFLICT (match_id, name) DO UPDATE SET
         wins = EXCLUDED.wins,
         losses = EXCLUDED.losses,
@@ -342,115 +326,45 @@ app.post("/api/submit-result", async (req, res) => {
         total_runs_conceded = EXCLUDED.total_runs_conceded,
         total_overs_bowled = EXCLUDED.total_overs_bowled,
         user_id = EXCLUDED.user_id
-    `,
-      [
-        match_id,
-        team2,
-        points2 === 2 ? 1 : 0,
-        points1 === 2 ? 1 : 0,
-        points2,
-        runs2,
-        actualOvers2,
-        runs1,
-        actualOvers1,
-        user_id,
-      ]
-    );
+    `, [
+      match_id, team2,
+      points2 === 2 ? 1 : 0,
+      points1 === 2 ? 1 : 0,
+      points2,
+      runs2, nrrOvers2,
+      runs1, nrrOvers1,
+      user_id
+    ]);
 
-    // ✅ [NRR FIX | 17-July-2025 | by Ranaj Parida] Recalculate correct NRR for each team
-    for (const team of [team1, team2]) {
-      await pool.query(
-        `
-        WITH team_stats AS (
-          SELECT 
-            t.name,
-            SUM(t.total_runs) AS total_runs,
-            SUM(t.total_overs) AS total_overs,
-            SUM(t.total_runs_conceded) AS total_runs_conceded,
-            SUM(t.total_overs_bowled) AS total_overs_bowled
-          FROM teams t
-          JOIN matches m ON t.match_id = m.id
-          WHERE t.name = $1 AND m.match_type IN ('T20', 'ODI')
-          GROUP BY t.name
-        )
-        UPDATE teams t
-        SET nrr = (
-          SELECT 
-            CASE 
-              WHEN ts.total_overs > 0 AND ts.total_overs_bowled > 0 THEN 
-                ROUND((ts.total_runs::decimal / ts.total_overs) - 
-                      (ts.total_runs_conceded::decimal / ts.total_overs_bowled), 4)
-              ELSE 0
-            END
-          FROM team_stats ts
-          WHERE ts.name = t.name
-        )
-        WHERE t.name = $1 AND t.match_id = $2
-      `,
-        [team, match_id]
-      );
-    }
-
-    // ✅ Save to match_history  (NOW includes tournament fields + MoM + mom_player_id)
+    // ✅ Save MATCH HISTORY (UI uses REAL overs)
     const matchDateSafe = match_date || new Date().toISOString().slice(0, 10);
-    await pool.query(
-      `
-      INSERT INTO match_history 
-        (
-          match_name,
-          match_type,
-          team1,
-          runs1,
-          overs1,
-          wickets1,
-          team2,
-          runs2,
-          overs2,
-          wickets2,
-          winner,
-          user_id,
-          match_date,
-          tournament_name,
-          season_year,
-          mom_player,
-          mom_player_id,
-          mom_reason
-        )
-      VALUES (
-          $1,  $2,  $3,  $4,  $5,  $6,
-          $7,  $8,  $9,  $10, $11,
-          $12, $13, $14, $15,
-          $16, $17, $18
+    await pool.query(`
+      INSERT INTO match_history (
+        match_name, match_type,
+        team1, runs1, overs1, wickets1,
+        team2, runs2, overs2, wickets2,
+        winner, user_id, match_date,
+        tournament_name, season_year,
+        mom_player, mom_player_id, mom_reason
       )
-    `,
-      [
-        match_name,
-        match_type,
-        team1,
-        runs1,
-        actualOvers1,
-        wickets1,
-        team2,
-        runs2,
-        actualOvers2,
-        wickets2,
-        winner,
-        user_id,
-        matchDateSafe,
-        tournament_name,
-        season_year,
-        mom_player,
-        mom_player_id,
-        mom_reason,
-      ]
-    );
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+    `, [
+      match_name, match_type,
+      team1, runs1, displayOvers1, wickets1,
+      team2, runs2, displayOvers2, wickets2,
+      winner, user_id, matchDateSafe,
+      tournament_name, season_year,
+      mom_player, mom_player_id, mom_reason
+    ]);
 
     io.emit("matchUpdate", { match_id, winner });
     res.json({ message: winner });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // ✅ Leaderboard
 // ✅ Leaderboard with manual point calculation [Updated by Ranaj Parida - 19-April-2025]
