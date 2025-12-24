@@ -15,40 +15,48 @@ router.get("/", async (_req, res) => {
   const generatedAt = new Date().toISOString();
 
   try {
-    // 1️⃣ MOST RUNS
+    // =====================================================
+    // 1️⃣ MOST RUNS (FIXED — matches Player Report Card)
+    // =====================================================
     const mostRunsQ = await pool.query(`
       SELECT
-        p.id AS player_id,
         p.player_name,
-        p.team_name,
+        MAX(p.team_name) AS team_name,
         SUM(pp.run_scored) AS total_runs
       FROM player_performance pp
-      JOIN players p ON p.id = pp.player_id
-      GROUP BY p.id, p.player_name, p.team_name
+      JOIN players p ON pp.player_id = p.id
+      GROUP BY p.player_name
       ORDER BY total_runs DESC
       LIMIT 1;
     `);
 
-    // 2️⃣ MOST WICKETS
+    // =====================================================
+    // 2️⃣ MOST WICKETS (same aggregation rule)
+    // =====================================================
     const mostWicketsQ = await pool.query(`
       SELECT
-        p.id AS player_id,
         p.player_name,
-        p.team_name,
+        MAX(p.team_name) AS team_name,
         SUM(pp.wickets_taken) AS total_wickets
       FROM player_performance pp
-      JOIN players p ON p.id = pp.player_id
-      GROUP BY p.id, p.player_name, p.team_name
+      JOIN players p ON pp.player_id = p.id
+      GROUP BY p.player_name
       ORDER BY total_wickets DESC
       LIMIT 1;
     `);
 
-    // 3️⃣ MOST SUCCESSFUL PLAYER (MoM)
+    // =====================================================
+    // 3️⃣ MOST SUCCESSFUL PLAYER (MoM count)
+    // =====================================================
     const mostSuccessfulQ = await pool.query(`
       WITH all_mom AS (
-        SELECT mom_player FROM match_history WHERE mom_player IS NOT NULL AND mom_player <> ''
+        SELECT mom_player
+        FROM match_history
+        WHERE mom_player IS NOT NULL AND mom_player <> ''
         UNION ALL
-        SELECT mom_player FROM test_match_results WHERE mom_player IS NOT NULL AND mom_player <> ''
+        SELECT mom_player
+        FROM test_match_results
+        WHERE mom_player IS NOT NULL AND mom_player <> ''
       )
       SELECT
         mom_player AS player_name,
@@ -59,7 +67,9 @@ router.get("/", async (_req, res) => {
       LIMIT 1;
     `);
 
-    // 4️⃣ BEST TEAM
+    // =====================================================
+    // 4️⃣ BEST TEAM (wins across all formats)
+    // =====================================================
     const bestTeamQ = await pool.query(`
       WITH wins AS (
         SELECT TRIM(SPLIT_PART(winner, ' won', 1)) AS team_name
@@ -70,40 +80,34 @@ router.get("/", async (_req, res) => {
         FROM test_match_results
         WHERE winner IS NOT NULL AND winner <> ''
       )
-      SELECT team_name, COUNT(*) AS total_wins
+      SELECT
+        team_name,
+        COUNT(*) AS total_wins
       FROM wins
       GROUP BY team_name
       ORDER BY total_wins DESC
       LIMIT 1;
     `);
 
-    // 5️⃣ ALL ROUND PERFORMER (FIXED)
+    // =====================================================
+    // 5️⃣ ALL ROUND PERFORMER
+    // =====================================================
     const allRoundQ = await pool.query(`
-      WITH valid_players AS (
+      WITH totals AS (
         SELECT
-          p.id,
           p.player_name,
-          p.team_name,
+          MAX(p.team_name) AS team_name,
           p.skill_type,
-          pr.batting_rating,
-          pr.bowling_rating,
-          pr.allrounder_rating
+          SUM(
+            COALESCE(pr.batting_rating,0)
+          + COALESCE(pr.bowling_rating,0)
+          + COALESCE(pr.allrounder_rating,0)
+          ) AS total_rating
         FROM player_ratings pr
         JOIN players p ON p.id = pr.player_id
         WHERE p.skill_type IS NOT NULL
           AND p.skill_type <> ''
-      ),
-      totals AS (
-        SELECT
-          id AS player_id,
-          player_name,
-          team_name,
-          skill_type,
-          SUM(COALESCE(batting_rating,0)
-            + COALESCE(bowling_rating,0)
-            + COALESCE(allrounder_rating,0)) AS total_rating
-        FROM valid_players
-        GROUP BY id, player_name, team_name, skill_type
+        GROUP BY p.player_name, p.skill_type
       ),
       ranked AS (
         SELECT *,
@@ -116,6 +120,9 @@ router.get("/", async (_req, res) => {
       ORDER BY skill_type;
     `);
 
+    // =====================================================
+    // BUILD RESPONSE
+    // =====================================================
     const highlights = [];
 
     if (mostRunsQ.rows[0]) {
@@ -175,13 +182,13 @@ router.get("/", async (_req, res) => {
       });
     });
 
-    res.json({
+    return res.json({
       generated_at: generatedAt,
       highlights,
     });
   } catch (err) {
     console.error("❌ Error in /api/home-highlights:", err);
-    res.status(500).json({ message: "Failed to fetch home highlights" });
+    return res.status(500).json({ message: "Failed to fetch home highlights" });
   }
 });
 
