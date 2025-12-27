@@ -511,32 +511,52 @@ router.get("/players/list", async (_req, res) => {
 router.get("/meta/tournaments", async (req, res) => {
   try {
     const upType = String(req.query.type || "ALL").toUpperCase();
+
     const q = `
-      SELECT DISTINCT t FROM (
-        SELECT TRIM(pp.tournament_name) AS t
+      WITH raw AS (
+        SELECT
+          TRIM(pp.tournament_name) AS original
         FROM player_performance pp
-        WHERE pp.tournament_name IS NOT NULL AND TRIM(pp.tournament_name) <> ''
+        WHERE pp.tournament_name IS NOT NULL
+          AND TRIM(pp.tournament_name) <> ''
           AND (
             $1 = 'ALL'
             OR ($1='TEST' AND pp.match_type ILIKE 'test')
             OR ($1='ODI'  AND pp.match_type ILIKE 'odi')
             OR ($1='T20'  AND pp.match_type ILIKE 't20')
           )
-        UNION
-        SELECT TRIM(mh.tournament_name) AS t
+
+        UNION ALL
+
+        SELECT
+          TRIM(mh.tournament_name) AS original
         FROM match_history mh
-        WHERE mh.tournament_name IS NOT NULL AND TRIM(mh.tournament_name) <> ''
+        WHERE mh.tournament_name IS NOT NULL
+          AND TRIM(mh.tournament_name) <> ''
           AND (
             $1 = 'ALL'
             OR ($1='TEST' AND mh.match_type ILIKE 'test')
             OR ($1='ODI'  AND mh.match_type ILIKE 'odi')
             OR ($1='T20'  AND mh.match_type ILIKE 't20')
           )
-      ) x
-      ORDER BY t;
+      ),
+      canon AS (
+        SELECT
+          original,
+          -- 🔑 canonical key (case + spacing normalized)
+          lower(regexp_replace(original, '\\s+', ' ', 'g')) AS canon_key,
+          -- 🎨 display name (Title Case, clean)
+          initcap(lower(regexp_replace(original, '\\s+', ' ', 'g'))) AS display_name
+        FROM raw
+      )
+      SELECT DISTINCT ON (canon_key)
+        display_name
+      FROM canon
+      ORDER BY canon_key, display_name;
     `;
+
     const r = await pool.query(q, [upType]);
-    res.json(r.rows.map((x) => x.t));
+    res.json(r.rows.map((x) => x.display_name));
   } catch (e) {
     console.error("meta/tournaments:", e);
     res.status(500).json([]);
