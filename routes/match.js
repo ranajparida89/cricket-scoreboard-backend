@@ -152,20 +152,29 @@ router.get('/list', async (req, res) => {
 // test    -> read from test_match_results (Test)
 router.get('/tournaments', async (req, res) => {
   try {
-    const scope = (req.query.scope || 'limited').toLowerCase();
-    const table = scope === 'test' ? 'test_match_results' : 'match_history';
+    const q = `
+      WITH canon AS (
+        SELECT
+          LOWER(REGEXP_REPLACE(TRIM(tournament_name), '\\s+', ' ', 'g')) AS canon_key,
+          INITCAP(LOWER(REGEXP_REPLACE(TRIM(tournament_name), '\\s+', ' ', 'g'))) AS display_name
+        FROM match_history
+        WHERE tournament_name IS NOT NULL AND TRIM(tournament_name) <> ''
+        UNION ALL
+        SELECT
+          LOWER(REGEXP_REPLACE(TRIM(tournament_name), '\\s+', ' ', 'g')),
+          INITCAP(LOWER(REGEXP_REPLACE(TRIM(tournament_name), '\\s+', ' ', 'g')))
+        FROM test_match_results
+        WHERE tournament_name IS NOT NULL AND TRIM(tournament_name) <> ''
+      )
+      SELECT DISTINCT ON (canon_key) display_name
+      FROM canon
+      ORDER BY canon_key, display_name;
+    `;
 
-    const q = await pool.query(
-      `SELECT DISTINCT tournament_name
-         FROM ${table}
-        WHERE tournament_name IS NOT NULL AND tournament_name <> ''
-        ORDER BY tournament_name ASC`
-    );
-
-    res.json({ tournaments: q.rows.map(r => r.tournament_name) });
-  } catch (err) {
-    console.error('tournaments list error:', err.message);
-    res.status(500).json({ error: 'Failed to load tournaments' });
+    const r = await pool.query(q);
+    res.json({ tournaments: r.rows.map(x => x.display_name) });
+  } catch (e) {
+    res.status(500).json({ error: "Failed to load tournaments" });
   }
 });
 
