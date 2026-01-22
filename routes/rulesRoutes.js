@@ -1,11 +1,33 @@
 // C:\cricket-scoreboard-backend\routes\rulesRoutes.js
 
 const express = require("express");
+const jwt = require("jsonwebtoken");
 const router = express.Router();
-const pool = require("../db"); // adjust if your db file name is different
+const pool = require("../db");
 
 // ==============================
-// Middleware: Admin Check
+// AUTH MIDDLEWARE (JWT)
+// ==============================
+function authenticate(req, res, next) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Missing token" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; // 👈 VERY IMPORTANT
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Invalid token" });
+  }
+}
+
+// ==============================
+// ADMIN CHECK
 // ==============================
 function isAdmin(req, res, next) {
   if (!req.user || req.user.role !== "admin") {
@@ -17,8 +39,6 @@ function isAdmin(req, res, next) {
 // ==============================
 // GET ALL RULES (PUBLIC)
 // ==============================
-// Normal users: View only
-// Admin: View
 router.get("/rules", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -37,7 +57,7 @@ router.get("/rules", async (req, res) => {
 // ==============================
 // ADD NEW RULE (ADMIN ONLY)
 // ==============================
-router.post("/rules", isAdmin, async (req, res) => {
+router.post("/rules", authenticate, isAdmin, async (req, res) => {
   const {
     rule_number,
     title,
@@ -91,7 +111,7 @@ router.post("/rules", isAdmin, async (req, res) => {
 // ==============================
 // UPDATE RULE (ADMIN ONLY + HISTORY)
 // ==============================
-router.put("/rules/:id", isAdmin, async (req, res) => {
+router.put("/rules/:id", authenticate, isAdmin, async (req, res) => {
   const ruleId = req.params.id;
   const {
     title,
@@ -105,7 +125,7 @@ router.put("/rules/:id", isAdmin, async (req, res) => {
   try {
     await pool.query("BEGIN");
 
-    // 1. Save current rule into history
+    // Save old rule to history
     await pool.query(`
       INSERT INTO rules_history (
         rule_id,
@@ -138,7 +158,7 @@ router.put("/rules/:id", isAdmin, async (req, res) => {
       WHERE id = $2
     `, [req.user.username, ruleId]);
 
-    // 2. Update rule
+    // Update rule
     await pool.query(`
       UPDATE rules_and_regulations
       SET
@@ -174,7 +194,7 @@ router.put("/rules/:id", isAdmin, async (req, res) => {
 // ==============================
 // GET RULE HISTORY (ADMIN ONLY)
 // ==============================
-router.get("/rules/history/:ruleId", isAdmin, async (req, res) => {
+router.get("/rules/history/:ruleId", authenticate, isAdmin, async (req, res) => {
   const ruleId = req.params.ruleId;
 
   try {
@@ -193,15 +213,14 @@ router.get("/rules/history/:ruleId", isAdmin, async (req, res) => {
 });
 
 // ==============================
-// OPTIONAL: DELETE RULE (ADMIN ONLY)
+// DELETE RULE (ADMIN ONLY)
 // ==============================
-router.delete("/rules/:id", isAdmin, async (req, res) => {
+router.delete("/rules/:id", authenticate, isAdmin, async (req, res) => {
   const ruleId = req.params.id;
 
   try {
     await pool.query("BEGIN");
 
-    // Save rule before delete
     await pool.query(`
       INSERT INTO rules_history (
         rule_id,
@@ -214,7 +233,8 @@ router.delete("/rules/:id", isAdmin, async (req, res) => {
         rule_status,
         admin_comment,
         change_type,
-        changed_by
+        changed_by,
+        changed_at
       )
       SELECT
         id,
@@ -227,7 +247,8 @@ router.delete("/rules/:id", isAdmin, async (req, res) => {
         rule_status,
         admin_comment,
         'DELETED',
-        $1
+        $1,
+        NOW()
       FROM rules_and_regulations
       WHERE id = $2
     `, [req.user.username, ruleId]);
