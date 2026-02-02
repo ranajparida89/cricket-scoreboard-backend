@@ -6,6 +6,8 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const { requireAdminAuth } = require("../middleware/auth");
+
 
 /* ------------------------------------------------------------------
    1️⃣ CREATE TOURNAMENT + UPLOAD FIXTURE (PENDING MATCHES)
@@ -19,68 +21,92 @@ const pool = require("../db");
      matches: [ { ...dynamic columns... }, { ... } ]
    }
 -------------------------------------------------------------------*/
-router.post("/tournament/upload-fixture", async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const {
-      tournament_name,
-      season_year,
-      created_by,
-      uploaded_pdf_name,
-      matches,
-    } = req.body;
+router.post(
+  "/tournament/upload-fixture",
+  requireAdminAuth,
+  async (req, res) => {
+    const client = await pool.connect();
 
-    if (
-      !tournament_name ||
-      !season_year ||
-      !created_by ||
-      !Array.isArray(matches) ||
-      matches.length === 0
-    ) {
-      return res.status(400).json({ error: "Invalid tournament payload" });
+    try {
+      const {
+        tournament_name,
+        season_year,
+        uploaded_pdf_name,
+        matches,
+      } = req.body;
+
+      if (
+        !tournament_name ||
+        !season_year ||
+        !Array.isArray(matches) ||
+        matches.length === 0
+      ) {
+        return res.status(400).json({ error: "Invalid tournament payload" });
+      }
+
+      await client.query("BEGIN");
+
+      // ✅ ADMIN AUDIT LOG (UPLOAD FIXTURE)
+      await client.query(
+        `
+        INSERT INTO admin_audit_log
+          (admin_id, action, action_detail, ip_address, user_agent)
+        VALUES ($1, 'upload_fixture', $2, $3, $4)
+        `,
+        [
+          req.admin.id,
+          `Uploaded fixture: ${tournament_name} (${season_year})`,
+          req.ip,
+          req.get("user-agent"),
+        ]
+      );
+
+      // 1️⃣ Insert tournament master
+      const tournamentRes = await client.query(
+        `
+        INSERT INTO tournament_master
+          (tournament_name, season_year, uploaded_pdf_name, created_by)
+        VALUES ($1, $2, $3, $4)
+        RETURNING tournament_id
+        `,
+        [
+          tournament_name,
+          season_year,
+          uploaded_pdf_name || null,
+          req.admin.email,
+        ]
+      );
+
+      const tournamentId = tournamentRes.rows[0].tournament_id;
+
+      // 2️⃣ Insert all pending matches
+      for (const row of matches) {
+        await client.query(
+          `
+          INSERT INTO tournament_pending_matches
+            (tournament_id, match_data)
+          VALUES ($1, $2)
+          `,
+          [tournamentId, row]
+        );
+      }
+
+      await client.query("COMMIT");
+
+      res.status(201).json({
+        message: "Tournament fixture uploaded successfully",
+        tournament_id: tournamentId,
+        total_matches: matches.length,
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("❌ Upload Fixture Error:", err.message);
+      res.status(500).json({ error: "Failed to upload tournament fixture" });
+    } finally {
+      client.release();
     }
-
-    await client.query("BEGIN");
-
-    // 1️⃣ Insert tournament master
-    const tournamentRes = await client.query(
-      `
-      INSERT INTO tournament_master
-        (tournament_name, season_year, uploaded_pdf_name, created_by)
-      VALUES ($1,$2,$3,$4)
-      RETURNING tournament_id
-      `,
-      [tournament_name, season_year, uploaded_pdf_name || null, created_by]
-    );
-
-    const tournamentId = tournamentRes.rows[0].tournament_id;
-
-    // 2️⃣ Insert all matches as PENDING (JSONB)
-    const insertPendingQuery = `
-      INSERT INTO tournament_pending_matches
-        (tournament_id, match_data)
-      VALUES ($1, $2)
-    `;
-
-    for (const row of matches) {
-      await client.query(insertPendingQuery, [tournamentId, row]);
-    }
-
-    await client.query("COMMIT");
-
-    res.status(201).json({
-      message: "Tournament fixture uploaded successfully",
-      tournament_id: tournamentId,
-      total_matches: matches.length,
-    });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("❌ Upload Fixture Error:", err.message);
-    res.status(500).json({ error: "Failed to upload tournament fixture" });
-  } finally {
-    client.release();
   }
-});
+);
 
 /* ------------------------------------------------------------------
    2️⃣ FETCH PENDING MATCHES (FOR TABLE 1)
@@ -109,57 +135,78 @@ router.get("/tournament/pending/:tournamentId", async (req, res) => {
 /* ------------------------------------------------------------------
    3️⃣ MARK MATCH AS COMPLETED (CHECKBOX ACTION)
 -------------------------------------------------------------------*/
-router.post("/tournament/complete-match", async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const { pending_id, tournament_id } = req.body;
+router.post(
+  "/tournament/complete-match",
+  requireAdminAuth,
+  async (req, res) => {
+    const client = await pool.connect();
 
-    if (!pending_id || !tournament_id) {
-      return res.status(400).json({ error: "Missing pending_id or tournament_id" });
-    }
+    try {
+      const { pending_id, tournament_id } = req.body;
+        // 🔐 Taken from JWT (trusted)
+        const completed_by = req.admin.email;
 
-    await client.query("BEGIN");
+      if (!pending_id || !tournament_id) {
+        return res
+          .status(400)
+          .json({ error: "Missing pending_id or tournament_id" });
+      }
 
-    // 1️⃣ Move record to completed table
+      await client.query("BEGIN");
+
+      // ✅ ADMIN AUDIT LOG (COMPLETE MATCH)
+      await client.query(
+        `
+        INSERT INTO admin_audit_log
+          (admin_id, action, action_detail, ip_address, user_agent)
+        VALUES ($1, 'complete_match', $2, $3, $4)
+        `,
+        [
+          req.admin.id,
+          `Completed match: pending_id=${pending_id}, tournament_id=${tournament_id}`,
+          req.ip,
+          req.get("user-agent"),
+        ]
+      );
+
+      // 1️⃣ Move to completed table
     const insertCompleted = await client.query(
-      `
-      INSERT INTO tournament_completed_matches (tournament_id, match_data)
-      SELECT tournament_id, match_data
-      FROM tournament_pending_matches
-      WHERE pending_id = $1 AND tournament_id = $2
-      RETURNING completed_id
-      `,
-      [pending_id, tournament_id]
-    );
+  `
+  INSERT INTO tournament_completed_matches
+    (tournament_id, match_data, completed_by)
+  SELECT tournament_id, match_data, $3
+  FROM tournament_pending_matches
+  WHERE pending_id = $1 AND tournament_id = $2
+  RETURNING completed_id
+  `,
+  [pending_id, tournament_id, completed_by]
+);
+if (insertCompleted.rowCount === 0) {
+  throw new Error("Pending match not found");
+}
+    
+      // 2️⃣ Delete from pending
+      await client.query(
+        `DELETE FROM tournament_pending_matches WHERE pending_id = $1`,
+        [pending_id]
+      );
 
-    if (insertCompleted.rowCount === 0) {
-      throw new Error("Pending match not found");
-    }
+      await client.query("COMMIT");
 
-    // 2️⃣ Delete from pending table
-    await client.query(
-      `
-      DELETE FROM tournament_pending_matches
-      WHERE pending_id = $1
-      `,
-      [pending_id]
-    );
-
-    await client.query("COMMIT");
-
-    res.status(200).json({
-      message: "Match moved to completed matches",
-      completed_id: insertCompleted.rows[0].completed_id,
-    });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("❌ Complete Match Error:", err.message);
-    res.status(500).json({ error: "Failed to complete match" });
-  } finally {
-    client.release();
-  }
+      res.status(200).json({
+  message: "Match moved to completed matches",
+  completed_id: insertCompleted.rows[0].completed_id,
 });
 
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("❌ Complete Match Error:", err.message);
+      res.status(500).json({ error: "Failed to complete match" });
+    } finally {
+      client.release();
+    }
+  }
+);
 /* ------------------------------------------------------------------
    4️⃣ FETCH COMPLETED MATCH HISTORY (DROPDOWN BASED)
 -------------------------------------------------------------------*/
