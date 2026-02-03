@@ -162,7 +162,6 @@ app.use("/api/tournament", upcomingTournamentRoutes);
 app.use("/api/auction", simpleAuctionRoutes);
 app.use("/api/simple-auction", simpleAuctionRoutes);
 app.use("/api", rulesRoutes); // rules for crickedge 22/01/2026
-app.use("/api", require("./routes/tournamentFixtureRoutes"));
 app.use("/api", tournamentFixtureRoutes);
 
 
