@@ -1,156 +1,86 @@
 // ✅ routes/tournamentFixtureRoutes.js
-// ✅ CrickEdge – Tournament Fixture Lifecycle (PDF-driven)
+// ✅ CrickEdge – Tournament Fixture Lifecycle (PUBLIC VERSION)
 // Author: Ranaj Parida
 // Purpose: Handle Pending ↔ Completed tournament matches with dynamic columns
+// NOTE: No Admin / No JWT / No Auth (UI will handle visibility)
 
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const jwt = require("jsonwebtoken");
-
-// ==============================
-// AUTH MIDDLEWARE (JWT)
-// ==============================
-function authenticate(req, res, next) {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Missing admin token" });
-  }
-
-  const token = authHeader.split(" ")[1];
-
-  try {
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || "your_super_secret_jwt_key_here"
-    );
-    req.user = decoded; // ✅ SAME AS rulesRoutes.js
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: "Invalid or expired admin token" });
-  }
-}
-
-// ==============================
-// ADMIN CHECK
-// ==============================
-function isAdmin(req, res, next) {
-  if (!req.user) {
-    return res.status(401).json({ error: "Unauthenticated" });
-  }
-
-  if (req.user.is_super_admin === true) {
-    return next();
-  }
-
-  return res.status(403).json({ error: "Admin access required" });
-}
-
-
 
 /* ------------------------------------------------------------------
    1️⃣ CREATE TOURNAMENT + UPLOAD FIXTURE (PENDING MATCHES)
-   ------------------------------------------------------------------
-   Expected payload:
-   {
-     tournament_name: "World Cup",
-     season_year: "2026",
-     created_by: "admin@crickedge",
-     uploaded_pdf_name: "wc_2026_fixtures.pdf",
-     matches: [ { ...dynamic columns... }, { ... } ]
-   }
 -------------------------------------------------------------------*/
-router.post(
-  "/tournament/upload-fixture",
-  authenticate,
-  isAdmin,
-  async (req, res) => {
-    const client = await pool.connect();
+router.post("/tournament/upload-fixture", async (req, res) => {
+  const client = await pool.connect();
 
-    try {
-      const {
+  try {
+    const {
+      tournament_name,
+      season_year,
+      uploaded_pdf_name,
+      matches,
+    } = req.body;
+
+    if (
+      !tournament_name ||
+      !season_year ||
+      !Array.isArray(matches) ||
+      matches.length === 0
+    ) {
+      return res.status(400).json({ error: "Invalid tournament payload" });
+    }
+
+    await client.query("BEGIN");
+
+    // 1️⃣ Insert tournament master
+    const tournamentRes = await client.query(
+      `
+      INSERT INTO tournament_master
+        (tournament_name, season_year, uploaded_pdf_name, created_by)
+      VALUES ($1, $2, $3, $4)
+      RETURNING tournament_id
+      `,
+      [
         tournament_name,
         season_year,
-        uploaded_pdf_name,
-        matches,
-      } = req.body;
+        uploaded_pdf_name || null,
+        "system",
+      ]
+    );
 
-      if (
-        !tournament_name ||
-        !season_year ||
-        !Array.isArray(matches) ||
-        matches.length === 0
-      ) {
-        return res.status(400).json({ error: "Invalid tournament payload" });
-      }
+    const tournamentId = tournamentRes.rows[0].tournament_id;
 
-      await client.query("BEGIN");
-
-      // ✅ ADMIN AUDIT LOG (UPLOAD FIXTURE)
+    // 2️⃣ Insert all pending matches
+    for (const row of matches) {
       await client.query(
         `
-        INSERT INTO admin_audit_log
-          (admin_id, action, action_detail, ip_address, user_agent)
-        VALUES ($1, 'upload_fixture', $2, $3, $4)
+        INSERT INTO tournament_pending_matches
+          (tournament_id, match_data)
+        VALUES ($1, $2)
         `,
-        [
-          req.admin.id,
-          `Uploaded fixture: ${tournament_name} (${season_year})`,
-          req.ip,
-          req.get("user-agent"),
-        ]
+        [tournamentId, row]
       );
-
-      // 1️⃣ Insert tournament master
-      const tournamentRes = await client.query(
-        `
-        INSERT INTO tournament_master
-          (tournament_name, season_year, uploaded_pdf_name, created_by)
-        VALUES ($1, $2, $3, $4)
-        RETURNING tournament_id
-        `,
-        [
-          tournament_name,
-          season_year,
-          uploaded_pdf_name || null,
-          req.admin.email,
-        ]
-      );
-
-      const tournamentId = tournamentRes.rows[0].tournament_id;
-
-      // 2️⃣ Insert all pending matches
-      for (const row of matches) {
-        await client.query(
-          `
-          INSERT INTO tournament_pending_matches
-            (tournament_id, match_data)
-          VALUES ($1, $2)
-          `,
-          [tournamentId, row]
-        );
-      }
-
-      await client.query("COMMIT");
-
-      res.status(201).json({
-        message: "Tournament fixture uploaded successfully",
-        tournament_id: tournamentId,
-        total_matches: matches.length,
-      });
-    } catch (err) {
-      await client.query("ROLLBACK");
-      console.error("❌ Upload Fixture Error:", err.message);
-      res.status(500).json({ error: "Failed to upload tournament fixture" });
-    } finally {
-      client.release();
     }
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      message: "Tournament fixture uploaded successfully",
+      tournament_id: tournamentId,
+      total_matches: matches.length,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("❌ Upload Fixture Error:", err.message);
+    res.status(500).json({ error: "Failed to upload tournament fixture" });
+  } finally {
+    client.release();
   }
-);
+});
 
 /* ------------------------------------------------------------------
-   2️⃣ FETCH PENDING MATCHES (FOR TABLE 1)
+   2️⃣ FETCH PENDING MATCHES
 -------------------------------------------------------------------*/
 router.get("/tournament/pending/:tournamentId", async (req, res) => {
   try {
@@ -174,90 +104,71 @@ router.get("/tournament/pending/:tournamentId", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-   3️⃣ MARK MATCH AS COMPLETED (CHECKBOX ACTION)
+   3️⃣ MARK MATCH AS COMPLETED
 -------------------------------------------------------------------*/
-router.post(
-  "/tournament/complete-match",
-  authenticate,
-  isAdmin,
-  async (req, res) => {
-    const client = await pool.connect();
+router.post("/tournament/complete-match", async (req, res) => {
+  const client = await pool.connect();
 
-    try {
-      const { pending_id, tournament_id } = req.body;
-        // 🔐 Taken from JWT (trusted)
-        const completed_by = req.admin.email;
+  try {
+    const { pending_id, tournament_id } = req.body;
 
-      if (!pending_id || !tournament_id) {
-        return res
-          .status(400)
-          .json({ error: "Missing pending_id or tournament_id" });
-      }
+    if (!pending_id || !tournament_id) {
+      return res
+        .status(400)
+        .json({ error: "Missing pending_id or tournament_id" });
+    }
 
-      await client.query("BEGIN");
+    await client.query("BEGIN");
 
-      // ✅ ADMIN AUDIT LOG (COMPLETE MATCH)
-      await client.query(
-        `
-        INSERT INTO admin_audit_log
-          (admin_id, action, action_detail, ip_address, user_agent)
-        VALUES ($1, 'complete_match', $2, $3, $4)
-        `,
-        [
-          req.admin.id,
-          `Completed match: pending_id=${pending_id}, tournament_id=${tournament_id}`,
-          req.ip,
-          req.get("user-agent"),
-        ]
-      );
-
-      // 1️⃣ Move to completed table
+    // 1️⃣ Move match to completed table
     const insertCompleted = await client.query(
-  `
-  INSERT INTO tournament_completed_matches
-    (tournament_id, match_data, completed_by)
-  SELECT tournament_id, match_data, $3
-  FROM tournament_pending_matches
-  WHERE pending_id = $1 AND tournament_id = $2
-  RETURNING completed_id
-  `,
-  [pending_id, tournament_id, completed_by]
-);
-if (insertCompleted.rowCount === 0) {
-  throw new Error("Pending match not found");
-}
-    
-      // 2️⃣ Delete from pending
-      await client.query(
-        `DELETE FROM tournament_pending_matches WHERE pending_id = $1`,
-        [pending_id]
-      );
+      `
+      INSERT INTO tournament_completed_matches
+        (tournament_id, match_data, completed_by)
+      SELECT tournament_id, match_data, $3
+      FROM tournament_pending_matches
+      WHERE pending_id = $1 AND tournament_id = $2
+      RETURNING completed_id
+      `,
+      [pending_id, tournament_id, "system"]
+    );
 
-      await client.query("COMMIT");
+    if (insertCompleted.rowCount === 0) {
+      throw new Error("Pending match not found");
+    }
 
-      res.status(200).json({
-  message: "Match moved to completed matches",
-  completed_id: insertCompleted.rows[0].completed_id,
+    // 2️⃣ Delete from pending table
+    await client.query(
+      `DELETE FROM tournament_pending_matches WHERE pending_id = $1`,
+      [pending_id]
+    );
+
+    await client.query("COMMIT");
+
+    res.status(200).json({
+      message: "Match moved to completed matches",
+      completed_id: insertCompleted.rows[0].completed_id,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("❌ Complete Match Error:", err.message);
+    res.status(500).json({ error: "Failed to complete match" });
+  } finally {
+    client.release();
+  }
 });
 
-    } catch (err) {
-      await client.query("ROLLBACK");
-      console.error("❌ Complete Match Error:", err.message);
-      res.status(500).json({ error: "Failed to complete match" });
-    } finally {
-      client.release();
-    }
-  }
-);
 /* ------------------------------------------------------------------
-   4️⃣ FETCH COMPLETED MATCH HISTORY (DROPDOWN BASED)
+   4️⃣ FETCH COMPLETED MATCH HISTORY
 -------------------------------------------------------------------*/
 router.get("/tournament/completed", async (req, res) => {
   try {
     const { tournament_name, season_year } = req.query;
 
     if (!tournament_name || !season_year) {
-      return res.status(400).json({ error: "Tournament name and season required" });
+      return res
+        .status(400)
+        .json({ error: "Tournament name and season required" });
     }
 
     const result = await pool.query(
@@ -281,7 +192,7 @@ router.get("/tournament/completed", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
-   5️⃣ FETCH TOURNAMENT LIST (FOR DROPDOWNS)
+   5️⃣ FETCH TOURNAMENT LIST
 -------------------------------------------------------------------*/
 router.get("/tournament/list", async (_req, res) => {
   try {
@@ -292,6 +203,7 @@ router.get("/tournament/list", async (_req, res) => {
       ORDER BY created_at DESC
       `
     );
+
     res.status(200).json(result.rows);
   } catch (err) {
     console.error("❌ Fetch Tournament List Error:", err.message);
