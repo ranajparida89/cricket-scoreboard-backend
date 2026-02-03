@@ -69,7 +69,7 @@ const playerReportCardRoutes = require("./routes/playerReportCardRoutes");
 const upcomingTournamentRoutes = require("./routes/UpcomingtournamnetRoutes");
 const simpleAuctionRoutes = require("./routes/simpleAuctionRoutes");
 const rulesRoutes = require("./routes/rulesRoutes"); // Rule for crickedge 22nd Jan 2026
-const tournamentFixtureRoutes = require("./routes/tournamentFixtureRoutes");
+
 
 const app = express();
 const server = http.createServer(app);
@@ -162,7 +162,7 @@ app.use("/api/tournament", upcomingTournamentRoutes);
 app.use("/api/auction", simpleAuctionRoutes);
 app.use("/api/simple-auction", simpleAuctionRoutes);
 app.use("/api", rulesRoutes); // rules for crickedge 22/01/2026
-app.use("/api", tournamentFixtureRoutes);
+
 
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
