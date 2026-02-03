@@ -6,7 +6,47 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { requireAdminAuth } = require("./auth");
+const jwt = require("jsonwebtoken");
+
+// ==============================
+// AUTH MIDDLEWARE (JWT)
+// ==============================
+function authenticate(req, res, next) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing admin token" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || "your_super_secret_jwt_key_here"
+    );
+    req.user = decoded; // ✅ SAME AS rulesRoutes.js
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid or expired admin token" });
+  }
+}
+
+// ==============================
+// ADMIN CHECK
+// ==============================
+function isAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: "Unauthenticated" });
+  }
+
+  if (req.user.is_super_admin === true) {
+    return next();
+  }
+
+  return res.status(403).json({ error: "Admin access required" });
+}
+
 
 
 /* ------------------------------------------------------------------
@@ -23,7 +63,8 @@ const { requireAdminAuth } = require("./auth");
 -------------------------------------------------------------------*/
 router.post(
   "/tournament/upload-fixture",
-  requireAdminAuth,
+  authenticate,
+  isAdmin,
   async (req, res) => {
     const client = await pool.connect();
 
@@ -137,7 +178,8 @@ router.get("/tournament/pending/:tournamentId", async (req, res) => {
 -------------------------------------------------------------------*/
 router.post(
   "/tournament/complete-match",
-  requireAdminAuth,
+  authenticate,
+  isAdmin,
   async (req, res) => {
     const client = await pool.connect();
 
