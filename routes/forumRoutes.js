@@ -3,7 +3,7 @@
 
 const router = require("express").Router();
 const pool = require("../db");
-const authenticateToken = require("../middleware/authenticateToken");
+const authenticateToken = require("./authenticateToken");
 
 /* ----------------- helpers ----------------- */
 const countWords = (text = "") =>
