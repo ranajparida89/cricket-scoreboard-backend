@@ -45,7 +45,7 @@ router.post("/post", authenticateToken, async (req, res) => {
   console.log("📩 Create forum post:", req.body);
 
   const { subject, content, postType } = req.body;
-  const user_id = req.user?.id;
+  const user_id = req.user?.user_id;
   const author_name = req.user?.name || req.user?.username;
 
   if (!user_id) {
@@ -134,7 +134,7 @@ router.post("/reply", authenticateToken, async (req, res) => {
   console.log("💬 Add forum reply:", req.body);
 
   const { postId, content } = req.body;
-  const user_id = req.user?.id;
+ const user_id = req.user?.user_id;
   const author_name = req.user?.name || req.user?.username;
 
   if (!user_id) {
