@@ -46,7 +46,7 @@ router.post("/post", authenticateToken, async (req, res) => {
 
   const { subject, content, postType } = req.body;
   const user_id = req.user?.user_id;
-  const author_name = req.user?.name || req.user?.username;
+  const author_name = req.user?.email;
 
   if (!user_id) {
     return res.status(401).json({
@@ -135,7 +135,7 @@ router.post("/reply", authenticateToken, async (req, res) => {
 
   const { postId, content } = req.body;
  const user_id = req.user?.user_id;
-  const author_name = req.user?.name || req.user?.username;
+  const author_name = req.user?.email;
 
   if (!user_id) {
     return res.status(401).json({
