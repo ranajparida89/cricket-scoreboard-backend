@@ -269,6 +269,8 @@ router.post(
     const { postId } = req.params;
     const user_id = req.user?.user_id;
     
+    console.log("👉 postId =", postId);
+    console.log("👉 extracted user_id =", user_id);
     console.log("LIKE req.user =", req.user);
 
     if (!user_id) {
