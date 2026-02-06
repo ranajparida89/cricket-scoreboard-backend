@@ -166,6 +166,30 @@ router.post("/reply", authenticateToken, async (req, res) => {
       [postId, user_id, author_name, content]
     );
 
+    // 🔔 NOTIFY POST OWNER ABOUT REPLY
+const postOwnerRes = await pool.query(
+  "SELECT user_id FROM forum_posts WHERE id = $1",
+  [postId]
+);
+
+const postOwnerId = postOwnerRes.rows[0]?.user_id;
+
+// Avoid notifying yourself
+if (postOwnerId && postOwnerId !== user_id) {
+  await pool.query(
+    `
+    INSERT INTO notifications (user_id, type, reference_id, message)
+    VALUES ($1, $2, $3, $4)
+    `,
+    [
+      postOwnerId,
+      "REPLY",
+      postId,
+      `${author_name} replied to your post`
+    ]
+  );
+}
+
     return res.json({
       message: "Reply added successfully",
     });
@@ -304,6 +328,29 @@ router.post(
         [postId, user_id]
       );
 
+      // 🔔 NOTIFY POST OWNER ABOUT LIKE
+const postOwnerRes = await pool.query(
+  "SELECT user_id FROM forum_posts WHERE id = $1",
+  [postId]
+);
+
+const postOwnerId = postOwnerRes.rows[0]?.user_id;
+
+// Avoid self-like notification
+if (postOwnerId && postOwnerId !== user_id) {
+  await pool.query(
+    `
+    INSERT INTO notifications (user_id, type, reference_id, message)
+    VALUES ($1, $2, $3, $4)
+    `,
+    [
+      postOwnerId,
+      "LIKE",
+      postId,
+      "Someone liked your post"
+    ]
+  );
+}
       return res.json({ liked: true });
 
     } catch (err) {
@@ -330,6 +377,41 @@ router.get("/post/:postId/likes", async (req, res) => {
   } catch (err) {
     console.error("❌ Like count error:", err);
     res.status(500).json({ error: "Failed to fetch likes" });
+  }
+});
+
+
+/* =========================================================
+ * GET /api/forum/notifications (AUTH)
+ * ======================================================= */
+router.get("/notifications", authenticateToken, async (req, res) => {
+  const user_id = req.user?.user_id;
+
+  if (!user_id) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        type,
+        message,
+        reference_id,
+        is_read,
+        TO_CHAR(created_at, 'YYYY-MM-DD HH12:MI AM') AS created_at
+      FROM notifications
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      `,
+      [user_id]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("❌ Fetch notifications error:", err.message);
+    res.status(500).json({ error: "Failed to fetch notifications" });
   }
 });
 
