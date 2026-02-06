@@ -98,6 +98,7 @@ router.post("/post", authenticateToken, async (req, res) => {
  * GET /api/forum/replies/:postId (PUBLIC)
  * ======================================================= */
 router.get("/replies/:postId", async (req, res) => {
+    console.log("🔍 FETCH REPLIES postId:", req.params.postId);
   const { postId } = req.params;
 
   try {
