@@ -271,7 +271,17 @@ router.post(
     console.log("LIKE req.user =", req.user);
 
     const { postId } = req.params;
-    const user_id = req.user.user_id; // ✅ UUID
+    // const user_id = req.user.user_id;  ✅ UUID
+
+    const userRes = await pool.query(
+  "SELECT id FROM users WHERE email = $1",
+  [req.user.email]
+);
+
+if (!userRes.rows.length) {
+  return res.status(401).json({ error: "User not found" });
+}
+const user_id = userRes.rows[0].id; // ✅ INTEGER (safe)
 
     console.log(
       "LIKE DEBUG → postId:",
