@@ -257,5 +257,68 @@ router.delete("/post/:id", authenticateToken, async (req, res) => {
   }
 });
 
+/* =========================================================
+ * POST /api/forum/post/:postId/like (AUTH)
+ * ======================================================= */
+router.post(
+  "/post/:postId/like",
+  authenticateToken,
+  async (req, res) => {
+    const { postId } = req.params;
+    const user_id = req.user?.user_id;
+
+    if (!user_id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    try {
+      // Check if already liked
+      const existing = await pool.query(
+        "SELECT id FROM forum_likes WHERE post_id = $1 AND user_id = $2",
+        [postId, user_id]
+      );
+
+      if (existing.rows.length > 0) {
+        // Unlike
+        await pool.query(
+          "DELETE FROM forum_likes WHERE post_id = $1 AND user_id = $2",
+          [postId, user_id]
+        );
+        return res.json({ liked: false });
+      }
+
+      // Like
+      await pool.query(
+        "INSERT INTO forum_likes (post_id, user_id) VALUES ($1, $2)",
+        [postId, user_id]
+      );
+
+      res.json({ liked: true });
+    } catch (err) {
+      console.error("❌ Like error:", err);
+      res.status(500).json({ error: "Failed to like post" });
+    }
+  }
+);
+
+/* =========================================================
+ * GET /api/forum/post/:postId/likes (PUBLIC)
+ * ======================================================= */
+router.get("/post/:postId/likes", async (req, res) => {
+  const { postId } = req.params;
+
+  try {
+    const result = await pool.query(
+      "SELECT COUNT(*)::int AS likes FROM forum_likes WHERE post_id = $1",
+      [postId]
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("❌ Like count error:", err);
+    res.status(500).json({ error: "Failed to fetch likes" });
+  }
+});
+
 
 module.exports = router;
