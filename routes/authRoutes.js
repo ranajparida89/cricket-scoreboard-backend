@@ -154,7 +154,8 @@ router.post("/login", async (req, res) => {
 
     // ✅ Step 3: Sign JWT token
     const token = jwt.sign(
-      { user_id: user.id, email: user.email },
+      { user_id: user.user_id,  // user_id: user.id chnaged here for UUID 06/02/2026
+        email: user.email },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
