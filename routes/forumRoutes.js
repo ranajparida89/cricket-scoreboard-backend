@@ -176,4 +176,86 @@ router.post("/reply", authenticateToken, async (req, res) => {
   }
 });
 
+/* =========================================================
+ * PUT /api/forum/post/:id (EDIT POST – OWNER ONLY)
+ * ======================================================= */
+router.put("/post/:id", authenticateToken, async (req, res) => {
+  const postId = req.params.id;
+  const { subject, content } = req.body;
+  const user_id = req.user?.user_id;
+
+  if (!user_id) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const postRes = await pool.query(
+      "SELECT user_id FROM forum_posts WHERE id = $1 AND is_deleted = FALSE",
+      [postId]
+    );
+
+    if (postRes.rows.length === 0) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    if (postRes.rows[0].user_id !== user_id) {
+      return res.status(403).json({ error: "Not allowed to edit this post" });
+    }
+
+    await pool.query(
+      `
+      UPDATE forum_posts
+      SET subject = $1,
+          content = $2,
+          updated_at = NOW()
+      WHERE id = $3
+      `,
+      [subject, content, postId]
+    );
+
+    res.json({ message: "Post updated successfully" });
+  } catch (err) {
+    console.error("❌ Update Post Error:", err);
+    res.status(500).json({ error: "Failed to update post" });
+  }
+});
+
+/* =========================================================
+ * DELETE /api/forum/post/:id (DELETE POST – OWNER ONLY)
+ * ======================================================= */
+router.delete("/post/:id", authenticateToken, async (req, res) => {
+  const postId = req.params.id;
+  const user_id = req.user?.user_id;
+
+  if (!user_id) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const postRes = await pool.query(
+      "SELECT user_id FROM forum_posts WHERE id = $1 AND is_deleted = FALSE",
+      [postId]
+    );
+
+    if (postRes.rows.length === 0) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    if (postRes.rows[0].user_id !== user_id) {
+      return res.status(403).json({ error: "Not allowed to delete this post" });
+    }
+
+    await pool.query(
+      "UPDATE forum_posts SET is_deleted = TRUE WHERE id = $1",
+      [postId]
+    );
+
+    res.json({ message: "Post deleted successfully" });
+  } catch (err) {
+    console.error("❌ Delete Post Error:", err);
+    res.status(500).json({ error: "Failed to delete post" });
+  }
+});
+
+
 module.exports = router;
