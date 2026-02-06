@@ -1,29 +1,27 @@
-// routes/authenticateToken.js
-// User JWT authentication middleware
-
 const jwt = require("jsonwebtoken");
 
-const JWT_SECRET = process.env.JWT_SECRET || "your_super_secret_jwt_key_here";
-
-module.exports = function authenticateToken(req, res, next) {
-  const authHeader = req.headers["authorization"] || "";
-  const token = authHeader.startsWith("Bearer ")
-    ? authHeader.slice(7)
-    : null;
+module.exports = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
 
   if (!token) {
-    return res.status(401).json({
-      error: "User not authenticated. Please login again.",
-    });
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(403).json({ error: "Invalid token" });
+    }
+
+    // ✅ IMPORTANT: decoded.user_id is UUID
+    req.user = {
+      user_id: decoded.user_id,
+      email: decoded.email
+    };
+
+    // 🔍 TEMP DEBUG (keep for now)
+    console.log("AUTH DECODED:", req.user);
+
     next();
-  } catch (err) {
-    return res.status(401).json({
-      error: "Invalid or expired token. Please login again.",
-    });
-  }
+  });
 };

@@ -265,31 +265,33 @@ router.post(
   "/post/:postId/like",
   authenticateToken,
   async (req, res) => {
-     console.log("🔥 LIKE API HIT");
-     console.log("🔥 req.user =", req.user);
-    const { postId } = req.params;
-    const user_id = req.user?.user_id;
 
-    console.log("LIKE DEBUG → postId:", postId, "user_id:", user_id, "type:", typeof user_id);
-
-    
-    console.log("👉 postId =", postId);
-    console.log("👉 extracted user_id =", user_id);
+    console.log("🔥 LIKE API HIT");
     console.log("LIKE req.user =", req.user);
+
+    const { postId } = req.params;
+    const user_id = req.user.user_id; // ✅ UUID
+
+    console.log(
+      "LIKE DEBUG → postId:",
+      postId,
+      "user_id:",
+      user_id,
+      "type:",
+      typeof user_id
+    );
 
     if (!user_id) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
     try {
-      // Check if already liked
       const existing = await pool.query(
         "SELECT id FROM forum_likes WHERE post_id = $1 AND user_id = $2",
         [postId, user_id]
       );
 
       if (existing.rows.length > 0) {
-        // Unlike
         await pool.query(
           "DELETE FROM forum_likes WHERE post_id = $1 AND user_id = $2",
           [postId, user_id]
@@ -297,19 +299,20 @@ router.post(
         return res.json({ liked: false });
       }
 
-      // Like
       await pool.query(
         "INSERT INTO forum_likes (post_id, user_id) VALUES ($1, $2)",
         [postId, user_id]
       );
 
-      res.json({ liked: true });
+      return res.json({ liked: true });
+
     } catch (err) {
-      console.error("❌ Like error:", err);
-      res.status(500).json({ error: "Failed to like post" });
+      console.error("❌ Like error:", err.message);
+      return res.status(500).json({ error: "Failed to like post" });
     }
   }
 );
+
 
 /* =========================================================
  * GET /api/forum/post/:postId/likes (PUBLIC)
