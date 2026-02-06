@@ -264,9 +264,11 @@ router.post(
   "/post/:postId/like",
   authenticateToken,
   async (req, res) => {
+     console.log("🔥 LIKE API HIT");
+     console.log("🔥 req.user =", req.user);
     const { postId } = req.params;
     const user_id = req.user?.user_id;
-
+    
     console.log("LIKE req.user =", req.user);
 
     if (!user_id) {
