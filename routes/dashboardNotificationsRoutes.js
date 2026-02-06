@@ -9,7 +9,7 @@ router.get("/", async (req, res) => {
     const { userId } = req.query;
     if (!userId) return res.status(400).json({ error: "Missing userId" });
     const result = await pool.query(
-      `SELECT * FROM user_notifications WHERE user_id = $1 ORDER BY created_at DESC`,
+      `SELECT * FROM  user_notificationsWHERE user_id = $1 ORDER BY created_at DESC`,
       [userId]
     );
     res.json(result.rows);
