@@ -268,6 +268,9 @@ router.post(
      console.log("🔥 req.user =", req.user);
     const { postId } = req.params;
     const user_id = req.user?.user_id;
+
+    console.log("LIKE DEBUG → postId:", postId, "user_id:", user_id, "type:", typeof user_id);
+
     
     console.log("👉 postId =", postId);
     console.log("👉 extracted user_id =", user_id);
