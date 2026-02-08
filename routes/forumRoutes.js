@@ -21,15 +21,34 @@ router.get("/posts", async (_req, res) => {
         subject,
         content,
         post_type,
-        TO_CHAR(created_at, 'YYYY-MM-DD')       AS post_date,
-        TRIM(TO_CHAR(created_at, 'FMDay'))      AS post_day,
-        TRIM(TO_CHAR(created_at, 'HH12:MI AM')) AS post_time
+
+        -- ✅ UTC → IST conversion
+        TO_CHAR(
+          (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'),
+          'YYYY-MM-DD'
+        ) AS post_date,
+
+        TRIM(
+          TO_CHAR(
+            (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'),
+            'FMDay'
+          )
+        ) AS post_day,
+
+        TRIM(
+          TO_CHAR(
+            (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'),
+            'HH12:MI AM'
+          )
+        ) AS post_time
+
       FROM forum_posts
       WHERE is_deleted = FALSE
       ORDER BY created_at DESC
     `);
 
     return res.json(result.rows);
+
   } catch (err) {
     console.error("❌ Fetch Forum Posts Error:", err);
     return res.status(500).json({
@@ -98,7 +117,6 @@ router.post("/post", authenticateToken, async (req, res) => {
  * GET /api/forum/replies/:postId (PUBLIC)
  * ======================================================= */
 router.get("/replies/:postId", async (req, res) => {
-    console.log("🔍 FETCH REPLIES postId:", req.params.postId);
   const { postId } = req.params;
 
   try {
@@ -108,9 +126,27 @@ router.get("/replies/:postId", async (req, res) => {
         id,
         author_name,
         content,
-        TO_CHAR(created_at, 'YYYY-MM-DD')       AS reply_date,
-        TRIM(TO_CHAR(created_at, 'FMDay'))      AS reply_day,
-        TRIM(TO_CHAR(created_at, 'HH12:MI AM')) AS reply_time
+
+        -- ✅ UTC → IST conversion
+        TO_CHAR(
+          (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'),
+          'YYYY-MM-DD'
+        ) AS reply_date,
+
+        TRIM(
+          TO_CHAR(
+            (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'),
+            'FMDay'
+          )
+        ) AS reply_day,
+
+        TRIM(
+          TO_CHAR(
+            (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'),
+            'HH12:MI AM'
+          )
+        ) AS reply_time
+
       FROM forum_replies
       WHERE post_id = $1
         AND is_deleted = FALSE
@@ -118,7 +154,6 @@ router.get("/replies/:postId", async (req, res) => {
       `,
       [postId]
     );
-
     return res.json(result.rows);
   } catch (err) {
     console.error("❌ Fetch Replies Error:", err);
