@@ -258,4 +258,54 @@ router.post('/login', async (req, res) => {
 });
 
 console.log("[ADMIN] admin.js routes loaded.");
+
+// 🆕 POST /api/admin/add-team
+// Adds new team (Admin Only)
+router.post('/add-team', requireAdminAuth, async (req, res) => {
+  const { team_name } = req.body;
+
+  if (!team_name || typeof team_name !== "string" || team_name.trim().length < 3) {
+    return res.status(400).json({
+      success: false,
+      error: "Team name must be at least 3 characters."
+    });
+  }
+
+  const cleanName = team_name.trim().replace(/\s+/g, " ");
+
+  try {
+    // Check duplicate (case-insensitive)
+    const existing = await pool.query(
+      "SELECT 1 FROM teams WHERE LOWER(name) = LOWER($1) LIMIT 1",
+      [cleanName]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Team already exists."
+      });
+    }
+
+    // Insert new team with zero stats
+    await pool.query(
+      `INSERT INTO teams
+       (match_id, name, matches_played, wins, losses, points,
+        total_runs, total_overs, total_runs_conceded, total_overs_bowled)
+       VALUES
+       (NULL, $1, 0, 0, 0, 0, 0, 0, 0, 0)`,
+      [cleanName]
+    );
+
+    res.json({ success: true, message: "Team added successfully." });
+
+  } catch (err) {
+    console.error("Add team error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Server error."
+    });
+  }
+});
+
 module.exports = router;
