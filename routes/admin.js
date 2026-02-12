@@ -288,14 +288,17 @@ router.post('/add-team', requireAdminAuth, async (req, res) => {
     }
 
     // Insert new team with zero stats
-    await pool.query(
-      `INSERT INTO teams
-       (match_id, name, matches_played, wins, losses, points,
-        total_runs, total_overs, total_runs_conceded, total_overs_bowled)
-       VALUES
-       (NULL, $1, 0, 0, 0, 0, 0, 0, 0, 0)`,
-      [cleanName]
-    );
+   await pool.query(
+  `INSERT INTO teams
+   (match_id, name, matches_played, wins, losses, points,
+    total_runs, total_overs, total_runs_conceded,
+    total_overs_bowled, nrr, matches, user_id)
+   VALUES
+   (NULL, $1, 0, 0, 0, 0,
+    0, 0, 0,
+    0, 0, 0, NULL)`,
+  [cleanName]
+);
 
     res.json({ success: true, message: "Team added successfully." });
 
