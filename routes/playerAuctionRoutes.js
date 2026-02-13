@@ -143,13 +143,27 @@ let batsmanCount = 0;
 
 for (let p of players) {
 
-    const categoryRaw = p["CATEGORY"] || "";
-    const skillsRaw = p["SKILLS"] || "";
-    const statusRaw = p["Status"] || "";
+// Normalize headers (VERY IMPORTANT)
+const normalized = {};
 
-    const category = categoryRaw.toString().trim().toUpperCase();
-    const skills = skillsRaw.toString().trim().toUpperCase();
-    const status = statusRaw.toString().trim().toUpperCase();
+for (let key in p) {
+    normalized[key.trim().toUpperCase()] = p[key];
+}
+
+const category = (normalized["CATEGORY"] || "")
+    .toString()
+    .trim()
+    .toUpperCase();
+
+const skills = (normalized["SKILLS"] || normalized["SKILL"] || "")
+    .toString()
+    .trim()
+    .toUpperCase();
+
+const status = (normalized["STATUS"] || "")
+    .toString()
+    .trim()
+    .toUpperCase();
 
     // 🔹 LEGEND COUNT
     if (category.includes("LEGEND")) {
