@@ -242,32 +242,53 @@ if (batsmanCount < requiredBatsmen) {
     });
 }
 
-        // 6️⃣ INSERT INTO DB
-        for (let p of players) {
+// 6️⃣ INSERT INTO DB
+for (let p of players) {
 
-            const playerName = p["PLAYER NAME"]?.toString().trim();
-            if (!playerName) continue;
+    // Normalize headers again
+    const normalized = {};
+    for (let key in p) {
+        normalized[key.trim().toUpperCase()] = p[key];
+    }
 
-           await pool.query(
-    `INSERT INTO player_auction_players_pool
-    (auction_id, player_name, batting_style, bowling_style, role_type, license_status, player_grade)
-    VALUES ($1,$2,$3,$4,$5,$6,$7)
-    ON CONFLICT (auction_id, player_name) DO NOTHING`,
-    [
-        auction_id,
-        playerName,
-        p["ROLE"]?.toString().trim(),
-        p["ROLE"]?.toString().trim(),
-        p["SKILLS"]?.toString().trim().toUpperCase(),
-        (normalized["STATUS"] || "")
-    .toString()
-    .trim()
-    .toUpperCase(),
-        p["CATEGORY"]?.toString().trim().toUpperCase()
-    ]
-);
+    const playerName = (normalized["PLAYER NAME"] || "")
+        .toString()
+        .trim();
 
-        }
+    if (!playerName) continue;
+
+    const roleType = (normalized["SKILLS"] || normalized["SKILL"] || "")
+        .toString()
+        .trim()
+        .toUpperCase();
+
+    const licenseStatus = (normalized["STATUS"] || "")
+        .toString()
+        .trim()
+        .toUpperCase();
+
+    const playerGrade = (normalized["CATEGORY"] || "")
+        .toString()
+        .trim()
+        .toUpperCase();
+
+    await pool.query(
+        `INSERT INTO player_auction_players_pool
+        (auction_id, player_name, batting_style, bowling_style, role_type, license_status, player_grade)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT (auction_id, player_name) DO NOTHING`,
+        [
+            auction_id,
+            playerName,
+            normalized["ROLE"] || "",
+            normalized["ROLE"] || "",
+            roleType,
+            licenseStatus,
+            playerGrade
+        ]
+    );
+}
+
 
         // Delete temp file
         fs.unlinkSync(req.file.path);
@@ -389,7 +410,7 @@ router.post("/start-auction/:auction_id", async (req, res) => {
 
             // 5 All Rounders
             const allRounders = await getRandomPlayers(
-                `AND role_type = 'ALL ROUNDER'`,
+                `AND role_type ILIKE '%ALL ROUNDER%'`,
                 5
             );
 
@@ -400,7 +421,7 @@ router.post("/start-auction/:auction_id", async (req, res) => {
 
             // 5 Batsmen
             const batsmen = await getRandomPlayers(
-                `AND role_type = 'BATSMAN'`,
+                `AND role_type ILIKE '%BATSMAN%'`,
                 5
             );
 
@@ -426,7 +447,29 @@ router.post("/start-auction/:auction_id", async (req, res) => {
                 if (extraLegends.length < needed)
                     throw new Error("Not enough Legends available");
 
-                selected.splice(0, needed, ...extraLegends);
+                if (legendCount < 3) {
+
+    let needed = 3 - legendCount;
+
+    const extraLegends = await getRandomPlayers(
+        `AND player_grade = 'LEGEND'`,
+        needed
+    );
+
+    if (extraLegends.length < needed)
+        throw new Error("Not enough Legends available");
+
+    // Replace only NON-LEGEND players
+    for (let i = 0; i < selected.length && needed > 0; i++) {
+
+        if (selected[i].player_grade !== "LEGEND") {
+
+            selected[i] = extraLegends.pop();
+            needed--;
+        }
+    }
+}
+
             }
 
             // Insert assignments
