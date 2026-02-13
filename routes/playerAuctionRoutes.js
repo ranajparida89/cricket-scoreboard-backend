@@ -537,7 +537,8 @@ router.post("/start-auction/:auction_id", async (req, res) => {
 
         await client.query("ROLLBACK");
 
-        console.error("Auction Error:", error);
+        console.error("Auction Error FULL:", error);
+        console.error("Stack:", error.stack);
 
         res.status(500).json({
             success: false,
