@@ -259,7 +259,10 @@ if (batsmanCount < requiredBatsmen) {
         p["ROLE"]?.toString().trim(),
         p["ROLE"]?.toString().trim(),
         p["SKILLS"]?.toString().trim().toUpperCase(),
-        p["Status"]?.toString().trim().toUpperCase(),
+        (normalized["STATUS"] || "")
+    .toString()
+    .trim()
+    .toUpperCase(),
         p["CATEGORY"]?.toString().trim().toUpperCase()
     ]
 );
@@ -374,7 +377,7 @@ router.post("/start-auction/:auction_id", async (req, res) => {
 
             // 4 Licensed Pure Bowlers
             const bowlers = await getRandomPlayers(
-                `AND role_type = 'PURE BOWLER'
+                `AND role_type ILIKE '%PURE BOWLER%'
                  AND license_status = 'LICENSED'`,
                 4
             );
