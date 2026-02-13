@@ -318,6 +318,7 @@ for (let p of players) {
 router.post("/start-auction/:auction_id", async (req, res) => {
 
     const { auction_id } = req.params;
+     console.log("Auction ID received:", auction_id);
     const client = await pool.connect();
 
     try {
