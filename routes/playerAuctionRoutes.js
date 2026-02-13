@@ -248,20 +248,22 @@ if (batsmanCount < requiredBatsmen) {
             const playerName = p["PLAYER NAME"]?.toString().trim();
             if (!playerName) continue;
 
-            await pool.query(
-                `INSERT INTO player_auction_players_pool
-                (auction_id, player_name, batting_style, bowling_style, role_type, license_status, player_grade)
-                VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-                [
-                    auction_id,
-                    playerName,
-                    p["ROLE"]?.toString().trim(),
-                    p["ROLE"]?.toString().trim(),
-                    p["SKILLS"]?.toString().trim().toUpperCase(),
-                    p["Status"]?.toString().trim().toUpperCase(),
-                    p["CATEGORY"]?.toString().trim().toUpperCase()
-                ]
-            );
+           await pool.query(
+    `INSERT INTO player_auction_players_pool
+    (auction_id, player_name, batting_style, bowling_style, role_type, license_status, player_grade)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    ON CONFLICT (auction_id, player_name) DO NOTHING`,
+    [
+        auction_id,
+        playerName,
+        p["ROLE"]?.toString().trim(),
+        p["ROLE"]?.toString().trim(),
+        p["SKILLS"]?.toString().trim().toUpperCase(),
+        p["Status"]?.toString().trim().toUpperCase(),
+        p["CATEGORY"]?.toString().trim().toUpperCase()
+    ]
+);
+
         }
 
         // Delete temp file
