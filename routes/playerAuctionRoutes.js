@@ -175,6 +175,13 @@ for (let p of players) {
         batsmanCount++;
     }
 }
+console.log("========== DEBUG COUNTS ==========");
+console.log("Total Boards:", totalBoards);
+console.log("Legend Count:", legendCount);
+console.log("Pure Bowler Count:", pureBowlerCount);
+console.log("Licensed Pure Bowler Count:", licensedPureBowlerCount);
+console.log("==================================");
+
         const requiredLegends = totalBoards * 3;
         const requiredPureBowlers = totalBoards * 4;
 
