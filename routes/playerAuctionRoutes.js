@@ -157,13 +157,13 @@ for (let p of players) {
     }
 
     // 🔹 PURE BOWLER COUNT
-    if (skills.includes("PURE BOWLER")) {
-        pureBowlerCount++;
+ if (skills.includes("PURE BOWLER")) {
+    pureBowlerCount++;
 
-        if (status.includes("LICENSE")) {
-            licensedPureBowlerCount++;
-        }
+    if (status === "LICENSED") {
+        licensedPureBowlerCount++;
     }
+}
 
     // 🔹 ALL ROUNDER COUNT
     if (skills.includes("ALL ROUNDER")) {
