@@ -287,4 +287,220 @@ if (batsmanCount < requiredBatsmen) {
     }
 });
 
+
+/* ======================================================
+   START AUCTION – RANDOMIZER ENGINE
+====================================================== */
+router.post("/start-auction/:auction_id", async (req, res) => {
+
+    const { auction_id } = req.params;
+    const client = await pool.connect();
+
+    try {
+
+        await client.query("BEGIN");
+
+        // 1️⃣ Lock auction
+        const auctionRes = await client.query(
+            `SELECT * FROM player_auction_master 
+             WHERE id = $1 
+             FOR UPDATE`,
+            [auction_id]
+        );
+
+        if (auctionRes.rows.length === 0)
+            throw new Error("Auction not found");
+
+        const auction = auctionRes.rows[0];
+
+        if (auction.auction_status === "STARTED")
+            throw new Error("Auction already started");
+
+        const totalBoards = auction.total_boards;
+
+        // 2️⃣ Fetch Boards
+        const boardsRes = await client.query(
+            `SELECT id, board_name
+             FROM board_registration
+             ORDER BY created_at ASC
+             LIMIT $1`,
+            [totalBoards]
+        );
+
+        if (boardsRes.rows.length < totalBoards)
+            throw new Error("Not enough boards available");
+
+        const boards = boardsRes.rows;
+
+        // 3️⃣ Reset previous allocation
+        await client.query(
+            `DELETE FROM player_auction_assignments
+             WHERE auction_id = $1`,
+            [auction_id]
+        );
+
+        await client.query(
+            `UPDATE player_auction_players_pool
+             SET sold_status = 'UNSOLD',
+                 assigned_board_id = NULL
+             WHERE auction_id = $1`,
+            [auction_id]
+        );
+
+        // Helper function
+        const getRandomPlayers = async (condition, limit) => {
+
+            const result = await client.query(
+                `
+                SELECT *
+                FROM player_auction_players_pool
+                WHERE auction_id = $1
+                AND sold_status = 'UNSOLD'
+                ${condition}
+                ORDER BY RANDOM()
+                LIMIT ${limit}
+                FOR UPDATE SKIP LOCKED
+                `,
+                [auction_id]
+            );
+
+            return result.rows;
+        };
+
+        // 4️⃣ Allocation Loop
+        for (const board of boards) {
+
+            let selected = [];
+
+            // 4 Licensed Pure Bowlers
+            const bowlers = await getRandomPlayers(
+                `AND role_type = 'PURE BOWLER'
+                 AND license_status = 'LICENSED'`,
+                4
+            );
+
+            if (bowlers.length < 4)
+                throw new Error("Insufficient Licensed Pure Bowlers");
+
+            selected.push(...bowlers);
+
+            // 5 All Rounders
+            const allRounders = await getRandomPlayers(
+                `AND role_type = 'ALL ROUNDER'`,
+                5
+            );
+
+            if (allRounders.length < 5)
+                throw new Error("Insufficient All Rounders");
+
+            selected.push(...allRounders);
+
+            // 5 Batsmen
+            const batsmen = await getRandomPlayers(
+                `AND role_type = 'BATSMAN'`,
+                5
+            );
+
+            if (batsmen.length < 5)
+                throw new Error("Insufficient Batsmen");
+
+            selected.push(...batsmen);
+
+            // Legend validation
+            const legendCount = selected.filter(
+                p => p.player_grade === "LEGEND"
+            ).length;
+
+            if (legendCount < 3) {
+
+                const needed = 3 - legendCount;
+
+                const extraLegends = await getRandomPlayers(
+                    `AND player_grade = 'LEGEND'`,
+                    needed
+                );
+
+                if (extraLegends.length < needed)
+                    throw new Error("Not enough Legends available");
+
+                selected.splice(0, needed, ...extraLegends);
+            }
+
+            // Insert assignments
+            for (const player of selected) {
+
+                await client.query(
+                    `
+                    INSERT INTO player_auction_assignments (
+                        auction_id,
+                        board_id,
+                        board_name,
+                        player_id,
+                        player_name,
+                        batting_style,
+                        bowling_style,
+                        role_type,
+                        license_status,
+                        player_grade
+                    )
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                    `,
+                    [
+                        auction_id,
+                        board.id,
+                        board.board_name,
+                        player.id,
+                        player.player_name,
+                        player.batting_style,
+                        player.bowling_style,
+                        player.role_type,
+                        player.license_status,
+                        player.player_grade
+                    ]
+                );
+
+                await client.query(
+                    `
+                    UPDATE player_auction_players_pool
+                    SET sold_status = 'SOLD',
+                        assigned_board_id = $1
+                    WHERE id = $2
+                    `,
+                    [board.id, player.id]
+                );
+            }
+        }
+
+        // 5️⃣ Mark auction started
+        await client.query(
+            `UPDATE player_auction_master
+             SET auction_status = 'STARTED'
+             WHERE id = $1`,
+            [auction_id]
+        );
+
+        await client.query("COMMIT");
+
+        res.json({
+            success: true,
+            message: "Auction completed successfully"
+        });
+
+    } catch (error) {
+
+        await client.query("ROLLBACK");
+
+        console.error("Auction Error:", error);
+
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+
+    } finally {
+        client.release();
+    }
+});
+
+
 module.exports = router;
