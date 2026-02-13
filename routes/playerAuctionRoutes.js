@@ -533,21 +533,23 @@ router.post("/start-auction/:auction_id", async (req, res) => {
             message: "Auction completed successfully"
         });
 
-    } catch (error) {
+  } catch (error) {
 
-        await client.query("ROLLBACK");
+    await client.query("ROLLBACK");
 
-        console.error("Auction Error FULL:", error);
-        console.error("Stack:", error.stack);
+    console.error("Auction Error FULL:", error);
+    console.error("Message:", error.message);
+    console.error("Detail:", error.detail);
+    console.error("Stack:", error.stack);
 
-        res.status(500).json({
-            success: false,
-            message: error.message
-        });
+    res.status(500).json({
+        success: false,
+        message: error.message
+    });
 
-    } finally {
-        client.release();
-    }
+} finally {
+    client.release();
+}
 });
 
 
