@@ -110,7 +110,36 @@ router.post("/upload-players/:auction_id", upload.single("file"), async (req, re
         const workbook = XLSX.readFile(req.file.path);
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
-        const players = XLSX.utils.sheet_to_json(sheet);
+        const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+
+let players = [];
+
+for (let row of rawData) {
+
+    if (!row || row.length === 0) continue;
+
+    const playerName = row[0];
+    const role = row[1];
+    const status = row[2];
+    const skills = row[3];
+    const category = row[4];
+
+    // Skip header row
+    if (playerName && playerName.toString().toUpperCase().includes("PLAYER NAME")) continue;
+
+    if (playerName) {
+        players.push({
+            "PLAYER NAME": playerName,
+            "ROLE": role,
+            "Status": status,
+            "SKILLS": skills,
+            "CATEGORY": category
+        });
+    }
+}
+
+console.log("Total players read:", players.length);
+
 
         if (players.length === 0) {
             return res.status(400).json({
