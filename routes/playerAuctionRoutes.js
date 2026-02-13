@@ -129,27 +129,47 @@ router.post("/upload-players/:auction_id", upload.single("file"), async (req, re
             });
         }
 
-        // 5️⃣ VALIDATION COUNTERS
-        let legendCount = 0;
-        let pureBowlerCount = 0;
-        let licensedPureBowlerCount = 0;
+   // 5️⃣ VALIDATION COUNTERS (ROBUST VERSION)
+let legendCount = 0;
+let pureBowlerCount = 0;
+let licensedPureBowlerCount = 0;
+let allRounderCount = 0;
+let batsmanCount = 0;
 
-        for (let p of players) {
+for (let p of players) {
 
-            const category = p["CATEGORY"]?.toString().trim().toUpperCase();
-            const skills = p["SKILLS"]?.toString().trim().toUpperCase();
-            const status = p["Status"]?.toString().trim().toUpperCase();
+    const categoryRaw = p["CATEGORY"] || "";
+    const skillsRaw = p["SKILLS"] || "";
+    const statusRaw = p["Status"] || "";
 
-            if (category === "LEGEND") legendCount++;
+    const category = categoryRaw.toString().trim().toUpperCase();
+    const skills = skillsRaw.toString().trim().toUpperCase();
+    const status = statusRaw.toString().trim().toUpperCase();
 
-            if (skills === "PURE BOWLER") {
-                pureBowlerCount++;
-                if (status === "LICENSED") {
-                    licensedPureBowlerCount++;
-                }
-            }
+    // 🔹 LEGEND COUNT
+    if (category.includes("LEGEND")) {
+        legendCount++;
+    }
+
+    // 🔹 PURE BOWLER COUNT
+    if (skills.includes("PURE BOWLER")) {
+        pureBowlerCount++;
+
+        if (status.includes("LICENSE")) {
+            licensedPureBowlerCount++;
         }
+    }
 
+    // 🔹 ALL ROUNDER COUNT
+    if (skills.includes("ALL ROUNDER")) {
+        allRounderCount++;
+    }
+
+    // 🔹 BATSMAN COUNT
+    if (skills.includes("BATSMAN")) {
+        batsmanCount++;
+    }
+}
         const requiredLegends = totalBoards * 3;
         const requiredPureBowlers = totalBoards * 4;
 
@@ -173,6 +193,27 @@ router.post("/upload-players/:auction_id", upload.single("file"), async (req, re
                 message: `Minimum ${requiredPureBowlers} LICENSED PURE BOWLERS required`
             });
         }
+
+        /* ============================
+   ADD BELOW THIS LINE
+============================ */
+
+const requiredAllRounders = totalBoards * 5;
+const requiredBatsmen = totalBoards * 5;
+
+if (allRounderCount < requiredAllRounders) {
+    return res.status(400).json({
+        success: false,
+        message: `Minimum ${requiredAllRounders} ALL ROUNDER players required`
+    });
+}
+
+if (batsmanCount < requiredBatsmen) {
+    return res.status(400).json({
+        success: false,
+        message: `Minimum ${requiredBatsmen} BATSMAN players required`
+    });
+}
 
         // 6️⃣ INSERT INTO DB
         for (let p of players) {
