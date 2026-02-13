@@ -552,5 +552,160 @@ router.post("/start-auction/:auction_id", async (req, res) => {
 }
 });
 
+/* ======================================================
+   AUCTION SUMMARY
+====================================================== */
+router.get("/summary/:auction_id", async (req, res) => {
+
+    const { auction_id } = req.params;
+
+    try {
+
+        const auctionRes = await pool.query(
+            `SELECT auction_name, total_boards, auction_status
+             FROM player_auction_master
+             WHERE id = $1`,
+            [auction_id]
+        );
+
+        if (auctionRes.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Auction not found"
+            });
+        }
+
+        const soldRes = await pool.query(
+            `SELECT COUNT(*) FROM player_auction_players_pool
+             WHERE auction_id = $1 AND sold_status = 'SOLD'`,
+            [auction_id]
+        );
+
+        const unsoldRes = await pool.query(
+            `SELECT COUNT(*) FROM player_auction_players_pool
+             WHERE auction_id = $1 AND sold_status = 'UNSOLD'`,
+            [auction_id]
+        );
+
+        res.json({
+            success: true,
+            auction: auctionRes.rows[0],
+            total_sold: parseInt(soldRes.rows[0].count),
+            total_unsold: parseInt(unsoldRes.rows[0].count)
+        });
+
+    } catch (error) {
+        console.error("Summary Error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+/* ======================================================
+   BOARD SQUAD
+====================================================== */
+router.get("/board/:auction_id/:board_id", async (req, res) => {
+
+    const { auction_id, board_id } = req.params;
+
+    try {
+
+        const playersRes = await pool.query(
+            `SELECT player_name, role_type, player_grade
+             FROM player_auction_assignments
+             WHERE auction_id = $1 AND board_id = $2`,
+            [auction_id, board_id]
+        );
+
+        if (playersRes.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "No players found for this board"
+            });
+        }
+
+        const legendCount = playersRes.rows.filter(
+            p => p.player_grade === "LEGEND"
+        ).length;
+
+        res.json({
+            success: true,
+            total_players: playersRes.rows.length,
+            legends: legendCount,
+            players: playersRes.rows
+        });
+
+    } catch (error) {
+        console.error("Board Squad Error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+
+/* ======================================================
+   FULL AUCTION RESULTS
+====================================================== */
+router.get("/results/:auction_id", async (req, res) => {
+
+    const { auction_id } = req.params;
+
+    try {
+
+        const auctionRes = await pool.query(
+            `SELECT auction_name FROM player_auction_master
+             WHERE id = $1`,
+            [auction_id]
+        );
+
+        if (auctionRes.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Auction not found"
+            });
+        }
+
+        const boardsRes = await pool.query(
+            `SELECT DISTINCT board_id, board_name
+             FROM player_auction_assignments
+             WHERE auction_id = $1`,
+            [auction_id]
+        );
+
+        let boards = [];
+
+        for (const board of boardsRes.rows) {
+
+            const players = await pool.query(
+                `SELECT player_name, role_type, player_grade
+                 FROM player_auction_assignments
+                 WHERE auction_id = $1 AND board_id = $2`,
+                [auction_id, board.board_id]
+            );
+
+            boards.push({
+                board_id: board.board_id,
+                board_name: board.board_name,
+                players: players.rows
+            });
+        }
+
+        const unsoldRes = await pool.query(
+            `SELECT player_name, role_type, player_grade
+             FROM player_auction_players_pool
+             WHERE auction_id = $1 AND sold_status = 'UNSOLD'`,
+            [auction_id]
+        );
+
+        res.json({
+            success: true,
+            auction_name: auctionRes.rows[0].auction_name,
+            boards,
+            unsold_players: unsoldRes.rows
+        });
+
+    } catch (error) {
+        console.error("Results Error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
 
 module.exports = router;
