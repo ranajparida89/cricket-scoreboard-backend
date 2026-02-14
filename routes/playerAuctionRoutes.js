@@ -669,29 +669,31 @@ router.get("/results/:auction_id", async (req, res) => {
             [auction_id]
         );
 
-        let boards = [];
+    let boards = [];
 
-        for (const board of boardsRes.rows) {
+for (const board of boardsRes.rows) {
 
-                            const revealedPlayers = await pool.query(
-                        `SELECT player_name, role_type, player_grade
-                        FROM player_auction_assignments
-                        WHERE auction_id = $1 
-                        AND board_id = $2 
-                        AND reveal_status = TRUE`,
-                        [auction_id, board.board_id]
-                    );
+    const allPlayers = await pool.query(
+        `SELECT 
+            player_id,
+            player_name,
+            role_type,
+            player_grade,
+            license_status,
+            reveal_status
+         FROM player_auction_assignments
+         WHERE auction_id = $1 
+         AND board_id = $2`,
+        [auction_id, board.board_id]
+    );
 
-                    const isRevealed = revealedPlayers.rows.length > 0;
+    boards.push({
+        board_id: board.board_id,
+        board_name: board.board_name,
+        players: allPlayers.rows
+    });
+}
 
-                    boards.push({
-                        board_id: board.board_id,
-                        board_name: board.board_name,
-                        revealed: isRevealed,
-                        players: isRevealed ? revealedPlayers.rows : []
-                    });
-
-        }
 
         const unsoldRes = await pool.query(
             `SELECT player_name, role_type, player_grade
