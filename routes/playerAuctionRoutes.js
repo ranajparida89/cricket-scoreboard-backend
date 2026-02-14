@@ -752,4 +752,38 @@ router.post("/reveal-board/:auction_id/:board_id", async (req, res) => {
     }
 });
 
+/* ======================================================
+   GET LATEST AUCTION
+====================================================== */
+router.get("/latest", async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT id
+             FROM player_auction_master
+             ORDER BY created_at DESC
+             LIMIT 1`
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "No auction found"
+            });
+        }
+
+        res.json({
+            success: true,
+            id: result.rows[0].id
+        });
+
+    } catch (error) {
+        console.error("Latest Auction Error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
 module.exports = router;
