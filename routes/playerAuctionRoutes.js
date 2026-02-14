@@ -674,18 +674,24 @@ router.get("/results/:auction_id", async (req, res) => {
 
         for (const board of boardsRes.rows) {
 
-            const players = await pool.query(
-                `SELECT player_name, role_type, player_grade
-                 FROM player_auction_assignments
-                 WHERE auction_id = $1 AND board_id = $2`,
-                [auction_id, board.board_id]
-            );
+                            const revealedPlayers = await pool.query(
+                        `SELECT player_name, role_type, player_grade
+                        FROM player_auction_assignments
+                        WHERE auction_id = $1 
+                        AND board_id = $2 
+                        AND reveal_status = TRUE`,
+                        [auction_id, board.board_id]
+                    );
 
-            boards.push({
-                board_id: board.board_id,
-                board_name: board.board_name,
-                players: players.rows
-            });
+                    const isRevealed = revealedPlayers.rows.length > 0;
+
+                    boards.push({
+                        board_id: board.board_id,
+                        board_name: board.board_name,
+                        revealed: isRevealed,
+                        players: isRevealed ? revealedPlayers.rows : []
+                    });
+
         }
 
         const unsoldRes = await pool.query(
@@ -705,6 +711,44 @@ router.get("/results/:auction_id", async (req, res) => {
     } catch (error) {
         console.error("Results Error:", error);
         res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+/* ======================================================
+   REVEAL BOARD
+====================================================== */
+router.post("/reveal-board/:auction_id/:board_id", async (req, res) => {
+
+    const { auction_id, board_id } = req.params;
+
+    try {
+
+        const result = await pool.query(
+            `UPDATE player_auction_assignments
+             SET reveal_status = TRUE
+             WHERE auction_id = $1 
+             AND board_id = $2`,
+            [auction_id, board_id]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Board not found"
+            });
+        }
+
+        res.json({
+            success: true,
+            message: "Board revealed successfully"
+        });
+
+    } catch (error) {
+        console.error("Reveal Board Error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
     }
 });
 
