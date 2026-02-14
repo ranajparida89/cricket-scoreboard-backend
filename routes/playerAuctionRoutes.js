@@ -345,15 +345,14 @@ router.post("/start-auction/:auction_id", async (req, res) => {
 
         // 2️⃣ Fetch Boards
         const boardsRes = await client.query(
-            `SELECT id, board_name
-             FROM board_registration
-             ORDER BY created_at ASC
-             LIMIT $1`,
-            [totalBoards]
-        );
+    `SELECT board_id as id, board_name
+     FROM player_auction_boards
+     WHERE auction_id = $1`,
+    [auction_id]
+);
 
-        if (boardsRes.rows.length < totalBoards)
-            throw new Error("Not enough boards available");
+if (boardsRes.rows.length !== totalBoards)
+    throw new Error("Participating boards not configured properly");
 
         const boards = boardsRes.rows;
 
@@ -782,6 +781,49 @@ router.get("/latest", async (req, res) => {
             success: false,
             message: "Server error"
         });
+    }
+});
+
+router.post("/add-boards/:auction_id", async (req, res) => {
+    try {
+        const { auction_id } = req.params;
+        const { boards } = req.body; // array of board_id
+
+        if (!boards || boards.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Boards are required"
+            });
+        }
+
+        for (let boardId of boards) {
+            const boardRes = await pool.query(
+                `SELECT board_name FROM board_registration WHERE id = $1`,
+                [boardId]
+            );
+
+            if (boardRes.rows.length === 0) continue;
+
+            await pool.query(
+                `INSERT INTO player_auction_boards
+                 (auction_id, board_id, board_name)
+                 VALUES ($1,$2,$3)`,
+                [
+                    auction_id,
+                    boardId,
+                    boardRes.rows[0].board_name
+                ]
+            );
+        }
+
+        res.json({
+            success: true,
+            message: "Boards added successfully"
+        });
+
+    } catch (error) {
+        console.error("Add Boards Error:", error);
+        res.status(500).json({ success: false });
     }
 });
 
