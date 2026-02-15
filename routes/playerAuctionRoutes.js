@@ -951,5 +951,69 @@ router.get("/export-board/:auction_id/:board_id", async (req, res) => {
   }
 });
 
+// =======================================
+// 📤 EXPORT UNSOLD PLAYERS (EXCEL)
+// =======================================
+router.get("/export-unsold/:auction_id", async (req, res) => {
+    const { auction_id } = req.params;
+    const client = await pool.connect();
+
+    try {
+        const query = `
+            SELECT 
+                player_id,
+                player_name,
+                role_type,
+                license_status,
+                player_grade
+            FROM player_auction_players_pool
+            WHERE auction_id = $1
+              AND sold_status = 'UNSOLD'
+            ORDER BY player_grade DESC, role_type;
+        `;
+
+        const result = await client.query(query, [auction_id]);
+
+        const formattedData = result.rows.map(player => ({
+            "Player ID": player.player_id,
+            "Player Name": player.player_name,
+            "Role": player.role_type,
+            "License Status": player.license_status,
+            "Grade": player.player_grade
+        }));
+
+        const worksheet = XLSX.utils.json_to_sheet(formattedData);
+
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Unsold Players");
+
+        const buffer = XLSX.write(workbook, {
+            type: "buffer",
+            bookType: "xlsx"
+        });
+
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename=Unsold_Players.xlsx`
+        );
+
+        res.setHeader(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+
+        res.send(buffer);
+
+    } catch (error) {
+        console.error("Unsold Export Error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error generating unsold export"
+        });
+    } finally {
+        client.release();
+    }
+});
+
 
 module.exports = router;
