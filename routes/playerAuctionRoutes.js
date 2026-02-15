@@ -959,9 +959,10 @@ router.get("/export-unsold/:auction_id", async (req, res) => {
     const client = await pool.connect();
 
     try {
+
         const query = `
             SELECT 
-                player_id,
+                id,
                 player_name,
                 role_type,
                 license_status,
@@ -975,7 +976,7 @@ router.get("/export-unsold/:auction_id", async (req, res) => {
         const result = await client.query(query, [auction_id]);
 
         const formattedData = result.rows.map(player => ({
-            "Player ID": player.player_id,
+            "Player ID": player.id,
             "Player Name": player.player_name,
             "Role": player.role_type,
             "License Status": player.license_status,
@@ -1014,6 +1015,5 @@ router.get("/export-unsold/:auction_id", async (req, res) => {
         client.release();
     }
 });
-
 
 module.exports = router;
