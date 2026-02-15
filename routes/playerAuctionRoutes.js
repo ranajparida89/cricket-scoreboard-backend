@@ -5,7 +5,16 @@ const multer = require("multer");
 const XLSX = require("xlsx");
 const fs = require("fs");
 
-const upload = multer({ dest: "uploads/" });
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: function (req, file, cb) {
+            cb(null, "/tmp");   // Render safe temp folder
+        },
+        filename: function (req, file, cb) {
+            cb(null, Date.now() + "-" + file.originalname);
+        }
+    })
+});
 
 /* ======================================================
    CREATE NEW AUCTION
