@@ -897,20 +897,18 @@ router.get("/export-board/:auction_id/:board_id", async (req, res) => {
   const client = await pool.connect();
 
   try {
-    const query = `
-      SELECT 
-        p.player_id,
-        p.player_name,
-        p.skills,
-        p.license_status,
-        p.grade
-      FROM player_auction_assignments a
-      JOIN player_auction_players_pool p 
-        ON a.player_id = p.player_id
-      WHERE a.auction_id = $1
-        AND a.board_id = $2
-      ORDER BY p.grade DESC, p.skills;
-    `;
+   const query = `
+  SELECT 
+    player_id,
+    player_name,
+    role_type,
+    license_status,
+    player_grade
+  FROM player_auction_assignments
+  WHERE auction_id = $1
+    AND board_id = $2
+  ORDER BY player_grade DESC, role_type;
+`;
 
     const result = await client.query(query, [auction_id, board_id]);
 
