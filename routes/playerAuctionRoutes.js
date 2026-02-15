@@ -311,6 +311,56 @@ for (let p of players) {
     }
 });
 
+/* ======================================================
+   PREVIEW EXCEL BEFORE UPLOAD
+====================================================== */
+router.post("/preview-players", upload.single("file"), async (req, res) => {
+    try {
+
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: "Excel file is required"
+            });
+        }
+
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+
+        const players = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+        fs.unlinkSync(req.file.path); // delete temp file
+
+        const preview = players.slice(0, 10).map(p => {
+
+            const normalized = {};
+            for (let key in p) {
+                normalized[key.trim().toUpperCase()] = p[key];
+            }
+
+            return {
+                player_name: normalized["PLAYER NAME"] || "",
+                role_type: normalized["SKILLS"] || normalized["SKILL"] || "",
+                license_status: normalized["STATUS"] || "",
+                player_grade: normalized["CATEGORY"] || ""
+            };
+        });
+
+        res.json({
+            success: true,
+            preview
+        });
+
+    } catch (error) {
+        console.error("Preview Error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error reading Excel file"
+        });
+    }
+});
+
 
 /* ======================================================
    START AUCTION – RANDOMIZER ENGINE
