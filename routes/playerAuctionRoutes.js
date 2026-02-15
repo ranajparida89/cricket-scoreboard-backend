@@ -889,4 +889,69 @@ router.post("/add-boards/:auction_id", async (req, res) => {
 });
 
 
+// ===============================
+// 📤 EXPORT BOARD SQUAD EXCEL
+// ===============================
+router.get("/export-board/:auction_id/:board_id", async (req, res) => {
+  const { auction_id, board_id } = req.params;
+  const client = await pool.connect();
+
+  try {
+    const query = `
+      SELECT 
+        p.player_id,
+        p.player_name,
+        p.skills,
+        p.license_status,
+        p.grade
+      FROM player_auction_assignments a
+      JOIN player_auction_players_pool p 
+        ON a.player_id = p.player_id
+      WHERE a.auction_id = $1
+        AND a.board_id = $2
+      ORDER BY p.grade DESC, p.skills;
+    `;
+
+    const result = await client.query(query, [auction_id, board_id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No players found for this board."
+      });
+    }
+
+    const worksheet = XLSX.utils.json_to_sheet(result.rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Board Squad");
+
+    const buffer = XLSX.write(workbook, {
+      type: "buffer",
+      bookType: "xlsx"
+    });
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=board_squad_${board_id}.xlsx`
+    );
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+
+    res.send(buffer);
+
+  } catch (error) {
+    console.error("Export Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error generating Excel file"
+    });
+  } finally {
+    client.release();
+  }
+});
+
+
 module.exports = router;
