@@ -250,11 +250,19 @@ router.post('/excel/upload', upload.single('file'), async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      // 🔥 Generate unique fixture group id
+// 🔥 Deactivate previous RUNNING tournament
+        await client.query(`
+          UPDATE cr_excel_group
+          SET is_active = false
+          WHERE tournament_status = 'RUNNING'
+          AND is_active = true
+        `);
+// 🔥 Create new active RUNNING tournament
       const groupIdRes = await client.query(
-        'INSERT INTO cr_excel_group DEFAULT VALUES RETURNING id'
+        `INSERT INTO cr_excel_group (tournament_status, is_active)
+        VALUES ('RUNNING', true)
+        RETURNING id`
       );
-      const groupId = groupIdRes.rows[0].id;
 
       for (const row of rows) {
         await client.query(
@@ -284,49 +292,5 @@ router.post('/excel/upload', upload.single('file'), async (req, res) => {
     res.status(500).json({ error: 'Failed to process Excel file' });
   }
 });
-
-// ✅ GET EXCEL FIXTURES BY GROUP (Independent with Pagination)
-router.get('/excel/:groupId', async (req, res) => {
-  const db = req.app.get('db');
-  const { groupId } = req.params;
-
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  const offset = (page - 1) * limit;
-
-  try {
-    const totalRes = await db.query(
-      'SELECT COUNT(*) FROM cr_excel_fixture WHERE fixture_group_id = $1',
-      [groupId]
-    );
-
-    const total = parseInt(totalRes.rows[0].count);
-
-    const dataRes = await db.query(
-      `SELECT id, row_data, status, winner, remarks
-       FROM cr_excel_fixture
-       WHERE fixture_group_id = $1
-       ORDER BY id
-       LIMIT $2 OFFSET $3`,
-      [groupId, limit, offset]
-    );
-
-    res.json({
-      success: true,
-      data: dataRes.rows,
-      pagination: {
-        total,
-        page,
-        totalPages: Math.ceil(total / limit),
-        limit
-      }
-    });
-
-  } catch (err) {
-    console.error('Excel Fetch Error:', err);
-    res.status(500).json({ error: 'Failed to fetch excel fixtures' });
-  }
-});
-
 
 module.exports = router;
