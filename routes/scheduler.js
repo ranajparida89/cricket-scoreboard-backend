@@ -257,20 +257,25 @@ router.post('/excel/upload', upload.single('file'), async (req, res) => {
           WHERE tournament_status = 'RUNNING'
           AND is_active = true
         `);
-// 🔥 Create new active RUNNING tournament
-      const groupIdRes = await client.query(
-        `INSERT INTO cr_excel_group (tournament_status, is_active)
-        VALUES ('RUNNING', true)
-        RETURNING id`
-      );
 
-      for (const row of rows) {
-        await client.query(
-          `INSERT INTO cr_excel_fixture (fixture_group_id, row_data)
-           VALUES ($1, $2)`,
-          [groupId, row]
-        );
-      }
+        // 🔥 Create new active RUNNING tournament
+const groupIdRes = await client.query(
+  `INSERT INTO cr_excel_group (tournament_status, is_active)
+   VALUES ('RUNNING', true)
+   RETURNING id`
+);
+
+// ✅ DEFINE groupId HERE
+const groupId = groupIdRes.rows[0].id;
+
+// 🔥 Insert fixtures using that groupId
+for (const row of rows) {
+  await client.query(
+    `INSERT INTO cr_excel_fixture (fixture_group_id, row_data)
+     VALUES ($1, $2)`,
+    [groupId, row]
+  );
+}
 
       await client.query('COMMIT');
 
