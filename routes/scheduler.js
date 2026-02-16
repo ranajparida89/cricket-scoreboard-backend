@@ -285,4 +285,48 @@ router.post('/excel/upload', upload.single('file'), async (req, res) => {
   }
 });
 
+// ✅ GET EXCEL FIXTURES BY GROUP (Independent with Pagination)
+router.get('/excel/:groupId', async (req, res) => {
+  const db = req.app.get('db');
+  const { groupId } = req.params;
+
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const offset = (page - 1) * limit;
+
+  try {
+    const totalRes = await db.query(
+      'SELECT COUNT(*) FROM cr_excel_fixture WHERE fixture_group_id = $1',
+      [groupId]
+    );
+
+    const total = parseInt(totalRes.rows[0].count);
+
+    const dataRes = await db.query(
+      `SELECT id, row_data, status, winner, remarks
+       FROM cr_excel_fixture
+       WHERE fixture_group_id = $1
+       ORDER BY id
+       LIMIT $2 OFFSET $3`,
+      [groupId, limit, offset]
+    );
+
+    res.json({
+      success: true,
+      data: dataRes.rows,
+      pagination: {
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+        limit
+      }
+    });
+
+  } catch (err) {
+    console.error('Excel Fetch Error:', err);
+    res.status(500).json({ error: 'Failed to fetch excel fixtures' });
+  }
+});
+
+
 module.exports = router;
