@@ -227,5 +227,60 @@ if (seriesCheck.rowCount === 0) {
   }
 });
 
+// ✅ GET EXCEL FIXTURES WITH PAGINATION
+router.get('/excel/:seriesId', async (req, res) => {
+  const db = req.app.get('db');
+  const { seriesId } = req.params;
+
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const offset = (page - 1) * limit;
+
+  try {
+    // Check series exists
+    const seriesCheck = await db.query(
+      'SELECT id FROM cr_series WHERE id = $1',
+      [seriesId]
+    );
+
+    if (seriesCheck.rowCount === 0) {
+      return res.status(404).json({ error: 'Series not found' });
+    }
+
+    // Total count
+    const countRes = await db.query(
+      'SELECT COUNT(*) FROM cr_excel_fixture WHERE series_id = $1',
+      [seriesId]
+    );
+
+    const total = parseInt(countRes.rows[0].count);
+    const totalPages = Math.ceil(total / limit);
+
+    // Fetch paginated data
+    const dataRes = await db.query(
+      `SELECT id, row_data, status, winner, remarks
+       FROM cr_excel_fixture
+       WHERE series_id = $1
+       ORDER BY id
+       LIMIT $2 OFFSET $3`,
+      [seriesId, limit, offset]
+    );
+
+    res.json({
+      success: true,
+      data: dataRes.rows,
+      pagination: {
+        total,
+        page,
+        totalPages,
+        limit
+      }
+    });
+
+  } catch (err) {
+    console.error('Fetch Excel Fixtures Error:', err);
+    res.status(500).json({ error: 'Failed to fetch fixtures' });
+  }
+});
 
 module.exports = router;
