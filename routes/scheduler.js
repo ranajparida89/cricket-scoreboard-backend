@@ -110,4 +110,42 @@ router.get('/series/:seriesId/fixtures', async (req, res) => {
   res.json(r.rows);
 });
 
+// ✅ UPDATE MATCH STATUS (Excel Fixture)
+router.put('/excel/status/:id', async (req, res) => {
+  const db = req.app.get('db');
+  const { id } = req.params;
+  const { status, winner, remarks } = req.body;
+
+  const allowedStatuses = ['NOT_PLAYED', 'COMPLETED', 'CANCELLED', 'WALKOVER'];
+
+  if (!allowedStatuses.includes(status)) {
+    return res.status(400).json({ error: 'Invalid status value' });
+  }
+
+  try {
+    const result = await db.query(
+      `UPDATE cr_excel_fixture
+       SET status = $1,
+           winner = $2,
+           remarks = $3
+       WHERE id = $4
+       RETURNING *`,
+      [status, winner || null, remarks || null, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Fixture not found' });
+    }
+
+    res.json({
+      success: true,
+      fixture: result.rows[0]
+    });
+
+  } catch (err) {
+    console.error('Status Update Error:', err);
+    res.status(500).json({ error: 'Failed to update match status' });
+  }
+});
+
 module.exports = router;
