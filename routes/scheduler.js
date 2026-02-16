@@ -298,4 +298,44 @@ for (const row of rows) {
   }
 });
 
+// ✅ GET ACTIVE RUNNING TOURNAMENT (Independent Excel)
+router.get('/excel/active', async (req, res) => {
+  const db = req.app.get('db');
+
+  try {
+    const groupRes = await db.query(
+      `SELECT id
+       FROM cr_excel_group
+       WHERE tournament_status = 'RUNNING'
+       AND is_active = true
+       ORDER BY id DESC
+       LIMIT 1`
+    );
+
+    if (groupRes.rowCount === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const groupId = groupRes.rows[0].id;
+
+    const fixturesRes = await db.query(
+      `SELECT id, row_data, status, winner, remarks
+       FROM cr_excel_fixture
+       WHERE fixture_group_id = $1
+       ORDER BY id ASC`,
+      [groupId]
+    );
+
+    res.json({
+      success: true,
+      data: fixturesRes.rows
+    });
+
+  } catch (err) {
+    console.error('Active Tournament Fetch Error:', err);
+    res.status(500).json({ error: 'Failed to fetch active tournament' });
+  }
+});
+
+
 module.exports = router;
