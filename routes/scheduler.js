@@ -5,6 +5,8 @@ const {
   generateCrossBoardFixtures,
   shuffleWithGap
 } = require('./schedulerService');
+const multer = require('multer');
+const XLSX = require('xlsx');
 
 router.post('/series', async (req, res) => {
   const db = req.app.get('db');
