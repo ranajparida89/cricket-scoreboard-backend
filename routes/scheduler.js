@@ -5,8 +5,15 @@ const {
   generateCrossBoardFixtures,
   shuffleWithGap
 } = require('./schedulerService');
+
 const multer = require('multer');
 const XLSX = require('xlsx');
+
+// Excel Upload Storage (Memory)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB
+});
 
 router.post('/series', async (req, res) => {
   const db = req.app.get('db');
@@ -149,5 +156,76 @@ router.put('/excel/status/:id', async (req, res) => {
     res.status(500).json({ error: 'Failed to update match status' });
   }
 });
+
+// ✅ UPLOAD EXCEL FIXTURES (Dynamic JSON Storage)
+router.post('/excel/upload/:seriesId', upload.single('file'), async (req, res) => {
+  const db = req.app.get('db');
+  const { seriesId } = req.params;
+  // Validate series exists
+const seriesCheck = await db.query(
+  'SELECT id FROM cr_series WHERE id = $1',
+  [seriesId]
+);
+
+if (seriesCheck.rowCount === 0) {
+  return res.status(404).json({ error: 'Series not found' });
+}
+
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'Excel file is required' });
+  }
+
+  try {
+    // Parse Excel
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+    if (!rows.length) {
+      return res.status(400).json({ error: 'Excel file has no data' });
+    }
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 🔥 Important: Replace existing fixtures of this series
+      await client.query(
+        'DELETE FROM cr_excel_fixture WHERE series_id = $1',
+        [seriesId]
+      );
+
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO cr_excel_fixture (series_id, row_data)
+           VALUES ($1, $2)`,
+          [seriesId, row]
+        );
+      }
+
+      await client.query('COMMIT');
+
+      res.json({
+        success: true,
+        message: `${rows.length} fixtures uploaded successfully`,
+        total: rows.length
+      });
+
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+  } catch (err) {
+    console.error('Excel Upload Error:', err);
+    res.status(500).json({ error: 'Failed to process Excel file' });
+  }
+});
+
 
 module.exports = router;
