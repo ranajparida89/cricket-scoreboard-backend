@@ -227,59 +227,61 @@ if (seriesCheck.rowCount === 0) {
   }
 });
 
-// ✅ GET EXCEL FIXTURES WITH PAGINATION
-router.get('/excel/:seriesId', async (req, res) => {
+// ✅ UPLOAD EXCEL FIXTURES (Independent Group)
+router.post('/excel/upload', upload.single('file'), async (req, res) => {
   const db = req.app.get('db');
-  const { seriesId } = req.params;
 
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 20;
-  const offset = (page - 1) * limit;
+  if (!req.file) {
+    return res.status(400).json({ error: 'Excel file is required' });
+  }
 
   try {
-    // Check series exists
-    const seriesCheck = await db.query(
-      'SELECT id FROM cr_series WHERE id = $1',
-      [seriesId]
-    );
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
 
-    if (seriesCheck.rowCount === 0) {
-      return res.status(404).json({ error: 'Series not found' });
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+    if (!rows.length) {
+      return res.status(400).json({ error: 'Excel file has no data' });
     }
 
-    // Total count
-    const countRes = await db.query(
-      'SELECT COUNT(*) FROM cr_excel_fixture WHERE series_id = $1',
-      [seriesId]
-    );
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
 
-    const total = parseInt(countRes.rows[0].count);
-    const totalPages = Math.ceil(total / limit);
+      // 🔥 Generate unique fixture group id
+      const groupIdRes = await client.query(
+        'INSERT INTO cr_excel_group DEFAULT VALUES RETURNING id'
+      );
+      const groupId = groupIdRes.rows[0].id;
 
-    // Fetch paginated data
-    const dataRes = await db.query(
-      `SELECT id, row_data, status, winner, remarks
-       FROM cr_excel_fixture
-       WHERE series_id = $1
-       ORDER BY id
-       LIMIT $2 OFFSET $3`,
-      [seriesId, limit, offset]
-    );
-
-    res.json({
-      success: true,
-      data: dataRes.rows,
-      pagination: {
-        total,
-        page,
-        totalPages,
-        limit
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO cr_excel_fixture (fixture_group_id, row_data)
+           VALUES ($1, $2)`,
+          [groupId, row]
+        );
       }
-    });
+
+      await client.query('COMMIT');
+
+      res.json({
+        success: true,
+        fixture_group_id: groupId,
+        total: rows.length
+      });
+
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
 
   } catch (err) {
-    console.error('Fetch Excel Fixtures Error:', err);
-    res.status(500).json({ error: 'Failed to fetch fixtures' });
+    console.error('Excel Upload Error:', err);
+    res.status(500).json({ error: 'Failed to process Excel file' });
   }
 });
 
