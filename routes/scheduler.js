@@ -367,5 +367,42 @@ router.get('/excel/active', async (req, res) => {
   }
 });
 
+// ✅ GET LAST COMPLETED TOURNAMENT
+router.get('/excel/completed', async (req, res) => {
+  const db = req.app.get('db');
+
+  try {
+    const groupRes = await db.query(
+      `SELECT id
+       FROM cr_excel_group
+       WHERE tournament_status = 'COMPLETED'
+       ORDER BY id DESC
+       LIMIT 1`
+    );
+
+    if (groupRes.rowCount === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const groupId = groupRes.rows[0].id;
+
+    const fixturesRes = await db.query(
+      `SELECT id, row_data, status, winner, remarks
+       FROM cr_excel_fixture
+       WHERE fixture_group_id = $1
+       ORDER BY id ASC`,
+      [groupId]
+    );
+
+    res.json({
+      success: true,
+      data: fixturesRes.rows
+    });
+
+  } catch (err) {
+    console.error('Completed Tournament Fetch Error:', err);
+    res.status(500).json({ error: 'Failed to fetch completed tournament' });
+  }
+});
 
 module.exports = router;
