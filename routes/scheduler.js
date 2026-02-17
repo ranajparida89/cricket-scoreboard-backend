@@ -405,4 +405,56 @@ router.get('/excel/completed', async (req, res) => {
   }
 });
 
+// ✅ GET ALL TOURNAMENT HISTORY
+router.get('/excel/history', async (req, res) => {
+  const db = req.app.get('db');
+
+  try {
+    const result = await db.query(`
+      SELECT 
+        g.id,
+        g.tournament_status,
+        g.created_at,
+        COUNT(f.id) as total_matches,
+        COUNT(CASE WHEN f.status != 'NOT_PLAYED' THEN 1 END) as played_matches
+      FROM cr_excel_group g
+      LEFT JOIN cr_excel_fixture f 
+        ON g.id = f.fixture_group_id
+      GROUP BY g.id
+      ORDER BY g.created_at DESC
+    `);
+
+    res.json({ success: true, data: result.rows });
+
+  } catch (err) {
+    console.error('History Fetch Error:', err);
+    res.status(500).json({ error: 'Failed to fetch tournament history' });
+  }
+});
+
+// ✅ GET FIXTURES BY GROUP ID (For History View)
+router.get('/excel/group/:groupId', async (req, res) => {
+  const db = req.app.get('db');
+  const { groupId } = req.params;
+
+  try {
+    const result = await db.query(
+      `SELECT id, row_data, status, winner, remarks
+       FROM cr_excel_fixture
+       WHERE fixture_group_id = $1
+       ORDER BY id ASC`,
+      [groupId]
+    );
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+
+  } catch (err) {
+    console.error('Group Fetch Error:', err);
+    res.status(500).json({ error: 'Failed to fetch tournament fixtures' });
+  }
+});
+
 module.exports = router;
