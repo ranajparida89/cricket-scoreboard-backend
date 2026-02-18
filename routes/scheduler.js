@@ -6,6 +6,81 @@ const {
   shuffleWithGap
 } = require('./schedulerService');
 
+// ===============================
+// SMART STRATEGY DECISION ENGINE
+// ===============================
+
+function decideStrategy(totalTeams) {
+  const fullRRMatches = totalTeams * (totalTeams - 1) / 2;
+
+  // If match count small → allow full round robin
+  if (fullRRMatches <= 80) {
+    return "FULL_ROUND_ROBIN";
+  }
+
+  // Otherwise use group stage
+  return "GROUP_STAGE";
+}
+
+function generateFullRoundRobin(boards) {
+  const teams = [];
+
+  boards.forEach(b => {
+    b.teams.forEach(t => {
+      teams.push({ team: t.trim(), board: b.name.trim() });
+    });
+  });
+
+  const fixtures = [];
+
+  for (let i = 0; i < teams.length; i++) {
+    for (let j = i + 1; j < teams.length; j++) {
+      fixtures.push({
+        teamA: teams[i].team,
+        boardA: teams[i].board,
+        teamB: teams[j].team,
+        boardB: teams[j].board
+      });
+    }
+  }
+
+  return fixtures;
+}
+
+function generateGroupStage(boards) {
+  const teams = [];
+
+  boards.forEach(b => {
+    b.teams.forEach(t => {
+      teams.push({ team: t.trim(), board: b.name.trim() });
+    });
+  });
+
+  const groupSize = 6;
+  const groups = [];
+
+  for (let i = 0; i < teams.length; i += groupSize) {
+    groups.push(teams.slice(i, i + groupSize));
+  }
+
+  const fixtures = [];
+
+  groups.forEach(group => {
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        fixtures.push({
+          teamA: group[i].team,
+          boardA: group[i].board,
+          teamB: group[j].team,
+          boardB: group[j].board
+        });
+      }
+    }
+  });
+
+  return fixtures;
+}
+
 const multer = require('multer');
 const XLSX = require('xlsx');
 
@@ -67,7 +142,20 @@ router.post('/series', async (req, res) => {
       }
     }
 
-    const rawFixtures = generateCrossBoardFixtures(boards);
+   // Count total teams
+            let totalTeams = 0;
+            boards.forEach(b => totalTeams += b.teams.length);
+
+            // Decide tournament strategy
+            const strategy = decideStrategy(totalTeams);
+
+            let rawFixtures;
+
+            if (strategy === "FULL_ROUND_ROBIN") {
+              rawFixtures = generateFullRoundRobin(boards);
+            } else {
+              rawFixtures = generateGroupStage(boards);
+            }
     const gap = Number.isInteger(options.enforceGap) ? options.enforceGap : 1;
     const maxAttempts = Number.isInteger(options.maxAttempts) ? options.maxAttempts : 300;
     const shuffled = shuffleWithGap(rawFixtures, gap, maxAttempts);
