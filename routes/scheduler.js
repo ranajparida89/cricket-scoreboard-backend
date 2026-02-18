@@ -65,18 +65,22 @@ function generateGroupStage(boards) {
 
   const fixtures = [];
 
-  groups.forEach(group => {
-    for (let i = 0; i < group.length; i++) {
-      for (let j = i + 1; j < group.length; j++) {
-        fixtures.push({
-          teamA: group[i].team,
-          boardA: group[i].board,
-          teamB: group[j].team,
-          boardB: group[j].board
-        });
-      }
+ groups.forEach((group, gIndex) => {
+
+  const groupName = `Group ${String.fromCharCode(65 + gIndex)}`;
+
+  for (let i = 0; i < group.length; i++) {
+    for (let j = i + 1; j < group.length; j++) {
+      fixtures.push({
+        group: groupName,
+        teamA: group[i].team,
+        boardA: group[i].board,
+        teamB: group[j].team,
+        boardB: group[j].board
+      });
     }
-  });
+  }
+});
 
   return fixtures;
 }
@@ -163,17 +167,28 @@ router.post('/series', async (req, res) => {
     for (let i = 0; i < shuffled.length; i++) {
       const m = shuffled[i];
       const label = `${m.teamA} (${m.boardA}) vs ${m.teamB} (${m.boardB})`;
-      await client.query(
-        `INSERT INTO cr_fixture (series_id, team1, team1_board, team2, team2_board, position, match_label)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [series.id, m.teamA, m.boardA, m.teamB, m.boardB, i + 1, label]
-      );
+     await client.query(
+  `INSERT INTO cr_fixture 
+   (series_id, team1, team1_board, team2, team2_board, position, match_label, match_group)
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+  [
+    series.id,
+    m.teamA,
+    m.boardA,
+    m.teamB,
+    m.boardB,
+    i + 1,
+    label,
+    m.group || null
+  ]
+);
+
     }
 
     await client.query('COMMIT');
 
     const fixturesRes = await client.query(
-      'SELECT id, position AS match_id, team1, team1_board, team2, team2_board, match_label FROM cr_fixture WHERE series_id=$1 ORDER BY position',
+      'SELECT id, position AS match_id, team1, team1_board, team2, team2_board, match_label, match_group FROM cr_fixture WHERE series_id=$1 ORDER BY position',
       [series.id]
     );
 
