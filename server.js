@@ -368,6 +368,87 @@ app.post("/api/submit-result", async (req, res) => {
     io.emit("matchUpdate", { match_id, winner });
     res.json({ message: winner });
 
+    // =====================================================
+// 🔥 AUTO UPDATE SCHEDULER FIXTURE STATUS
+// =====================================================
+
+try {
+  // 1️⃣ Find active RUNNING tournament
+  const activeGroupRes = await pool.query(`
+    SELECT id 
+    FROM cr_excel_group
+    WHERE tournament_status = 'RUNNING'
+    AND is_active = true
+    ORDER BY id DESC
+    LIMIT 1
+  `);
+
+  if (activeGroupRes.rowCount > 0) {
+
+    const groupId = activeGroupRes.rows[0].id;
+
+    // 2️⃣ Fetch all NOT_PLAYED fixtures for that group
+    const fixturesRes = await pool.query(`
+      SELECT id, row_data
+      FROM cr_excel_fixture
+      WHERE fixture_group_id = $1
+      AND status = 'NOT_PLAYED'
+    `, [groupId]);
+
+    for (const fixture of fixturesRes.rows) {
+      const row = fixture.row_data;
+
+      if (!row) continue;
+
+      const excelTeam1 = (row["Team 1"] || row["team1"] || "").toString().trim().toLowerCase();
+      const excelTeam2 = (row["Team 2"] || row["team2"] || "").toString().trim().toLowerCase();
+
+      const dbTeam1 = team1.trim().toLowerCase();
+      const dbTeam2 = team2.trim().toLowerCase();
+
+      // 3️⃣ Match both team combinations (order independent)
+      const isMatch =
+        (excelTeam1 === dbTeam1 && excelTeam2 === dbTeam2) ||
+        (excelTeam1 === dbTeam2 && excelTeam2 === dbTeam1);
+
+      if (isMatch) {
+
+        // 4️⃣ Update fixture to COMPLETED
+        await pool.query(`
+          UPDATE cr_excel_fixture
+          SET status = 'COMPLETED',
+              winner = $1
+          WHERE id = $2
+        `, [winner, fixture.id]);
+
+        break;
+      }
+    }
+
+    // 5️⃣ Check if tournament is fully completed
+    const pendingCheck = await pool.query(`
+      SELECT COUNT(*) 
+      FROM cr_excel_fixture
+      WHERE fixture_group_id = $1
+      AND status = 'NOT_PLAYED'
+    `, [groupId]);
+
+    const pendingCount = parseInt(pendingCheck.rows[0].count);
+
+    if (pendingCount === 0) {
+      await pool.query(`
+        UPDATE cr_excel_group
+        SET tournament_status = 'COMPLETED',
+            is_active = false
+        WHERE id = $1
+      `, [groupId]);
+    }
+  }
+
+} catch (automationError) {
+  console.error("Scheduler Automation Error:", automationError);
+}
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
