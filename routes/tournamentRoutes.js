@@ -148,8 +148,23 @@ router.get("/leaderboard", async (req, res) => {
               THEN 1 ELSE 0
             END
           ) AS losses,
-          SUM(runs1)::int AS runs_for, SUM(overs1)::decimal AS overs_faced,
-          SUM(runs2)::int AS runs_against, SUM(overs2)::decimal AS overs_bowled
+          SUM(runs1)::int AS runs_for,
+          SUM(
+            CASE
+              WHEN match_type = 'T20' AND wickets1 = 10 THEN 20
+              WHEN match_type = 'ODI' AND wickets1 = 10 THEN 50
+              ELSE overs1
+            END
+          )::decimal AS overs_faced,
+
+          SUM(runs2)::int AS runs_against,
+          SUM(
+            CASE
+              WHEN match_type = 'T20' AND wickets2 = 10 THEN 20
+              WHEN match_type = 'ODI' AND wickets2 = 10 THEN 50
+              ELSE overs2
+            END
+          )::decimal AS overs_bowled
         FROM base
         GROUP BY LOWER(TRIM(team1))
       ),
@@ -174,8 +189,23 @@ router.get("/leaderboard", async (req, res) => {
               THEN 1 ELSE 0
             END
           ) AS losses,
-          SUM(runs2)::int AS runs_for, SUM(overs2)::decimal AS overs_faced,
-          SUM(runs1)::int AS runs_against, SUM(overs1)::decimal AS overs_bowled
+          SUM(runs2)::int AS runs_for,
+          SUM(
+            CASE
+              WHEN match_type = 'T20' AND wickets2 = 10 THEN 20
+              WHEN match_type = 'ODI' AND wickets2 = 10 THEN 50
+              ELSE overs2
+            END
+          )::decimal AS overs_faced,
+
+          SUM(runs1)::int AS runs_against,
+          SUM(
+            CASE
+              WHEN match_type = 'T20' AND wickets1 = 10 THEN 20
+              WHEN match_type = 'ODI' AND wickets1 = 10 THEN 50
+              ELSE overs1
+            END
+          )::decimal AS overs_bowled
         FROM base
         GROUP BY LOWER(TRIM(team2))
       ),
@@ -191,28 +221,11 @@ router.get("/leaderboard", async (req, res) => {
         SUM(losses)                                       AS losses,
         SUM(draws)                                        AS draws,
         (SUM(wins)*2 + SUM(draws))                        AS points,
-              ROUND(
-                    ROUND(
-              (
-                SUM(runs_for)::decimal /
-                NULLIF(
-                  SUM(
-                    FLOOR(overs_faced) +
-                    ((overs_faced - FLOOR(overs_faced)) * 10) / 6
-                  ), 0
-                )
-              )
-              -
-              (
-                SUM(runs_against)::decimal /
-                NULLIF(
-                  SUM(
-                    FLOOR(overs_bowled) +
-                    ((overs_bowled - FLOOR(overs_bowled)) * 10) / 6
-                  ), 0
-                )
-              )
-            , 2)                                          AS nrr,
+        ROUND(
+          (SUM(runs_for)::decimal/NULLIF(SUM(overs_faced),0))
+          -
+          (SUM(runs_against)::decimal/NULLIF(SUM(overs_bowled),0))
+        , 2)                                              AS nrr,
         COALESCE($2::text, '')                            AS tournament_name,
         COALESCE($3::int, 0)                              AS season_year
       FROM per_team
