@@ -191,11 +191,28 @@ router.get("/leaderboard", async (req, res) => {
         SUM(losses)                                       AS losses,
         SUM(draws)                                        AS draws,
         (SUM(wins)*2 + SUM(draws))                        AS points,
-        ROUND(
-          (SUM(runs_for)::decimal/NULLIF(SUM(overs_faced),0))
-          -
-          (SUM(runs_against)::decimal/NULLIF(SUM(overs_bowled),0))
-        , 2)                                              AS nrr,
+              ROUND(
+                    ROUND(
+              (
+                SUM(runs_for)::decimal /
+                NULLIF(
+                  SUM(
+                    FLOOR(overs_faced) +
+                    ((overs_faced - FLOOR(overs_faced)) * 10) / 6
+                  ), 0
+                )
+              )
+              -
+              (
+                SUM(runs_against)::decimal /
+                NULLIF(
+                  SUM(
+                    FLOOR(overs_bowled) +
+                    ((overs_bowled - FLOOR(overs_bowled)) * 10) / 6
+                  ), 0
+                )
+              )
+            , 2)                                          AS nrr,
         COALESCE($2::text, '')                            AS tournament_name,
         COALESCE($3::int, 0)                              AS season_year
       FROM per_team
