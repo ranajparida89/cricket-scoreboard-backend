@@ -315,12 +315,15 @@ testFilter="";
 else if(match_type)
 testFilter="AND 1=0";
 const testQuery = `
+
 SELECT
 team,
 COUNT(*) matches,
+
 SUM(CASE WHEN result='Win' THEN 1 ELSE 0 END) wins,
 SUM(CASE WHEN result='Loss' THEN 1 ELSE 0 END) losses,
 SUM(CASE WHEN result='Draw' THEN 1 ELSE 0 END) draws,
+
 SUM(
 CASE
 WHEN result='Win' THEN 12
@@ -328,13 +331,31 @@ WHEN result='Loss' THEN 6
 WHEN result='Draw' THEN 4
 END
 ) points
+
 FROM(
-SELECT team1 team,result
+
+SELECT
+team1 AS team,
+
+CASE
+WHEN winner = team1 THEN 'Win'
+WHEN winner = team2 THEN 'Loss'
+ELSE 'Draw'
+END AS result
+
 FROM test_match_results
 WHERE crickedge_season_id=$1
 ${testFilter}
+
 UNION ALL
-SELECT team2 team,result
+
+SELECT
+team2 AS team,
+CASE
+WHEN winner = team2 THEN 'Win'
+WHEN winner = team1 THEN 'Loss'
+ELSE 'Draw'
+END AS result
 FROM test_match_results
 WHERE crickedge_season_id=$1
 ${testFilter}
