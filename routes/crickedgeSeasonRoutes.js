@@ -242,7 +242,7 @@ const { match_type } = req.query;
 const seasonResult = await pool.query(`
 SELECT id
 FROM crickedge_seasons
-WHERE is_active = true
+WHERE status='ACTIVE'
 LIMIT 1
 `);
 
