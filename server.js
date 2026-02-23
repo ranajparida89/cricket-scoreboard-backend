@@ -232,26 +232,28 @@ app.post("/api/match", async (req, res) => {
 
 // ✅ Match Result Submission (T20/ODI) — NOW ALSO STORES mom_player_id (FK → players.id)
 // ✅ Match Result Submission (T20/ODI) — SAFE OVERS FIX (UI vs NRR SEPARATION)
-app.post("/api/submit-result", async (req, res) => {
-  try {
-    const {
-      match_id,
-      team1,
-      team2,
-      runs1,
-      overs1,
-      wickets1,
-      runs2,
-      overs2,
-      wickets2,
-      user_id,
-      tournament_name = null,
-      season_year = null,
-      match_date = null,
-      mom_player = null,
-      mom_reason = null,
-      mom_player_id = null,
-    } = req.body;
+const {
+  match_id,
+  team1,
+  team2,
+  runs1,
+  overs1,
+  wickets1,
+  runs2,
+  overs2,
+  wickets2,
+  user_id,
+  tournament_name = null,
+  season_year = null,
+  match_date = null,
+  mom_player = null,
+  mom_reason = null,
+  mom_player_id = null,
+  // ✅ CrickEdge Season
+  crickedge_season_id = null,
+  season_type = "NORMAL"
+
+} = req.body;
 
     if (!mom_player || !mom_reason)
       return res.status(400).json({ error: "Man of the Match and Reason are required." });
@@ -349,21 +351,27 @@ app.post("/api/submit-result", async (req, res) => {
     const matchDateSafe = match_date || new Date().toISOString().slice(0, 10);
     await pool.query(`
       INSERT INTO match_history (
-        match_name, match_type,
-        team1, runs1, overs1, wickets1,
-        team2, runs2, overs2, wickets2,
-        winner, user_id, match_date,
-        tournament_name, season_year,
-        mom_player, mom_player_id, mom_reason
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+  match_name, match_type,
+  team1, runs1, overs1, wickets1,
+  team2, runs2, overs2, wickets2,
+  winner, user_id, match_date,
+  tournament_name, season_year,
+  mom_player, mom_player_id, mom_reason,
+  crickedge_season_id,
+  season_type
+    )
+  VALUES (
+    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+    )
     `, [
       match_name, match_type,
       team1, runs1, displayOvers1, wickets1,
       team2, runs2, displayOvers2, wickets2,
       winner, user_id, matchDateSafe,
       tournament_name, season_year,
-      mom_player, mom_player_id, mom_reason
+      mom_player, mom_player_id, mom_reason,
+      crickedge_season_id,
+      season_type
     ]);
 
 // AUTOMATION FOR MATCH HISTORY STARTS

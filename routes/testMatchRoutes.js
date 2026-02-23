@@ -29,38 +29,39 @@ const isDrawLike = (val) => {
 
 router.post("/test-match", async (req, res) => {
   try {
-    const {
-      match_id,
-      match_type,
-      team1,
-      team2,
-      winner,
-      points,
-      runs1,
-      overs1,
-      wickets1,
-      runs2,
-      overs2,
-      wickets2,
-      runs1_2,
-      overs1_2,
-      wickets1_2,
-      runs2_2,
-      overs2_2,
-      wickets2_2,
-      total_overs_used,
-      match_name,
-      user_id,
-      // ✅ [TOURNAMENT] new fields (optional)
-      tournament_name = null,
-      season_year = null,
-      match_date = null,
-      // ✅ [MoM] new fields (required from UI)
-      mom_player = null,
-      mom_reason = null,
-      // ✅ [MoM - Approach C] FK to players.id
-      mom_player_id = null,
-    } = req.body;
+   const {
+  match_id,
+  match_type,
+  team1,
+  team2,
+  winner,
+  points,
+  runs1,
+  overs1,
+  wickets1,
+  runs2,
+  overs2,
+  wickets2,
+  runs1_2,
+  overs1_2,
+  wickets1_2,
+  runs2_2,
+  overs2_2,
+  wickets2_2,
+  total_overs_used,
+  match_name,
+  user_id,
+  tournament_name = null,
+  season_year = null,
+  match_date = null,
+  mom_player = null,
+  mom_reason = null,
+  mom_player_id = null,
+
+  // ✅ CrickEdge Season
+  crickedge_season_id = null,
+  season_type = "NORMAL"
+} = req.body;
 
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
       return res.status(400).json({ error: "Missing required fields." });
@@ -114,123 +115,152 @@ router.post("/test-match", async (req, res) => {
     const matchDateSafe = match_date || new Date().toISOString().slice(0, 10);
 
     if (isDrawLike(winner)) {
-      // draw → 2 rows (for both teams)
-      await pool.query(
-        `
-        INSERT INTO test_match_results (
-          match_id, match_type, team1, team2, winner, points,
-          runs1, overs1, wickets1,
-          runs2, overs2, wickets2,
-          runs1_2, overs1_2, wickets1_2,
-          runs2_2, overs2_2, wickets2_2,
-          total_overs_used, match_name, user_id,
-          tournament_name, season_year, match_date,
-          mom_player, mom_player_id, mom_reason
-        ) VALUES
-        (
-          $1,  $2,  $3,  $4,  'Draw', 2,
-          $5,  $6,  $7,
-          $8,  $9,  $10,
-          $11, $12, $13,
-          $14, $15, $16,
-          $17, $18, $19,
-          $20, $21, $22,
-          $23, $24, $25
-        ),
-        (
-          $1,  $2,  $4,  $3,  'Draw', 2,
-          $8,  $9,  $10,
-          $5,  $6,  $7,
-          $14, $15, $16,
-          $11, $12, $13,
-          $17, $18, $19,
-          $20, $21, $22,
-          $23, $24, $25
-        )
-      `,
-        [
-          match_id,
-          match_type,
-          team1,
-          team2,
-          // numbers start
-          runs1,
-          overs1,
-          wickets1,
-          runs2,
-          overs2,
-          wickets2,
-          runs1_2,
-          overs1_2,
-          wickets1_2,
-          runs2_2,
-          overs2_2,
-          wickets2_2,
-          total_overs_used,
-          match_name?.toUpperCase(),
-          user_id,
-          tournament_name,
-          season_year,
-          matchDateSafe,
-          mom_player,
-          mom_player_id,
-          mom_reason,
-        ]
-      );
-    } else {
-      await pool.query(
-        `
-        INSERT INTO test_match_results (
-          match_id, match_type, team1, team2, winner, points,
-          runs1, overs1, wickets1,
-          runs2, overs2, wickets2,
-          runs1_2, overs1_2, wickets1_2,
-          runs2_2, overs2_2, wickets2_2,
-          total_overs_used, match_name, user_id,
-          tournament_name, season_year, match_date,
-          mom_player, mom_player_id, mom_reason
-        ) VALUES (
-          $1,  $2,  $3,  $4,  $5,  $6,
-          $7,  $8,  $9,
-          $10, $11, $12,
-          $13, $14, $15,
-          $16, $17, $18,
-          $19, $20, $21,
-          $22, $23, $24,
-          $25, $26, $27
-        )
-      `,
-        [
-          match_id,
-          match_type,
-          team1,
-          team2,
-          winner,
-          points,
-          runs1,
-          overs1,
-          wickets1,
-          runs2,
-          overs2,
-          wickets2,
-          runs1_2,
-          overs1_2,
-          wickets1_2,
-          runs2_2,
-          overs2_2,
-          wickets2_2,
-          total_overs_used,
-          match_name?.toUpperCase(),
-          user_id,
-          tournament_name,
-          season_year,
-          matchDateSafe,
-          mom_player,
-          mom_player_id,
-          mom_reason,
-        ]
-      );
-    }
+  // draw → 2 rows (for both teams)
+  await pool.query(
+    `
+    INSERT INTO test_match_results (
+      match_id, match_type, team1, team2, winner, points,
+      runs1, overs1, wickets1,
+      runs2, overs2, wickets2,
+      runs1_2, overs1_2, wickets1_2,
+      runs2_2, overs2_2, wickets2_2,
+      total_overs_used, match_name, user_id,
+      tournament_name, season_year, match_date,
+      mom_player, mom_player_id, mom_reason,
+      crickedge_season_id,
+      season_type
+    ) VALUES
+    (
+      $1,$2,$3,$4,'Draw',2,
+      $5,$6,$7,
+      $8,$9,$10,
+      $11,$12,$13,
+      $14,$15,$16,
+      $17,$18,$19,
+      $20,$21,$22,
+      $23,$24,$25,
+      $26,$27
+    ),
+    (
+      $1,$2,$4,$3,'Draw',2,
+      $8,$9,$10,
+      $5,$6,$7,
+      $14,$15,$16,
+      $11,$12,$13,
+      $17,$18,$19,
+      $20,$21,$22,
+      $23,$24,$25,
+      $26,$27
+    )
+    `,
+    [
+      match_id,
+      match_type,
+      team1,
+      team2,
+
+      runs1,
+      overs1,
+      wickets1,
+
+      runs2,
+      overs2,
+      wickets2,
+
+      runs1_2,
+      overs1_2,
+      wickets1_2,
+
+      runs2_2,
+      overs2_2,
+      wickets2_2,
+
+      total_overs_used,
+      match_name?.toUpperCase(),
+      user_id,
+
+      tournament_name,
+      season_year,
+      matchDateSafe,
+
+      mom_player,
+      mom_player_id,
+      mom_reason,
+
+      crickedge_season_id,
+      season_type
+    ]
+  );
+
+} else {
+
+  await pool.query(
+    `
+    INSERT INTO test_match_results (
+      match_id, match_type, team1, team2, winner, points,
+      runs1, overs1, wickets1,
+      runs2, overs2, wickets2,
+      runs1_2, overs1_2, wickets1_2,
+      runs2_2, overs2_2, wickets2_2,
+      total_overs_used, match_name, user_id,
+      tournament_name, season_year, match_date,
+      mom_player, mom_player_id, mom_reason,
+      crickedge_season_id,
+      season_type
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,
+      $7,$8,$9,
+      $10,$11,$12,
+      $13,$14,$15,
+      $16,$17,$18,
+      $19,$20,$21,
+      $22,$23,$24,
+      $25,$26,$27,
+      $28,$29
+    )
+    `,
+    [
+      match_id,
+      match_type,
+      team1,
+      team2,
+      winner,
+      points,
+
+      runs1,
+      overs1,
+      wickets1,
+
+      runs2,
+      overs2,
+      wickets2,
+
+      runs1_2,
+      overs1_2,
+      wickets1_2,
+
+      runs2_2,
+      overs2_2,
+      wickets2_2,
+
+      total_overs_used,
+      match_name?.toUpperCase(),
+      user_id,
+
+      tournament_name,
+      season_year,
+      matchDateSafe,
+
+      mom_player,
+      mom_player_id,
+      mom_reason,
+
+      crickedge_season_id,
+      season_type
+    ]
+  );
+
+}
 
     const message = isDrawLike(winner)
       ? "🤝 The match ended in a draw!"
