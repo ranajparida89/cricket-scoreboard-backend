@@ -401,11 +401,25 @@ app.post("/api/submit-result", async (req, res) => {
           const row = fixture.row_data;
           if (!row) continue;
 
-          const excelTeam1 = (row["Team 1"] || "").toString().trim().toLowerCase();
-          const excelTeam2 = (row["Team 2"] || "").toString().trim().toLowerCase();
+          function normalizeTeamName(name) {
+            const map = {
+              "uae": "united arab emirates",
+              "united arab emirates": "united arab emirates",
 
-          const dbTeam1 = team1.trim().toLowerCase();
-          const dbTeam2 = team2.trim().toLowerCase();
+              "usa": "united states of america",
+              "united states of america": "united states of america"
+            };
+
+            const n = (name || "").toString().trim().toLowerCase();
+
+            return map[n] || n;
+          }
+
+          const excelTeam1 = normalizeTeamName(row["Team 1"]);
+          const excelTeam2 = normalizeTeamName(row["Team 2"]);
+
+          const dbTeam1 = normalizeTeamName(team1);
+          const dbTeam2 = normalizeTeamName(team2);
 
           const isMatch =
             (excelTeam1 === dbTeam1 && excelTeam2 === dbTeam2) ||
