@@ -232,6 +232,7 @@ app.post("/api/match", async (req, res) => {
 
 // ✅ Match Result Submission (T20/ODI) — NOW ALSO STORES mom_player_id (FK → players.id)
 // ✅ Match Result Submission (T20/ODI) — SAFE OVERS FIX (UI vs NRR SEPARATION)
+app.post("/api/submit-result", async (req, res) => {
 const {
   match_id,
   team1,
