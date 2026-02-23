@@ -233,6 +233,7 @@ app.post("/api/match", async (req, res) => {
 // ✅ Match Result Submission (T20/ODI) — NOW ALSO STORES mom_player_id (FK → players.id)
 // ✅ Match Result Submission (T20/ODI) — SAFE OVERS FIX (UI vs NRR SEPARATION)
 app.post("/api/submit-result", async (req, res) => {
+try {
 const {
   match_id,
   team1,
@@ -470,13 +471,23 @@ const {
     }
      // AUTOMATION MATCH_HISTORY ENDS HERE
 
-    io.emit("matchUpdate", { match_id, winner });
-    res.json({ message: winner });
+   io.emit("matchUpdate", { match_id, winner });
 
+res.json({
+  message: winner
+});
 
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+}
+catch (err) {
+
+console.error(err);
+
+res.status(500).json({
+  error: err.message
+});
+
+}
+
 });
 
 
