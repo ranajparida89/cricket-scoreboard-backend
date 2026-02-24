@@ -252,8 +252,8 @@ const {
   mom_reason = null,
   mom_player_id = null,
   // ✅ CrickEdge Season
-  crickedge_season_id = null,
-  season_type = "NORMAL"
+crickedge_season_id = null,
+season_type = "INTERNATIONAL"
 
 } = req.body;
 

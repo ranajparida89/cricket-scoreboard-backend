@@ -459,4 +459,84 @@ ORDER BY start_date DESC
 
 });
 
+// =======================================================
+// STEP 9 — SEASON MATCH CARDS (TOP 10)
+// =======================================================
+router.get("/matches", async (req, res) => {
+  try {
+    const { season_id } = req.query;
+    if (!season_id)
+      return res.status(400).json({
+        error: "season_id required"
+      });
+    /* ODI + T20 */
+    const odiT20 = await pool.query(`
+          SELECT
+          match_name,
+          match_type,
+          team1,
+          team2,
+          winner,
+          match_date
+          FROM match_history
+          WHERE crickedge_season_id=$1
+          ORDER BY match_date DESC
+          LIMIT 10
+          `, [season_id]);
+    /* TEST */
+    const testMatches = await pool.query(`
+          SELECT
+          match_name,
+          'Test' as match_type,
+          team1,
+          team2,
+          winner,
+          match_date
+          FROM test_match_results
+          WHERE crickedge_season_id=$1
+          ORDER BY match_date DESC
+          LIMIT 10`, [season_id]);
+    res.json({
+      odiT20: odiT20.rows,
+      test: testMatches.rows
+    });
+  }
+  catch (err) {
+    console.log(err);
+    res.status(500).json({
+      error: "Matches load failed"
+    });
+  }
+});
+
+/* =========================================
+   STEP 12 — SEASON CHAMPION API
+========================================= */
+router.get("/champion", async (req, res) => {
+  try {
+    const { season_id } = req.query;
+    if (!season_id)
+      return res.status(400).json({
+        error: "season_id required"
+      })
+    const result = await pool.query(`
+
+SELECT
+team,
+SUM(points) as points
+FROM crickedge_season_leaderboard_view
+WHERE season_id=$1
+GROUP BY team
+ORDER BY points DESC
+LIMIT 3
+`, [season_id])
+    res.json(result.rows)
+  }
+  catch (err) {
+    console.log(err)
+    res.status(500).json({
+      error: "Champion API failed"
+   })
+  }
+})
 module.exports = router;

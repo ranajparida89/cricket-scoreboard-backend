@@ -29,39 +29,39 @@ const isDrawLike = (val) => {
 
 router.post("/test-match", async (req, res) => {
   try {
-   const {
-  match_id,
-  match_type,
-  team1,
-  team2,
-  winner,
-  points,
-  runs1,
-  overs1,
-  wickets1,
-  runs2,
-  overs2,
-  wickets2,
-  runs1_2,
-  overs1_2,
-  wickets1_2,
-  runs2_2,
-  overs2_2,
-  wickets2_2,
-  total_overs_used,
-  match_name,
-  user_id,
-  tournament_name = null,
-  season_year = null,
-  match_date = null,
-  mom_player = null,
-  mom_reason = null,
-  mom_player_id = null,
+    const {
+      match_id,
+      match_type,
+      team1,
+      team2,
+      winner,
+      points,
+      runs1,
+      overs1,
+      wickets1,
+      runs2,
+      overs2,
+      wickets2,
+      runs1_2,
+      overs1_2,
+      wickets1_2,
+      runs2_2,
+      overs2_2,
+      wickets2_2,
+      total_overs_used,
+      match_name,
+      user_id,
+      tournament_name = null,
+      season_year = null,
+      match_date = null,
+      mom_player = null,
+      mom_reason = null,
+      mom_player_id = null,
 
-  // ✅ CrickEdge Season
-  crickedge_season_id = null,
-  season_type = "NORMAL"
-} = req.body;
+      // ✅ CrickEdge Season
+      crickedge_season_id = null,
+      season_type = "NORMAL"
+    } = req.body;
 
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
       return res.status(400).json({ error: "Missing required fields." });
@@ -115,9 +115,9 @@ router.post("/test-match", async (req, res) => {
     const matchDateSafe = match_date || new Date().toISOString().slice(0, 10);
 
     if (isDrawLike(winner)) {
-  // draw → 2 rows (for both teams)
-  await pool.query(
-    `
+      // draw → 2 rows (for both teams)
+      await pool.query(
+        `
     INSERT INTO test_match_results (
       match_id, match_type, team1, team2, winner, points,
       runs1, overs1, wickets1,
@@ -153,49 +153,41 @@ router.post("/test-match", async (req, res) => {
       $26,$27
     )
     `,
-    [
-      match_id,
-      match_type,
-      team1,
-      team2,
+        [
+          match_id,
+          match_type,
+          team1,
+          team2,
+          runs1,
+          overs1,
+          wickets1,
+          runs2,
+          overs2,
+          wickets2,
+          runs1_2,
+          overs1_2,
+          wickets1_2,
+          runs2_2,
+          overs2_2,
+          wickets2_2,
+          total_overs_used,
+          match_name?.toUpperCase(),
+          user_id,
+          tournament_name,
+          season_year,
+          matchDateSafe,
+          mom_player,
+          mom_player_id,
+          mom_reason,
+          crickedge_season_id,
+          season_type
+        ]
+      );
 
-      runs1,
-      overs1,
-      wickets1,
+    } else {
 
-      runs2,
-      overs2,
-      wickets2,
-
-      runs1_2,
-      overs1_2,
-      wickets1_2,
-
-      runs2_2,
-      overs2_2,
-      wickets2_2,
-
-      total_overs_used,
-      match_name?.toUpperCase(),
-      user_id,
-
-      tournament_name,
-      season_year,
-      matchDateSafe,
-
-      mom_player,
-      mom_player_id,
-      mom_reason,
-
-      crickedge_season_id,
-      season_type
-    ]
-  );
-
-} else {
-
-  await pool.query(
-    `
+      await pool.query(
+        `
     INSERT INTO test_match_results (
       match_id, match_type, team1, team2, winner, points,
       runs1, overs1, wickets1,
@@ -219,48 +211,39 @@ router.post("/test-match", async (req, res) => {
       $28,$29
     )
     `,
-    [
-      match_id,
-      match_type,
-      team1,
-      team2,
-      winner,
-      points,
-
-      runs1,
-      overs1,
-      wickets1,
-
-      runs2,
-      overs2,
-      wickets2,
-
-      runs1_2,
-      overs1_2,
-      wickets1_2,
-
-      runs2_2,
-      overs2_2,
-      wickets2_2,
-
-      total_overs_used,
-      match_name?.toUpperCase(),
-      user_id,
-
-      tournament_name,
-      season_year,
-      matchDateSafe,
-
-      mom_player,
-      mom_player_id,
-      mom_reason,
-
-      crickedge_season_id,
-      season_type
-    ]
-  );
-
-}
+        [
+          match_id,
+          match_type,
+          team1,
+          team2,
+          winner,
+          points,
+          runs1,
+          overs1,
+          wickets1,
+          runs2,
+          overs2,
+          wickets2,
+          runs1_2,
+          overs1_2,
+          wickets1_2,
+          runs2_2,
+          overs2_2,
+          wickets2_2,
+          total_overs_used,
+          match_name?.toUpperCase(),
+          user_id,
+          tournament_name,
+          season_year,
+          matchDateSafe,
+          mom_player,
+          mom_player_id,
+          mom_reason,
+          crickedge_season_id,
+          season_type
+        ]
+      );
+    }
 
     const message = isDrawLike(winner)
       ? "🤝 The match ended in a draw!"
