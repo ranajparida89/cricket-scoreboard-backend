@@ -591,8 +591,8 @@ AND status='NOT_PLAYED'
 ORDER BY id ASC
 LIMIT 20
 `, [groupId]);
-
     res.json({
+      totalPending: fixturesRes.rows.length,
       matches: fixturesRes.rows
     });
 
