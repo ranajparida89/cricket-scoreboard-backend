@@ -590,11 +590,10 @@ router.get('/excel/upcoming-home', async (req, res) => {
 
       seasonTitle =
         s.season_name
-        + " – "
-        + s.tournament_name
+        + " : "
+        + s.tournament_name.replace(s.season_name, "").trim()
         + " "
         + year;
-
     }
     // ==============================
     // 2️⃣ GET RUNNING TOURNAMENT
