@@ -65,22 +65,22 @@ function generateGroupStage(boards) {
 
   const fixtures = [];
 
- groups.forEach((group, gIndex) => {
+  groups.forEach((group, gIndex) => {
 
-  const groupName = `Group ${String.fromCharCode(65 + gIndex)}`;
+    const groupName = `Group ${String.fromCharCode(65 + gIndex)}`;
 
-  for (let i = 0; i < group.length; i++) {
-    for (let j = i + 1; j < group.length; j++) {
-      fixtures.push({
-        group: groupName,
-        teamA: group[i].team,
-        boardA: group[i].board,
-        teamB: group[j].team,
-        boardB: group[j].board
-      });
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        fixtures.push({
+          group: groupName,
+          teamA: group[i].team,
+          boardA: group[i].board,
+          teamB: group[j].team,
+          boardB: group[j].board
+        });
+      }
     }
-  }
-});
+  });
 
   return fixtures;
 }
@@ -146,20 +146,20 @@ router.post('/series', async (req, res) => {
       }
     }
 
-   // Count total teams
-            let totalTeams = 0;
-            boards.forEach(b => totalTeams += b.teams.length);
+    // Count total teams
+    let totalTeams = 0;
+    boards.forEach(b => totalTeams += b.teams.length);
 
-            // Decide tournament strategy
-            const strategy = decideStrategy(totalTeams);
+    // Decide tournament strategy
+    const strategy = decideStrategy(totalTeams);
 
-            let rawFixtures;
+    let rawFixtures;
 
-            if (strategy === "FULL_ROUND_ROBIN") {
-              rawFixtures = generateFullRoundRobin(boards);
-            } else {
-              rawFixtures = generateGroupStage(boards);
-            }
+    if (strategy === "FULL_ROUND_ROBIN") {
+      rawFixtures = generateFullRoundRobin(boards);
+    } else {
+      rawFixtures = generateGroupStage(boards);
+    }
     const gap = Number.isInteger(options.enforceGap) ? options.enforceGap : 1;
     const maxAttempts = Number.isInteger(options.maxAttempts) ? options.maxAttempts : 300;
     const shuffled = shuffleWithGap(rawFixtures, gap, maxAttempts);
@@ -167,21 +167,21 @@ router.post('/series', async (req, res) => {
     for (let i = 0; i < shuffled.length; i++) {
       const m = shuffled[i];
       const label = `${m.teamA} (${m.boardA}) vs ${m.teamB} (${m.boardB})`;
-     await client.query(
-  `INSERT INTO cr_fixture 
+      await client.query(
+        `INSERT INTO cr_fixture 
    (series_id, team1, team1_board, team2, team2_board, position, match_label, match_group)
    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-  [
-    series.id,
-    m.teamA,
-    m.boardA,
-    m.teamB,
-    m.boardB,
-    i + 1,
-    label,
-    m.group || null
-  ]
-);
+        [
+          series.id,
+          m.teamA,
+          m.boardA,
+          m.teamB,
+          m.boardB,
+          i + 1,
+          label,
+          m.group || null
+        ]
+      );
 
     }
 
@@ -295,14 +295,14 @@ router.post('/excel/upload/:seriesId', upload.single('file'), async (req, res) =
   const db = req.app.get('db');
   const { seriesId } = req.params;
   // Validate series exists
-const seriesCheck = await db.query(
-  'SELECT id FROM cr_series WHERE id = $1',
-  [seriesId]
-);
+  const seriesCheck = await db.query(
+    'SELECT id FROM cr_series WHERE id = $1',
+    [seriesId]
+  );
 
-if (seriesCheck.rowCount === 0) {
-  return res.status(404).json({ error: 'Series not found' });
-}
+  if (seriesCheck.rowCount === 0) {
+    return res.status(404).json({ error: 'Series not found' });
+  }
 
 
   if (!req.file) {
@@ -383,32 +383,32 @@ router.post('/excel/upload', upload.single('file'), async (req, res) => {
     try {
       await client.query('BEGIN');
 
-// 🔥 Deactivate previous RUNNING tournament
-        await client.query(`
+      // 🔥 Deactivate previous RUNNING tournament
+      await client.query(`
           UPDATE cr_excel_group
           SET is_active = false
           WHERE tournament_status = 'RUNNING'
           AND is_active = true
         `);
 
-        // 🔥 Create new active RUNNING tournament
-const groupIdRes = await client.query(
-  `INSERT INTO cr_excel_group (tournament_status, is_active)
+      // 🔥 Create new active RUNNING tournament
+      const groupIdRes = await client.query(
+        `INSERT INTO cr_excel_group (tournament_status, is_active)
    VALUES ('RUNNING', true)
    RETURNING id`
-);
+      );
 
-// ✅ DEFINE groupId HERE
-const groupId = groupIdRes.rows[0].id;
+      // ✅ DEFINE groupId HERE
+      const groupId = groupIdRes.rows[0].id;
 
-// 🔥 Insert fixtures using that groupId
-for (const row of rows) {
-  await client.query(
-    `INSERT INTO cr_excel_fixture (fixture_group_id, row_data)
+      // 🔥 Insert fixtures using that groupId
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO cr_excel_fixture (fixture_group_id, row_data)
      VALUES ($1, $2)`,
-    [groupId, row]
-  );
-}
+          [groupId, row]
+        );
+      }
 
       await client.query('COMMIT');
 
@@ -557,6 +557,48 @@ router.get('/excel/group/:groupId', async (req, res) => {
   } catch (err) {
     console.error('Group Fetch Error:', err);
     res.status(500).json({ error: 'Failed to fetch tournament fixtures' });
+  }
+});
+
+// =====================================
+// UPCOMING FIXTURES FOR HOMEPAGE
+// =====================================
+
+router.get('/excel/upcoming-home', async (req, res) => {
+  const db = req.app.get('db');
+  try {
+    // Active Tournament
+    const groupRes = await db.query(`
+SELECT id
+FROM cr_excel_group
+WHERE tournament_status='RUNNING'
+AND is_active=true
+ORDER BY id DESC
+LIMIT 1
+`);
+    if (groupRes.rowCount === 0) {
+      return res.json({ matches: [] });
+    }
+    const groupId = groupRes.rows[0].id;
+    // Pending Matches
+    const fixturesRes = await db.query(`
+SELECT
+row_data,
+status
+FROM cr_excel_fixture
+WHERE fixture_group_id=$1
+AND status='NOT_PLAYED'
+ORDER BY id ASC
+LIMIT 20
+`, [groupId]);
+
+    res.json({
+      matches: fixturesRes.rows
+    });
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).json(err);
   }
 });
 
