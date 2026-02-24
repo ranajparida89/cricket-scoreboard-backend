@@ -54,7 +54,7 @@ router.post("/create", async (req, res) => {
 
         RETURNING *
 
-      `,[
+      `, [
         season_name,
         fullTournamentName,
         match_type
@@ -62,33 +62,33 @@ router.post("/create", async (req, res) => {
 
       await client.query("COMMIT");
       res.json({
-        message:"Season created",
-        season:result.rows[0]
+        message: "Season created",
+        season: result.rows[0]
       });
     }
-    catch(err){
+    catch (err) {
       await client.query("ROLLBACK");
       console.log(err);
       res.status(500).json({
-        error:"Season creation failed"
+        error: "Season creation failed"
       });
     }
-    finally{
+    finally {
 
       client.release();
     }
   }
-  catch(err){
+  catch (err) {
     res.status(500).json({
-      error:"Server error"
+      error: "Server error"
     });
   }
 });
 /* ===========================================================
    2️⃣ GET ALL SEASONS
 =========================================================== */
-router.get("/all", async(req,res)=>{
-  try{
+router.get("/all", async (req, res) => {
+  try {
     const result = await pool.query(`
       SELECT *
       FROM crickedge_seasons
@@ -96,10 +96,10 @@ router.get("/all", async(req,res)=>{
     `);
     res.json(result.rows);
   }
-  catch(err){
+  catch (err) {
 
     res.status(500).json({
-      error:"Failed to load seasons"
+      error: "Failed to load seasons"
     });
   }
 
@@ -107,8 +107,8 @@ router.get("/all", async(req,res)=>{
 /* ===========================================================
    3️⃣ GET ACTIVE SEASON
 =========================================================== */
-router.get("/active", async(req,res)=>{
-  try{
+router.get("/active", async (req, res) => {
+  try {
     const result = await pool.query(`
       SELECT *
       FROM crickedge_seasons
@@ -119,10 +119,10 @@ router.get("/active", async(req,res)=>{
     res.json(result.rows[0] || null);
 
   }
-  catch(err){
+  catch (err) {
 
     res.status(500).json({
-      error:"Failed to load active season"
+      error: "Failed to load active season"
     });
 
   }
@@ -131,20 +131,20 @@ router.get("/active", async(req,res)=>{
 /* ===========================================================
    4️⃣ UPDATE SEASON (ADMIN)
 =========================================================== */
-router.put("/update/:id", async(req,res)=>{
-  const {id}=req.params;
+router.put("/update/:id", async (req, res) => {
+  const { id } = req.params;
   let {
     season_name,
     tournament_name,
     match_type,
     status
-  }=req.body;
+  } = req.body;
 
   season_name = String(season_name || "").trim();
   tournament_name = String(tournament_name || "").trim();
   match_type = String(match_type || "ALL").trim();
   status = String(status || "ACTIVE").trim();
-  try{
+  try {
 
     const fullTournamentName =
       `${season_name} ${tournament_name}`;
@@ -159,7 +159,7 @@ router.put("/update/:id", async(req,res)=>{
       status=$4
       WHERE id=$5
 
-    `,[
+    `, [
       season_name,
       fullTournamentName,
       match_type,
@@ -167,14 +167,14 @@ router.put("/update/:id", async(req,res)=>{
       id
     ]);
     res.json({
-      message:"Season updated"
+      message: "Season updated"
     });
 
   }
-  catch(err){
+  catch (err) {
 
     res.status(500).json({
-      error:"Update failed"
+      error: "Update failed"
     });
 
   }
@@ -184,10 +184,10 @@ router.put("/update/:id", async(req,res)=>{
    5️⃣ DELETE SEASON
 =========================================================== */
 
-router.delete("/delete/:id", async(req,res)=>{
-  const {id}=req.params;
+router.delete("/delete/:id", async (req, res) => {
+  const { id } = req.params;
   const client = await pool.connect();
-  try{
+  try {
     await client.query("BEGIN");
 
     // Convert matches back to INTERNATIONAL
@@ -198,7 +198,7 @@ router.delete("/delete/:id", async(req,res)=>{
       season_type='INTERNATIONAL',
       crickedge_season_id=NULL
       WHERE crickedge_season_id=$1
-    `,[id]);
+    `, [id]);
     await client.query(`
       UPDATE test_match_results
       SET
@@ -207,25 +207,25 @@ router.delete("/delete/:id", async(req,res)=>{
 
       WHERE crickedge_season_id=$1
 
-    `,[id]);
+    `, [id]);
     await client.query(`
       DELETE FROM crickedge_seasons
       WHERE id=$1
-    `,[id]);
+    `, [id]);
 
     await client.query("COMMIT");
     res.json({
-      message:"Season deleted"
+      message: "Season deleted"
     });
 
   }
-  catch(err){
+  catch (err) {
     await client.query("ROLLBACK");
     res.status(500).json({
-      error:"Delete failed"
+      error: "Delete failed"
     });
   }
-  finally{
+  finally {
     client.release();
   }
 });
@@ -233,35 +233,35 @@ router.delete("/delete/:id", async(req,res)=>{
 // STEP 5 — CRICKEDGE SEASON LEADERBOARD
 // =======================================================
 router.get("/leaderboard", async (req, res) => {
-try {
-const { match_type } = req.query;
+  try {
+    const { match_type } = req.query;
 
-// ================================
-// 1️⃣ GET ACTIVE SEASON
-// ================================
-const seasonResult = await pool.query(`
+    // ================================
+    // 1️⃣ GET ACTIVE SEASON
+    // ================================
+    const seasonResult = await pool.query(`
 SELECT id
 FROM crickedge_seasons
 WHERE status='ACTIVE'
 LIMIT 1
 `);
 
-if(seasonResult.rows.length === 0){
-return res.status(404).json({
-message:"No Active Season Found"
-});
-}
-const seasonId = seasonResult.rows[0].id;
+    if (seasonResult.rows.length === 0) {
+      return res.status(404).json({
+        message: "No Active Season Found"
+      });
+    }
+    const seasonId = seasonResult.rows[0].id;
 
-// ================================
-// 2️⃣ ODI + T20 DATA
-// ================================
-let odiFilter = "";
-if(match_type === "ODI" || match_type === "T20")
-odiFilter = `AND match_type='${match_type}'`;
-if(match_type === "Test")
-odiFilter = "AND 1=0";
-const odiQuery = `
+    // ================================
+    // 2️⃣ ODI + T20 DATA
+    // ================================
+    let odiFilter = "";
+    if (match_type === "ODI" || match_type === "T20")
+      odiFilter = `AND match_type='${match_type}'`;
+    if (match_type === "Test")
+      odiFilter = "AND 1=0";
+    const odiQuery = `
 
 SELECT
 team,
@@ -306,15 +306,15 @@ ${odiFilter}
 GROUP BY team
 `;
 
-// ================================
-// 3️⃣ TEST DATA
-// ================================
-let testFilter="";
-if(match_type==="Test")
-testFilter="";
-else if(match_type)
-testFilter="AND 1=0";
-const testQuery = `
+    // ================================
+    // 3️⃣ TEST DATA
+    // ================================
+    let testFilter = "";
+    if (match_type === "Test")
+      testFilter = "";
+    else if (match_type)
+      testFilter = "AND 1=0";
+    const testQuery = `
 
 SELECT
 team,
@@ -362,63 +362,93 @@ ${testFilter}
 )t
 GROUP BY team
 `;
-// ================================
-// 4️⃣ EXECUTE
-// ================================
-const odiData = await pool.query(odiQuery,[seasonId]);
-const testData = await pool.query(testQuery,[seasonId]);
-// ================================
-// 5️⃣ MERGE
-// ================================
-const combined={};
-const merge=(rows)=>{
-rows.forEach(r=>{
-if(!combined[r.team])
-combined[r.team]={
-team:r.team,
-matches:0,
-wins:0,
-losses:0,
-draws:0,
-points:0
-};
-combined[r.team].matches+=Number(r.matches);
-combined[r.team].wins+=Number(r.wins);
-combined[r.team].losses+=Number(r.losses);
-combined[r.team].draws+=Number(r.draws);
-combined[r.team].points+=Number(r.points);
+    // ================================
+    // 4️⃣ EXECUTE
+    // ================================
+    const odiData = await pool.query(odiQuery, [seasonId]);
+    const testData = await pool.query(testQuery, [seasonId]);
+    // ================================
+    // 5️⃣ MERGE
+    // ================================
+    const combined = {};
+    const merge = (rows) => {
+      rows.forEach(r => {
+        if (!combined[r.team])
+          combined[r.team] = {
+            team: r.team,
+            matches: 0,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            points: 0
+          };
+        combined[r.team].matches += Number(r.matches);
+        combined[r.team].wins += Number(r.wins);
+        combined[r.team].losses += Number(r.losses);
+        combined[r.team].draws += Number(r.draws);
+        combined[r.team].points += Number(r.points);
+      });
+
+    };
+    merge(odiData.rows);
+    merge(testData.rows);
+    // ================================
+    // 6️⃣ RANKING
+    // ================================
+    let leaderboard = Object.values(combined);
+    leaderboard.sort((a, b) => b.points - a.points);
+    leaderboard = leaderboard.map((t, i) => ({
+      rank: i + 1,
+      team: t.team,
+      matches: t.matches,
+      wins: t.wins,
+      losses: t.losses,
+      draws: t.draws,
+      points: t.points
+
+    }));
+    // ================================
+    // 7️⃣ RESPONSE
+    // ================================
+    res.json(leaderboard);
+
+  }
+  catch (err) {
+    console.log(err);
+    res.status(500).json({
+      error: "Season leaderboard failed"
+    });
+  }
 });
 
-};
-merge(odiData.rows);
-merge(testData.rows);
-// ================================
-// 6️⃣ RANKING
-// ================================
-let leaderboard=Object.values(combined);
-leaderboard.sort((a,b)=>b.points-a.points);
-leaderboard=leaderboard.map((t,i)=>({
-rank:i+1,
-team:t.team,
-matches:t.matches,
-wins:t.wins,
-losses:t.losses,
-draws:t.draws,
-points:t.points
+// GET ALL SEASONS
+router.get("/all", async (req, res) => {
 
-}));
-// ================================
-// 7️⃣ RESPONSE
-// ================================
-res.json(leaderboard);
+  try {
 
-}
-catch(err){
-console.log(err);
-res.status(500).json({
-error:"Season leaderboard failed"
-});
-}
+    const seasons = await pool.query(`
+SELECT id,
+season_name,
+tournament_name,
+match_type,
+status,
+start_date
+FROM crickedge_seasons
+ORDER BY start_date DESC
+`);
+
+    res.json(seasons.rows);
+
+  } catch (err) {
+
+    console.error(err);
+
+    res.status(500).json({
+      error: "Failed to fetch seasons"
+    });
+
+  }
+
 });
 
 module.exports = router;
