@@ -560,61 +560,83 @@ router.get('/excel/group/:groupId', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch tournament fixtures' });
   }
 });
+
 // =====================================
 // UPCOMING FIXTURES FOR HOMEPAGE
 // =====================================
-
 router.get('/excel/upcoming-home', async (req, res) => {
   const db = req.app.get('db');
   try {
-  // ✅ GET ACTIVE SEASON TITLE
+    // ==============================
+    // 1️⃣ GET ACTIVE SEASON + YEAR
+    // ==============================
+
     const seasonRes = await db.query(`
-SELECT
-season_name,
-tournament_name
-FROM crickedge_seasons
-WHERE status='ACTIVE'
-LIMIT 1
-`);
-    let seasonTitle = "CrickEdge Season";
+      SELECT
+      season_name,
+      tournament_name,
+      start_date
+      FROM crickedge_seasons
+      WHERE status='ACTIVE'
+      LIMIT 1
+    `);
+    let seasonTitle = "CrickEdge Matches";
     if (seasonRes.rows.length > 0) {
+      const s = seasonRes.rows[0];
+      const year =
+        s.start_date
+          ? new Date(s.start_date).getFullYear()
+          : "";
+
       seasonTitle =
-        seasonRes.rows[0].season_name
-        +
-        " – "
-        +
-        seasonRes.rows[0].tournament_name;
+        s.season_name
+        + " – "
+        + s.tournament_name
+        + " "
+        + year;
+
     }
-    // ✅ GET ACTIVE RUNNING TOURNAMENT
+    // ==============================
+    // 2️⃣ GET RUNNING TOURNAMENT
+    // ==============================
+
     const groupRes = await db.query(`
-SELECT id
-FROM cr_excel_group
-WHERE tournament_status='RUNNING'
-AND is_active=true
-ORDER BY id DESC
-LIMIT 1
-`);
-    // ✅ IF NO TOURNAMENT RUNNING
+      SELECT id
+      FROM cr_excel_group
+      WHERE tournament_status='RUNNING'
+      AND is_active=true
+      ORDER BY id DESC
+      LIMIT 1
+    `);
+    // ==============================
+    // 3️⃣ IF NO TOURNAMENT RUNNING
+    // ==============================
     if (groupRes.rowCount === 0) {
       return res.json({
         seasonTitle,
         totalPending: 0,
         matches: []
       });
+
     }
     const groupId = groupRes.rows[0].id;
-    // ✅ GET ONLY NOT COMPLETED MATCHES
+    // ==============================
+    // 4️⃣ ONLY NOT COMPLETED MATCHES
+    // ==============================
     const fixturesRes = await db.query(`
-SELECT
-row_data,
-status
-FROM cr_excel_fixture
-WHERE fixture_group_id=$1
-AND status='NOT_PLAYED'
-ORDER BY id ASC
-LIMIT 20
-`, [groupId]);
-    // ✅ FINAL RESPONSE
+      SELECT
+      row_data,
+      status
+      FROM cr_excel_fixture
+      WHERE fixture_group_id=$1
+      AND status='NOT_PLAYED'
+      ORDER BY id ASC
+      LIMIT 20
+    `, [groupId]);
+
+    // ==============================
+    // 5️⃣ FINAL RESPONSE
+    // ==============================
     res.json({
       seasonTitle,
       totalPending: fixturesRes.rows.length,
