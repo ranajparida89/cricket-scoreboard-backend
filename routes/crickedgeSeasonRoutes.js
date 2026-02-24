@@ -234,24 +234,32 @@ router.delete("/delete/:id", async (req, res) => {
 // =======================================================
 router.get("/leaderboard", async (req, res) => {
   try {
-    const { match_type } = req.query;
-
+    const { match_type, season_id } = req.query;
     // ================================
-    // 1️⃣ GET ACTIVE SEASON
+    // 1️⃣ SELECT SEASON
     // ================================
-    const seasonResult = await pool.query(`
-SELECT id
-FROM crickedge_seasons
-WHERE status='ACTIVE'
-LIMIT 1
-`);
-
-    if (seasonResult.rows.length === 0) {
-      return res.status(404).json({
-        message: "No Active Season Found"
-      });
+    let seasonId;
+    /* If season_id provided → use it */
+    if (season_id) {
+      seasonId = season_id;
     }
-    const seasonId = seasonResult.rows[0].id;
+    /* Otherwise → use ACTIVE season */
+    else {
+      const seasonResult = await pool.query(`
+    SELECT id
+    FROM crickedge_seasons
+    WHERE status='ACTIVE'
+    LIMIT 1
+    `);
+      if (seasonResult.rows.length === 0) {
+
+        return res.status(404).json({
+          message: "No Active Season Found"
+        });
+
+      }
+      seasonId = seasonResult.rows[0].id;
+    }
 
     // ================================
     // 2️⃣ ODI + T20 DATA
