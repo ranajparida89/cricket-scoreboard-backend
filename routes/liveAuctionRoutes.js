@@ -59,4 +59,84 @@ RETURNING *
        });
     }
 });
+/*
+=========================================
+MODULE 2.2 – REGISTER BOARDS
+=========================================
+POST /api/live-auction/register-board/:auction_id
+*/
+router.post("/register-board/:auction_id", async (req, res) => {
+
+try{
+const { auction_id } = req.params;
+const { board_name } = req.body;
+
+if(!board_name){
+
+return res.status(400).json({
+error:"Board name required"
+});
+}
+/*
+STEP 1 — Check Auction Exists
+*/
+const auctionCheck = await pool.query(
+`SELECT * FROM auction_master_live
+WHERE id=$1`,
+[auction_id]
+);
+if(auctionCheck.rows.length === 0){
+return res.status(404).json({
+error:"Auction not found"
+});
+}
+const auction = auctionCheck.rows[0];
+/*
+STEP 2 — Check Active Board Limit
+*/
+const boardCount = await pool.query(
+`SELECT COUNT(*) FROM auction_boards_live
+WHERE auction_id=$1
+AND is_participating=true`,
+[auction_id]
+);
+if(
+parseInt(boardCount.rows[0].count)
+>= auction.active_members_count
+){
+return res.status(400).json({
+error:"Maximum participating boards reached"
+});
+}
+/*
+STEP 3 — Insert Board
+*/
+const result = await pool.query(`
+INSERT INTO auction_boards_live(
+auction_id,
+board_name,
+purse_remaining,
+is_participating
+)
+VALUES($1,$2,$3,true)
+RETURNING *
+`,
+[
+auction_id,
+board_name,
+auction.initial_budget
+]
+);
+res.json({
+success:true,
+board:result.rows[0]
+});
+}
+catch(err){
+console.log(err);
+res.status(500).json({
+error:"Server Error"
+});
+}
+});
 module.exports = router;
