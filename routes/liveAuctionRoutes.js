@@ -56,7 +56,7 @@ RETURNING *
         console.log(err);
         res.status(500).json({
             error: "Server Error"
-       });
+        });
     }
 });
 /*
@@ -67,51 +67,51 @@ POST /api/live-auction/register-board/:auction_id
 */
 router.post("/register-board/:auction_id", async (req, res) => {
 
-try{
-const { auction_id } = req.params;
-const { board_name } = req.body;
+    try {
+        const { auction_id } = req.params;
+        const { board_name } = req.body;
 
-if(!board_name){
+        if (!board_name) {
 
-return res.status(400).json({
-error:"Board name required"
-});
-}
-/*
-STEP 1 — Check Auction Exists
-*/
-const auctionCheck = await pool.query(
-`SELECT * FROM auction_master_live
+            return res.status(400).json({
+                error: "Board name required"
+            });
+        }
+        /*
+        STEP 1 — Check Auction Exists
+        */
+        const auctionCheck = await pool.query(
+            `SELECT * FROM auction_master_live
 WHERE id=$1`,
-[auction_id]
-);
-if(auctionCheck.rows.length === 0){
-return res.status(404).json({
-error:"Auction not found"
-});
-}
-const auction = auctionCheck.rows[0];
-/*
-STEP 2 — Check Active Board Limit
-*/
-const boardCount = await pool.query(
-`SELECT COUNT(*) FROM auction_boards_live
+            [auction_id]
+        );
+        if (auctionCheck.rows.length === 0) {
+            return res.status(404).json({
+                error: "Auction not found"
+            });
+        }
+        const auction = auctionCheck.rows[0];
+        /*
+        STEP 2 — Check Active Board Limit
+        */
+        const boardCount = await pool.query(
+            `SELECT COUNT(*) FROM auction_boards_live
 WHERE auction_id=$1
 AND is_participating=true`,
-[auction_id]
-);
-if(
-parseInt(boardCount.rows[0].count)
->= auction.active_members_count
-){
-return res.status(400).json({
-error:"Maximum participating boards reached"
-});
-}
-/*
-STEP 3 — Insert Board
-*/
-const result = await pool.query(`
+            [auction_id]
+        );
+        if (
+            parseInt(boardCount.rows[0].count)
+            >= auction.active_members_count
+        ) {
+            return res.status(400).json({
+                error: "Maximum participating boards reached"
+            });
+        }
+        /*
+        STEP 3 — Insert Board
+        */
+        const result = await pool.query(`
 INSERT INTO auction_boards_live(
 auction_id,
 board_name,
@@ -121,22 +121,143 @@ is_participating
 VALUES($1,$2,$3,true)
 RETURNING *
 `,
-[
+            [
+                auction_id,
+                board_name,
+                auction.initial_budget
+            ]
+        );
+        res.json({
+            success: true,
+            board: result.rows[0]
+        });
+    }
+    catch (err) {
+        console.log(err);
+        res.status(500).json({
+            error: "Server Error"
+        });
+    }
+});
+
+/*
+=========================================
+MODULE 2.3 – PLAYER UPLOAD
+=========================================
+POST /api/live-auction/add-player/:auction_id
+*/
+
+router.post("/add-player/:auction_id", async (req, res) => {
+    try {
+        const { auction_id } = req.params;
+        const {
+            player_name,
+            category,
+            role,
+            is_wicketkeeper
+        } = req.body;
+
+        if (!player_name || !category || !role) {
+            return res.status(400).json({
+                error: "Missing player fields"
+            });
+        }
+        /*
+        STEP 1 — Validate Category
+        */
+        const validCategories = [
+            'DIAMOND',
+            'PLATINUM',
+            'GOLD',
+            'SILVER'
+        ];
+        if (!validCategories.includes(category)) {
+
+            return res.status(400).json({
+                error: "Invalid category"
+            });
+        }
+
+        /*
+        STEP 2 — Validate Role
+        */
+        const validRoles = [
+            'BATSMAN',
+            'ALLROUNDER',
+            'BOWLER'
+        ];
+
+        if (!validRoles.includes(role)) {
+            return res.status(400).json({
+                error: "Invalid role"
+            });
+        }
+        /*
+        STEP 3 — Get Auction Rules
+        */
+        const auctionData = await pool.query(
+            `SELECT * FROM auction_master_live
+WHERE id=$1`,
+            [auction_id]
+
+        );
+        const auction = auctionData.rows[0];
+        /*
+        STEP 4 — Set Base Price Automatically
+        */
+        let basePrice = 0;
+        if (category === "DIAMOND")
+            basePrice = auction.diamond_base_price;
+        if (category === "PLATINUM")
+            basePrice = auction.platinum_base_price;
+        if (category === "GOLD")
+            basePrice = auction.gold_base_price;
+        if (category === "SILVER")
+            basePrice = auction.silver_base_price;
+
+        /*
+        STEP 5 — Insert Player
+        */
+        const result = await pool.query(
+            `
+INSERT INTO auction_players_live(
 auction_id,
-board_name,
-auction.initial_budget
-]
-);
-res.json({
-success:true,
-board:result.rows[0]
+player_name,
+category,
+role,
+is_wicketkeeper,
+base_price
+)
+
+VALUES($1,$2,$3,$4,$5,$6)
+RETURNING *
+`,
+
+            [
+                auction_id,
+                player_name,
+                category,
+                role,
+                is_wicketkeeper || false,
+                basePrice
+            ]
+
+        );
+        res.json({
+            success: true,
+            player: result.rows[0]
+
+        });
+
+    }
+    catch (err) {
+        console.log(err);
+        res.status(500).json({
+            error: "Server Error"
+        });
+
+    }
+
 });
-}
-catch(err){
-console.log(err);
-res.status(500).json({
-error:"Server Error"
-});
-}
-});
+
 module.exports = router;
