@@ -73,6 +73,7 @@ const rulesRoutes = require("./routes/rulesRoutes"); // Rule for crickedge 22nd 
 const forumRoutes = require("./routes/forumRoutes");
 const playerAuctionRoutes = require("./routes/playerAuctionRoutes");
 const crickedgeSeasonRoutes = require("./routes/crickedgeSeasonRoutes");
+const liveAuctionRoutes = require('./routes/liveAuctionRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -168,6 +169,7 @@ app.use("/api", rulesRoutes); // rules for crickedge 22/01/2026
 app.use("/api/forum", forumRoutes);
 app.use("/api/player-auction", playerAuctionRoutes); // Auction
 app.use("/api/crickedge-season",crickedgeSeasonRoutes);
+app.use('/api/live-auction',liveAuctionRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
