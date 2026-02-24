@@ -514,21 +514,46 @@ router.get("/matches", async (req, res) => {
 ========================================= */
 router.get("/champion", async (req, res) => {
   try {
-    const { season_id } = req.query;
+    const { season_id, match_type } = req.query;
     if (!season_id)
       return res.status(400).json({
         error: "season_id required"
       })
-    const result = await pool.query(`
+    let typeFilter = "";
 
-SELECT
-team,
-SUM(points) as points
-FROM crickedge_season_leaderboard_view
-WHERE season_id=$1
-GROUP BY team
-ORDER BY points DESC
-LIMIT 3
+    if (match_type === "ODI" || match_type === "T20")
+      typeFilter = `AND match_type='${match_type}'`
+
+    const result = await pool.query(`
+      SELECT
+      team,
+      SUM(points) points
+      FROM(
+      SELECT
+      team1 team,
+      CASE
+      WHEN winner LIKE '%'||team1||'%' THEN 2
+      WHEN winner LIKE '%draw%' THEN 1
+      ELSE 0
+      END points
+      FROM match_history
+      WHERE crickedge_season_id=$1
+      ${typeFilter}
+      UNION ALL
+      SELECT
+      team2 team,
+      CASE
+      WHEN winner LIKE '%'||team2||'%' THEN 2
+      WHEN winner LIKE '%draw%' THEN 1
+      ELSE 0
+      END points
+      FROM match_history
+      WHERE crickedge_season_id=$1
+      ${typeFilter}
+      )x
+      GROUP BY team
+      ORDER BY SUM(points) DESC
+      LIMIT 1
 `, [season_id])
     res.json(result.rows)
   }
@@ -536,7 +561,7 @@ LIMIT 3
     console.log(err)
     res.status(500).json({
       error: "Champion API failed"
-   })
+    })
   }
 })
 module.exports = router;
