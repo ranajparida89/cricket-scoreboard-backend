@@ -96,6 +96,7 @@ const upload = multer({
 
 router.post('/series', async (req, res) => {
   const db = req.app.get('db');
+
   const { matchName, boards = [], options = {} } = req.body;
 
   if (!matchName || !boards.length) {
@@ -559,7 +560,6 @@ router.get('/excel/group/:groupId', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch tournament fixtures' });
   }
 });
-
 // =====================================
 // UPCOMING FIXTURES FOR HOMEPAGE
 // =====================================
@@ -567,7 +567,25 @@ router.get('/excel/group/:groupId', async (req, res) => {
 router.get('/excel/upcoming-home', async (req, res) => {
   const db = req.app.get('db');
   try {
-    // Active Tournament
+  // ✅ GET ACTIVE SEASON TITLE
+    const seasonRes = await db.query(`
+SELECT
+season_name,
+tournament_name
+FROM crickedge_seasons
+WHERE status='ACTIVE'
+LIMIT 1
+`);
+    let seasonTitle = "CrickEdge Season";
+    if (seasonRes.rows.length > 0) {
+      seasonTitle =
+        seasonRes.rows[0].season_name
+        +
+        " – "
+        +
+        seasonRes.rows[0].tournament_name;
+    }
+    // ✅ GET ACTIVE RUNNING TOURNAMENT
     const groupRes = await db.query(`
 SELECT id
 FROM cr_excel_group
@@ -576,11 +594,16 @@ AND is_active=true
 ORDER BY id DESC
 LIMIT 1
 `);
+    // ✅ IF NO TOURNAMENT RUNNING
     if (groupRes.rowCount === 0) {
-      return res.json({ matches: [] });
+      return res.json({
+        seasonTitle,
+        totalPending: 0,
+        matches: []
+      });
     }
     const groupId = groupRes.rows[0].id;
-    // Pending Matches
+    // ✅ GET ONLY NOT COMPLETED MATCHES
     const fixturesRes = await db.query(`
 SELECT
 row_data,
@@ -591,15 +614,18 @@ AND status='NOT_PLAYED'
 ORDER BY id ASC
 LIMIT 20
 `, [groupId]);
+    // ✅ FINAL RESPONSE
     res.json({
+      seasonTitle,
       totalPending: fixturesRes.rows.length,
       matches: fixturesRes.rows
     });
-
-  } catch (err) {
+  }
+  catch (err) {
     console.log(err);
-    res.status(500).json(err);
+    res.status(500).json({
+      error: "Upcoming matches API failed"
+    });
   }
 });
-
 module.exports = router;
