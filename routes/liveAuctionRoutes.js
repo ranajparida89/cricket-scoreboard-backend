@@ -864,22 +864,43 @@ router.post(
                 const boardName =
                     boardInfo.rows[0].board_name;
                 await pool.query(
+
                     `
-            INSERT INTO auction_boards_live
-            (
-            auction_id,
-            board_name,
-            purse_remaining,
-            is_participating
-            )
-            VALUES($1,$2,$3,true)
-            `,
+INSERT INTO auction_boards_live
+(
+id,
+auction_id,
+board_name,
+purse_remaining,
+players_bought,
+diamond_count,
+platinum_count,
+gold_count,
+silver_count,
+batsmen_count,
+allrounder_count,
+bowler_count,
+wicketkeeper_count,
+is_participating,
+is_connected
+)
+
+VALUES(
+gen_random_uuid(),
+$1,$2,$3,
+0,0,0,0,0,0,0,0,0,
+true,
+false
+)
+
+`,
 
                     [
                         auction_id,
                         boardName,
                         b.purse || 100000000
                     ]
+
                 );
             }
             res.json({
