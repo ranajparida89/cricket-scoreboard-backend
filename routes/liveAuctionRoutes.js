@@ -872,4 +872,67 @@ WHERE auction_id=$1`,
         });
     }
 });
+
+/*
+=========================================
+MODULE 4.2 – BID HISTORY API
+=========================================
+GET /api/live-auction/bids/:auction_id
+*/
+
+router.get("/bids/:auction_id", async (req, res) => {
+    try {
+        const { auction_id } = req.params;
+        /*
+        STEP 1 — Current Player
+        */
+        const liveState = await pool.query(
+            `SELECT current_player_id
+FROM auction_live_state
+WHERE auction_id=$1`,
+            [auction_id]
+        );
+        if (liveState.rows.length === 0) {
+            return res.status(400).json({
+                error: "Auction not live"
+            });
+        }
+        const player_id =
+            liveState.rows[0].current_player_id;
+
+        /*
+        STEP 2 — Bid History
+        */
+        const bids =
+            await pool.query(
+                `
+SELECT
+b.bid_amount,
+b.bid_time,
+bd.board_name
+FROM auction_bids_live b
+JOIN auction_boards_live bd
+ON b.board_id=bd.id
+WHERE b.player_id=$1
+ORDER BY b.bid_time DESC
+LIMIT 20
+`,
+                [player_id]
+            );
+
+        /*
+        STEP 3 — Response
+        */
+        res.json({
+            success: true,
+            bids: bids.rows
+        });
+    }
+    catch (err) {
+        console.log(err);
+        res.status(500).json({
+            error: "Server Error"
+        });
+    }
+});
 module.exports = router;
