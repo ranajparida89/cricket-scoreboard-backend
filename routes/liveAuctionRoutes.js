@@ -1244,7 +1244,7 @@ ORDER BY category DESC
         );
         /* Get Board Purse */
         const board = await pool.query(
-           `
+            `
 SELECT
 board_name,
 purse_remaining,
@@ -1263,6 +1263,57 @@ WHERE id=$1
         console.log("Board Squad Error", err);
         res.status(500).json({
             error: "Server Error"
+        });
+    }
+});
+// ✅ EXPORT BOARD SQUADS TO EXCEL (CSV)
+
+router.get("/export-squads/:auction_id", async (req, res) => {
+    try {
+        const { auction_id } = req.params;
+        const result = await pool.query(
+            `
+SELECT
+b.board_name,
+p.player_name,
+p.category,
+p.role,
+p.sold_price
+FROM auction_players_live p
+JOIN auction_boards_live b
+ON p.sold_to_board_id=b.id
+WHERE p.auction_id=$1
+AND p.status='SOLD'
+ORDER BY b.board_name,p.category DESC
+`,
+            [auction_id]
+        );
+        /* Convert to CSV */
+        let csv =
+            "Board Name,Player Name,Category,Role,Sold Price\n";
+        result.rows.forEach(r => {
+            csv +=
+                r.board_name + "," +
+                r.player_name + "," +
+                r.category + "," +
+                r.role + "," +
+                r.sold_price +
+                "\n";
+        });
+        res.setHeader(
+            "Content-Type",
+            "text/csv"
+        );
+        res.setHeader(
+            "Content-Disposition",
+            "attachment; filename=auction_squads.csv"
+        );
+        res.send(csv);
+    }
+    catch (err) {
+        console.log("Export Error", err);
+        res.status(500).json({
+            error: "Export Failed"
         });
     }
 });
