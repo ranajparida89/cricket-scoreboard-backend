@@ -819,50 +819,71 @@ POST /api/live-auction/save-participants/:auction_id
 router.post(
     "/save-participants/:auction_id",
     async (req, res) => {
+
         try {
+
             const { auction_id } = req.params;
             const { boards } = req.body;
-            /*
-            boards =
-            [
-              {
-               board_id,
-               purse
-              }
-            ]
-            */
+
             if (!boards || boards.length === 0) {
+
                 return res.status(400).json({
-                    error:
-                        "No boards selected"
+                    error: "No boards selected"
                 });
+
             }
+
             /*
-            STEP 1
-            Clear old boards
+            STEP 1 — Clear old boards
             */
+
             await pool.query(
                 `DELETE FROM auction_boards_live
-         WHERE auction_id=$1`,
+WHERE auction_id=$1`,
                 [auction_id]
             );
+
             /*
-            STEP 2
-            Insert selected boards
+            STEP 2 — Insert boards
             */
+
             for (const b of boards) {
+
                 /*
-                Fetch board name
+                Get board info safely
                 */
+
                 const boardInfo =
                     await pool.query(
                         `SELECT board_name
-             FROM board_registration
-             WHERE registration_id=$1`,
+FROM board_registration
+WHERE registration_id=$1`,
                         [b.board_id]
                     );
+
+                /*
+                If board not found
+                */
+
+                if (boardInfo.rows.length === 0) {
+
+                    return res.status(400).json({
+
+                        error:
+                            "Board not found: "
+                            + b.board_id
+
+                    });
+
+                }
+
                 const boardName =
                     boardInfo.rows[0].board_name;
+
+                /*
+                Insert board
+                */
+
                 await pool.query(
 
                     `
@@ -902,20 +923,30 @@ false
                     ]
 
                 );
+
             }
+
             res.json({
+
                 success: true,
-                message:
-                    "Participants Saved"
+                message: "Participants Saved"
+
             });
+
         }
+
         catch (err) {
-            console.log(err);
+
+            console.log("SAVE PARTICIPANTS ERROR:", err);
+
             res.status(500).json({
-                error:
-                    "Server Error"
+
+                error: "Server Error"
+
             });
+
         }
+
     });
 /*
 =========================================
