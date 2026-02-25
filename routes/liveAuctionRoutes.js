@@ -952,6 +952,7 @@ router.get("/boards/:auction_id", async (req, res) => {
             await pool.query(
                 `
 SELECT
+id as board_id,
 board_name,
 purse_remaining,
 players_bought,
