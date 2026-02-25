@@ -1221,4 +1221,49 @@ ORDER BY p.player_name
     }
 
 });
+// ✅ BOARD SQUAD API
+
+router.get("/board-squad/:auction_id/:board_id", async (req, res) => {
+    try {
+        const { auction_id, board_id } = req.params;
+
+        /* Get Squad Players */
+        const players = await pool.query(
+            `
+SELECT
+player_name,
+category,
+role,
+sold_price
+FROM auction_players_live
+WHERE auction_id=$1
+AND sold_to_board_id=$2
+ORDER BY category DESC
+`,
+            [auction_id, board_id]
+        );
+        /* Get Board Purse */
+        const board = await pool.query(
+           `
+SELECT
+board_name,
+purse_remaining,
+players_bought
+FROM auction_boards_live
+WHERE id=$1
+`,
+            [board_id]
+        );
+        res.json({
+            board: board.rows[0],
+            players: players.rows
+        });
+    }
+    catch (err) {
+        console.log("Board Squad Error", err);
+        res.status(500).json({
+            error: "Server Error"
+        });
+    }
+});
 module.exports = router;
