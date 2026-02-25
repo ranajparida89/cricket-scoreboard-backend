@@ -260,4 +260,126 @@ RETURNING *
 
 });
 
+/*
+=========================================
+MODULE 2.4 – START AUCTION
+=========================================
+POST /api/live-auction/start/:auction_id
+*/
+router.post("/start/:auction_id", async (req, res) => {
+    try {
+        const { auction_id } = req.params;
+        /*
+        STEP 1 — Check Auction
+        */
+        const auctionData = await pool.query(
+            `SELECT * FROM auction_master_live
+WHERE id=$1`,
+            [auction_id]
+        );
+        if (auctionData.rows.length === 0) {
+            return res.status(404).json({
+                error: "Auction not found"
+            });
+        }
+        const auction = auctionData.rows[0];
+        /*
+        STEP 2 — Check Boards
+        */
+        const boards = await pool.query(
+            `SELECT COUNT(*) FROM auction_boards_live
+WHERE auction_id=$1
+AND is_participating=true`,
+            [auction_id]
+        );
+        if (parseInt(boards.rows[0].count) === 0) {
+            return res.status(400).json({
+                error: "No boards registered"
+            });
+        }
+
+        /*
+        STEP 3 — Check Players
+        */
+        const players = await pool.query(
+            `SELECT COUNT(*) FROM auction_players_live
+WHERE auction_id=$1`,
+            [auction_id]
+        );
+        if (parseInt(players.rows[0].count) < 20) {
+            return res.status(400).json({
+                error: "Not enough players uploaded"
+            });
+
+        }
+        /*
+        STEP 4 — Select First Player
+        */
+        const firstPlayer = await pool.query(
+            `SELECT *
+FROM auction_players_live
+WHERE auction_id=$1
+AND status='PENDING'
+ORDER BY category DESC
+LIMIT 1`,
+            [auction_id]
+        );
+        if (firstPlayer.rows.length === 0) {
+            return res.status(400).json({
+                error: "No pending players"
+            });
+        }
+        const player = firstPlayer.rows[0];
+        /*
+        STEP 5 — Set Player LIVE
+        */
+        await pool.query(
+            `UPDATE auction_players_live
+SET status='LIVE'
+WHERE id=$1`,
+            [player.id]
+        );
+        /*
+        STEP 6 — Insert Live State
+        */
+        await pool.query(
+            `
+INSERT INTO auction_live_state(
+auction_id,
+current_player_id,
+current_highest_bid,
+timer_end_time
+)
+VALUES($1,$2,$3,NOW() +
+INTERVAL '50 seconds')
+`,
+            [
+                auction_id,
+                player.id,
+                player.base_price
+            ]
+        );
+        /*
+        STEP 7 — Update Auction Status
+        */
+        await pool.query(
+            `UPDATE auction_master_live
+SET status='LIVE'
+WHERE id=$1`,
+            [auction_id]
+        );
+        res.json({
+            success: true,
+            message: "Auction Started",
+            first_player: player
+        });
+    }
+    catch (err) {
+        console.log(err);
+        res.status(500).json({
+            error: "Server Error"
+        });
+    }
+});
+
 module.exports = router;
