@@ -622,6 +622,13 @@ app.get("/api/match-history", async (req, res) => {
   }
 });
 
+// =============================
+// Live Auction Timer Engine
+// =============================
+const startAuctionTimer =
+require('./timer/auctionTimer');
+startAuctionTimer();
+
 // ✅ Start the backend server
 server.listen(5000, () => {
   console.log("✅ Server running on port 5000");
