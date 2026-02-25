@@ -807,6 +807,95 @@ ORDER BY board_name
         });
     }
 });
+
+/*
+=========================================
+MODULE 2.8 – SAVE PARTICIPATING BOARDS
+(Admin Auction Setup)
+=========================================
+POST /api/live-auction/save-participants/:auction_id
+*/
+
+router.post(
+    "/save-participants/:auction_id",
+    async (req, res) => {
+        try {
+            const { auction_id } = req.params;
+            const { boards } = req.body;
+            /*
+            boards =
+            [
+              {
+               board_id,
+               purse
+              }
+            ]
+            */
+            if (!boards || boards.length === 0) {
+                return res.status(400).json({
+                    error:
+                        "No boards selected"
+                });
+            }
+            /*
+            STEP 1
+            Clear old boards
+            */
+            await pool.query(
+                `DELETE FROM auction_boards_live
+         WHERE auction_id=$1`,
+                [auction_id]
+            );
+            /*
+            STEP 2
+            Insert selected boards
+            */
+            for (const b of boards) {
+                /*
+                Fetch board name
+                */
+                const boardInfo =
+                    await pool.query(
+                        `SELECT board_name
+             FROM board_registration
+             WHERE registration_id=$1`,
+                        [b.board_id]
+                    );
+                const boardName =
+                    boardInfo.rows[0].board_name;
+                await pool.query(
+                    `
+            INSERT INTO auction_boards_live
+            (
+            auction_id,
+            board_name,
+            purse_remaining,
+            is_participating
+            )
+            VALUES($1,$2,$3,true)
+            `,
+
+                    [
+                        auction_id,
+                        boardName,
+                        b.purse || 100000000
+                    ]
+                );
+            }
+            res.json({
+                success: true,
+                message:
+                    "Participants Saved"
+            });
+        }
+        catch (err) {
+            console.log(err);
+            res.status(500).json({
+                error:
+                    "Server Error"
+            });
+        }
+    });
 /*
 =========================================
 MODULE 4.1 – LIVE AUCTION STATUS API
