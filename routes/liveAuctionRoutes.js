@@ -935,4 +935,54 @@ LIMIT 20
         });
     }
 });
+
+/*
+=========================================
+MODULE 4.3 – BOARD PURSE API
+=========================================
+GET /api/live-auction/boards/:auction_id
+*/
+router.get("/boards/:auction_id", async (req, res) => {
+    try {
+        const { auction_id } = req.params;
+        /*
+        STEP 1 — Get Boards
+        */
+        const boards =
+            await pool.query(
+                `
+SELECT
+board_name,
+purse_remaining,
+players_bought,
+diamond_count,
+platinum_count,
+gold_count,
+silver_count,
+batsmen_count,
+allrounder_count,
+bowler_count,
+wicketkeeper_count
+FROM auction_boards_live
+WHERE auction_id=$1
+ORDER BY board_name
+`,
+                [auction_id]
+            );
+
+        /*
+        STEP 2 — Response
+        */
+        res.json({
+            success: true,
+            boards: boards.rows
+        });
+    }
+    catch (err) {
+        console.log(err);
+        res.status(500).json({
+            error: "Server Error"
+        });
+    }
+});
 module.exports = router;
