@@ -534,7 +534,7 @@ WHERE auction_id=$1`,
         Update Live State
         */
         await client.query(
-          `
+            `
 UPDATE auction_live_state
 SET
 current_highest_bid=$1,
@@ -772,6 +772,104 @@ WHERE auction_id=$3
     }
     finally {
         client.release();
+    }
+});
+
+/*
+=========================================
+MODULE 4.1 – LIVE AUCTION STATUS API
+=========================================
+GET /api/live-auction/status/:auction_id
+*/
+router.get("/status/:auction_id", async (req, res) => {
+    try {
+        const { auction_id } = req.params;
+        /*
+        STEP 1 — Live State
+        */
+        const liveState = await pool.query(
+            `SELECT *
+FROM auction_live_state
+WHERE auction_id=$1`,
+            [auction_id]
+        );
+        if (liveState.rows.length === 0) {
+            return res.status(400).json({
+                error: "Auction not live"
+            });
+        }
+        const state = liveState.rows[0];
+        /*
+        STEP 2 — Player Info
+        */
+        const playerData = await pool.query(
+            `SELECT *
+FROM auction_players_live
+WHERE id=$1`,
+            [state.current_player_id]
+        );
+        const player = playerData.rows[0];
+        /*
+        STEP 3 — Leading Board
+        */
+        let boardName = null;
+        if (state.highest_bidder_board_id) {
+            const boardData = await pool.query(
+                `SELECT board_name
+FROM auction_boards_live
+WHERE id=$1`,
+                [state.highest_bidder_board_id]
+
+            );
+            boardName =
+                boardData.rows[0].board_name;
+        }
+        /*
+        STEP 4 — Timer Remaining
+        */
+        const timerQuery =
+            await pool.query(
+                `SELECT EXTRACT(EPOCH FROM
+(timer_end_time - NOW()))
+AS seconds
+FROM auction_live_state
+WHERE auction_id=$1`,
+                [auction_id]
+            );
+        const secondsRemaining =
+            Math.max(
+                0,
+                Math.floor(
+                    timerQuery.rows[0].seconds
+                )
+            );
+
+        /*
+        STEP 5 — Response
+        */
+        res.json({
+            success: true,
+            player_name:
+                player.player_name,
+            category:
+                player.category,
+            role:
+                player.role,
+            base_price:
+                player.base_price,
+            current_price:
+                state.current_highest_bid,
+            leading_board:
+                boardName,
+            timer_seconds:
+                secondsRemaining
+        });
+    }
+    catch (err) {
+        console.log(err);
+        res.status(500).json({
+            error: "Server Error"
+        });
     }
 });
 module.exports = router;
