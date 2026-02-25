@@ -1402,133 +1402,84 @@ WHERE auction_id=$1
 
 // ✅ PAUSE AUCTION API
 
+// ✅ PAUSE AUCTION API (FINAL FIXED)
+
 router.post("/pause-auction/:auction_id", async (req, res) => {
     try {
-
         const { auction_id } = req.params;
-
-        /* STEP 1 — Check Live State */
-
+        /*
+        STEP 1 — Get Live State
+        */
         const stateCheck = await pool.query(
             `
-SELECT timer_end_time
-FROM auction_live_state
-WHERE auction_id=$1
-`,
+            SELECT is_paused,timer_end_time
+            FROM auction_live_state
+            WHERE auction_id=$1
+            `,
             [auction_id]
         );
-
         if (stateCheck.rows.length === 0) {
             return res.status(400).json({
                 error: "Auction not live"
             });
         }
-
-        /* STEP 2 — Calculate Remaining Seconds */
-
+        const state = stateCheck.rows[0];
+        /*
+        STEP 2 — If already paused → DO NOTHING
+        */
+        if (state.is_paused) {
+            return res.json({
+                success: true,
+                message: "Auction Already Paused"
+            });
+        }
+        /*
+        STEP 3 — Calculate Remaining Seconds
+        */
         const secondsQuery =
             await pool.query(
                 `
-SELECT EXTRACT(EPOCH FROM
-(timer_end_time - NOW()))
-AS seconds
-FROM auction_live_state
-WHERE auction_id=$1
-`,
+                SELECT EXTRACT(EPOCH FROM
+                (timer_end_time - NOW()))
+                AS seconds
+                FROM auction_live_state
+                WHERE auction_id=$1
+                `,
                 [auction_id]
             );
-
-        let secondsRemaining = 0;
-
-        if (
-            secondsQuery.rows.length > 0 &&
-            secondsQuery.rows[0].seconds !== null
-        ) {
-            secondsRemaining =
-                Math.max(
-                    0,
-                    Math.floor(
-                        secondsQuery.rows[0].seconds
-                    )
-                );
-        }
-
-        /* STEP 3 — Store Pause */
-
+        const secondsRemaining =
+            Math.max(
+                0,
+                Math.floor(
+                    secondsQuery.rows[0].seconds
+                )
+            );
+        /*
+        STEP 4 — Store Pause
+        */
         await pool.query(
             `
-UPDATE auction_live_state
-SET
-is_paused=true,
-paused_seconds=$1
-WHERE auction_id=$2
-`,
+            UPDATE auction_live_state
+            SET
+            is_paused=true,
+            paused_seconds=$1
+            WHERE auction_id=$2
+            `,
             [
                 secondsRemaining,
                 auction_id
             ]
         );
-
         res.json({
             success: true,
             message: "Auction Paused",
             secondsRemaining
         });
-
     }
     catch (err) {
-
         console.log("Pause Error:", err);
-
         res.status(500).json({
             error: "Pause Failed"
-        });
-
-    }
-});
-// ✅ RESUME AUCTION API
-
-router.post("/resume-auction/:auction_id", async (req, res) => {
-    try {
-        const { auction_id } = req.params;
-        /* Get Pause Data */
-        const state =
-            await pool.query(
-                `
-SELECT paused_seconds
-FROM auction_live_state
-WHERE auction_id=$1
-`,
-                [auction_id]
-            );
-        const seconds =
-            state.rows[0].paused_seconds;
-        /* Resume Timer */
-        await pool.query(
-            `
-UPDATE auction_live_state
-SET
-is_paused=false,
-timer_end_time=
-NOW() +
-($1 || ' seconds')::interval
-WHERE auction_id=$2
-`,
-            [
-                seconds,
-                auction_id
-            ]
-        );
-        res.json({
-
-            success: true,
-            message: "Auction Resumed"
-        });
-    }
-    catch (err) {
-        console.log("Resume Error", err);
-        res.status(500).json({
-            error: "Resume Failed"
         });
     }
 });
