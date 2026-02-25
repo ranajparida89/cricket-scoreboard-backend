@@ -214,7 +214,6 @@ WHERE id=$1`,
             basePrice = auction.gold_base_price;
         if (category === "SILVER")
             basePrice = auction.silver_base_price;
-
         /*
         STEP 5 — Insert Player
         */
@@ -758,6 +757,12 @@ WHERE auction_id=$3
         await client.query("COMMIT");
         res.json({
             success: true,
+            message:
+                board.board_name
+                + " bought "
+                + player.player_name
+                + " for ₹"
+                + state.current_highest_bid,
             soldPlayer: player.player_name,
             soldTo: board.board_name,
             price: state.current_highest_bid
