@@ -539,4 +539,205 @@ WHERE auction_id=$3
     }
 });
 
+/*
+=========================================
+MODULE 2.6 – CLOSE PLAYER (SOLD ENGINE)
+=========================================
+POST /api/live-auction/close-player/:auction_id
+*/
+
+router.post("/close-player/:auction_id", async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        const { auction_id } = req.params;
+        /*
+        STEP 1 — Get Live State (LOCKED)
+        */
+        const liveState = await client.query(
+            `SELECT *
+FROM auction_live_state
+WHERE auction_id=$1
+FOR UPDATE`,
+            [auction_id]
+        );
+        if (liveState.rows.length === 0) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+                error: "Auction not live"
+            });
+        }
+        const state = liveState.rows[0];
+        /*
+        STEP 2 — Get Player
+        */
+        const playerData = await client.query(
+            `SELECT *
+FROM auction_players_live
+WHERE id=$1
+FOR UPDATE`,
+            [state.current_player_id]
+
+        );
+        const player = playerData.rows[0];
+        /*
+        STEP 3 — Get Winning Board
+        */
+        const boardData = await client.query(
+            `SELECT *
+FROM auction_boards_live
+WHERE id=$1
+FOR UPDATE`,
+            [state.highest_bidder_board_id]
+
+        );
+        const board = boardData.rows[0];
+        /*
+        STEP 4 — Mark Player SOLD
+        */
+        await client.query(
+            `
+UPDATE auction_players_live
+SET
+status='SOLD',
+sold_price=$1,
+sold_to_board_id=$2
+WHERE id=$3
+`,
+          [
+                state.current_highest_bid,
+                board.id,
+                player.id
+            ]
+        );
+        /*
+        STEP 5 — Deduct Purse
+        */
+        const newPurse =
+            Number(board.purse_remaining)
+            -
+            Number(state.current_highest_bid);
+        await client.query(
+            `
+UPDATE auction_boards_live
+SET
+purse_remaining=$1,
+players_bought=players_bought+1
+WHERE id=$2
+`,
+            [
+                newPurse,
+                board.id
+            ]
+        );
+        /*
+        STEP 6 — Update Category Count
+        */
+        await client.query(`
+UPDATE auction_boards_live
+SET
+diamond_count =
+diamond_count +
+CASE WHEN $1='DIAMOND' THEN 1 ELSE 0 END,
+platinum_count =
+platinum_count +
+CASE WHEN $1='PLATINUM' THEN 1 ELSE 0 END,
+gold_count =
+gold_count +
+CASE WHEN $1='GOLD' THEN 1 ELSE 0 END,
+silver_count =
+silver_count +
+CASE WHEN $1='SILVER' THEN 1 ELSE 0 END
+WHERE id=$2
+`,
+            [
+                player.category,
+                board.id
+            ]);
+        /*
+        STEP 7 — Update Role Count
+        */
+        await client.query(`
+UPDATE auction_boards_live
+SET
+batsmen_count =
+batsmen_count +
+CASE WHEN $1='BATSMAN' THEN 1 ELSE 0 END,
+allrounder_count =
+allrounder_count +
+CASE WHEN $1='ALLROUNDER' THEN 1 ELSE 0 END,
+bowler_count =
+bowler_count +
+CASE WHEN $1='BOWLER' THEN 1 ELSE 0 END,
+wicketkeeper_count =
+wicketkeeper_count +
+CASE WHEN $2=true THEN 1 ELSE 0 END
+WHERE id=$3
+`,
+            [
+                player.role,
+                player.is_wicketkeeper,
+                board.id
+            ]);
+        /*
+        STEP 8 — Select Next Player
+        */
+        const nextPlayer = await client.query(
+            `SELECT *
+FROM auction_players_live
+WHERE auction_id=$1
+AND status='PENDING'
+LIMIT 1`,
+            [auction_id]
+
+        );
+        if (nextPlayer.rows.length > 0) {
+            const np = nextPlayer.rows[0];
+            await client.query(
+                `
+UPDATE auction_players_live
+SET status='LIVE'
+WHERE id=$1
+`,
+                [np.id]
+            );
+            await client.query(
+                `
+UPDATE auction_live_state
+SET
+current_player_id=$1,
+current_highest_bid=$2,
+highest_bidder_board_id=NULL,
+timer_end_time=NOW()
++ INTERVAL '50 seconds'
+WHERE auction_id=$3
+`,
+
+                [
+                    np.id,
+                    np.base_price,
+                    auction_id
+                ]
+            );
+
+        }
+        await client.query("COMMIT");
+        res.json({
+            success: true,
+            soldPlayer: player.player_name,
+            soldTo: board.board_name,
+            price: state.current_highest_bid
+        });
+    }
+    catch (err) {
+        await client.query("ROLLBACK");
+        console.log(err);
+        res.status(500).json({
+            error: "Server Error"
+        });
+    }
+    finally {
+        client.release();
+    }
+});
 module.exports = router;
