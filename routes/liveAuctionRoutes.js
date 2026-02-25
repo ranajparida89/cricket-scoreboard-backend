@@ -1317,4 +1317,77 @@ ORDER BY b.board_name,p.category DESC
         });
     }
 });
+
+// ✅ RESET AUCTION API
+
+router.post("/reset-auction/:auction_id", async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        const { auction_id } = req.params;
+        /* Reset Players */
+        await client.query(
+            `
+UPDATE auction_players_live
+SET
+status='PENDING',
+sold_price=NULL,
+sold_to_board_id=NULL
+WHERE auction_id=$1
+`,
+            [auction_id]
+        );
+        /* Reset Boards */
+        await client.query(
+            `
+UPDATE auction_boards_live
+SET
+purse_remaining=1200000000,
+players_bought=0,
+diamond_count=0,
+platinum_count=0,
+gold_count=0,
+silver_count=0,
+batsmen_count=0,
+allrounder_count=0,
+bowler_count=0,
+wicketkeeper_count=0
+WHERE auction_id=$1
+`,
+            [auction_id]
+        );
+
+        /* Delete Bids */
+        await client.query(
+            `
+DELETE FROM auction_bids_live
+WHERE auction_id=$1
+`,
+            [auction_id]
+        );
+        /* Delete Live State */
+        await client.query(
+            `
+DELETE FROM auction_live_state
+WHERE auction_id=$1
+`,
+            [auction_id]
+        );
+        await client.query("COMMIT");
+        res.json({
+            success: true,
+            message: "Auction Reset Complete"
+        });
+    }
+    catch (err) {
+        await client.query("ROLLBACK");
+        console.log("RESET ERROR", err);
+        res.status(500).json({
+            error: "Reset Failed"
+        });
+    }
+    finally {
+        client.release();
+    }
+});
 module.exports = router;
