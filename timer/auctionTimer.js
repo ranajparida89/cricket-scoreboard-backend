@@ -119,17 +119,31 @@ WHERE auction_id=$3
                                 state.auction_id
                             ]);
                     }
-                    else {
-                        /*
-                        Auction Complete
-                        */
-                        await client.query(`
+                  else {
+
+    /*
+    Auction Complete
+    */
+
+    await client.query(`
 UPDATE auction_master_live
 SET status='COMPLETED'
 WHERE id=$1
 `, [state.auction_id]);
-                    }
-                    /*
+
+
+    /*
+    Remove Live Auction State
+    */
+    await client.query(`
+DELETE FROM auction_live_state
+WHERE auction_id=$1
+`, [state.auction_id]);
+    console.log(
+        "Auction Completed:",
+        state.auction_id
+    );
+}                   /*
                     Commit
                     */
                     await client.query("COMMIT");
