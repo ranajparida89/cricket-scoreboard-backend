@@ -439,6 +439,14 @@ FOR UPDATE`,
             });
         }
         const board = boardData.rows[0];
+        // 🚫 SQUAD LIMIT PROTECTION
+
+        if (Number(board.players_bought) >= 13) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+                error: "Squad Full. Cannot bid more players."
+            });
+        }
         /*
         STEP 4 — Get Auction Rules
         */
