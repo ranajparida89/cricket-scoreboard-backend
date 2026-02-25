@@ -837,9 +837,23 @@ router.post(
             STEP 1 — Clear old boards
             */
 
+            /*
+  STEP 1 — Delete old bids
+  */
+
+            await pool.query(
+                `DELETE FROM auction_bids_live
+ WHERE auction_id=$1`,
+                [auction_id]
+            );
+
+            /*
+            STEP 2 — Delete old boards
+            */
+
             await pool.query(
                 `DELETE FROM auction_boards_live
-WHERE auction_id=$1`,
+ WHERE auction_id=$1`,
                 [auction_id]
             );
 
@@ -856,8 +870,8 @@ WHERE auction_id=$1`,
                 const boardInfo =
                     await pool.query(
                         `SELECT board_name
-FROM board_registration
-WHERE registration_id=$1`,
+                    FROM board_registration
+                    WHERE registration_id=$1`,
                         [b.board_id]
                     );
 
