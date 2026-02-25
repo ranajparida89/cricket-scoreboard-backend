@@ -501,20 +501,54 @@ VALUES($1,$2,$3,$4)
         );
         /*
         STEP 9 — Update Live State
+      /*
+STEP 9 — Smart Timer Extension Engine
+*/
+        let extensionSeconds =
+            auction.bid_time_extension;
+        const remainingTimeQuery =
+            await client.query(
+                `SELECT EXTRACT(EPOCH FROM
+(timer_end_time - NOW()))
+AS remaining
+FROM auction_live_state
+WHERE auction_id=$1`,
+                [auction_id]
+            );
+        const remainingTime =
+            Number(
+                remainingTimeQuery.rows[0].remaining
+            );
+        /*
+        Anti-sniping logic
+        */
+        if (
+            remainingTime
+            <
+            auction.anti_sniping_threshold
+        ) {
+            extensionSeconds =
+                auction.anti_sniping_extension;
+        }
+        /*
+        Update Live State
         */
         await client.query(
-            `
+          `
 UPDATE auction_live_state
 SET
 current_highest_bid=$1,
 highest_bidder_board_id=$2,
-timer_end_time=NOW()
-+ INTERVAL '10 seconds'
-WHERE auction_id=$3
+timer_end_time=
+NOW()
++
+($3 || ' seconds')::interval
+WHERE auction_id=$4
 `,
             [
                 nextBid,
                 board_id,
+                extensionSeconds,
                 auction_id
             ]
         );
@@ -604,7 +638,7 @@ sold_price=$1,
 sold_to_board_id=$2
 WHERE id=$3
 `,
-          [
+            [
                 state.current_highest_bid,
                 board.id,
                 player.id
