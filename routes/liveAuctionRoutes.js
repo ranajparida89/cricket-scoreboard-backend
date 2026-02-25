@@ -1400,11 +1400,33 @@ WHERE auction_id=$1
 
 // ✅ PAUSE AUCTION API
 
+// ✅ PAUSE AUCTION API
+
 router.post("/pause-auction/:auction_id", async (req, res) => {
     try {
+
         const { auction_id } = req.params;
-        /* Get Remaining Time */
-        const timerQuery =
+
+        /* STEP 1 — Check Live State */
+
+        const stateCheck = await pool.query(
+            `
+SELECT timer_end_time
+FROM auction_live_state
+WHERE auction_id=$1
+`,
+            [auction_id]
+        );
+
+        if (stateCheck.rows.length === 0) {
+            return res.status(400).json({
+                error: "Auction not live"
+            });
+        }
+
+        /* STEP 2 — Calculate Remaining Seconds */
+
+        const secondsQuery =
             await pool.query(
                 `
 SELECT EXTRACT(EPOCH FROM
@@ -1415,12 +1437,24 @@ WHERE auction_id=$1
 `,
                 [auction_id]
             );
-        const secondsRemaining =
-            Math.max(
-                0,
-                Math.floor(timerQuery.rows[0].seconds)
-            );
-        /* Store Pause */
+
+        let secondsRemaining = 0;
+
+        if (
+            secondsQuery.rows.length > 0 &&
+            secondsQuery.rows[0].seconds !== null
+        ) {
+            secondsRemaining =
+                Math.max(
+                    0,
+                    Math.floor(
+                        secondsQuery.rows[0].seconds
+                    )
+                );
+        }
+
+        /* STEP 3 — Store Pause */
+
         await pool.query(
             `
 UPDATE auction_live_state
@@ -1434,19 +1468,23 @@ WHERE auction_id=$2
                 auction_id
             ]
         );
+
         res.json({
             success: true,
             message: "Auction Paused",
             secondsRemaining
         });
+
     }
     catch (err) {
-        console.log("Pause Error", err);
+
+        console.log("Pause Error:", err);
+
         res.status(500).json({
             error: "Pause Failed"
         });
-    }
 
+    }
 });
 // ✅ RESUME AUCTION API
 
