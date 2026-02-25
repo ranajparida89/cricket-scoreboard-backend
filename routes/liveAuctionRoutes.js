@@ -777,6 +777,38 @@ WHERE auction_id=$3
 
 /*
 =========================================
+MODULE 2.7 – FETCH REGISTERED BOARDS
+(Admin Auction Setup)
+=========================================
+GET /api/live-auction/registered-boards
+*/
+
+router.get("/registered-boards", async (req, res) => {
+    try {
+
+        const boards =
+            await pool.query(`
+SELECT
+registration_id AS board_id,
+board_name,
+owner_name
+FROM board_registration
+ORDER BY board_name
+`);
+        res.json({
+            success: true,
+            boards: boards.rows
+        });
+    }
+    catch (err) {
+        console.log(err);
+        res.status(500).json({
+            error: "Server Error"
+        });
+    }
+});
+/*
+=========================================
 MODULE 4.1 – LIVE AUCTION STATUS API
 =========================================
 GET /api/live-auction/status/:auction_id
