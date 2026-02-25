@@ -1178,4 +1178,39 @@ ORDER BY board_name
         });
     }
 });
+
+// ✅ GET SOLD PLAYERS LIST
+router.get("/sold-players/:auction_id", async (req, res) => {
+
+    try {
+
+        const { auction_id } = req.params;
+
+        const result = await pool.query(
+            `
+SELECT
+p.player_name,
+p.category,
+p.role,
+p.sold_price,
+b.board_name
+FROM auction_players_live p
+LEFT JOIN auction_boards_live b
+ON p.sold_to_board_id = b.id
+WHERE p.auction_id = $1
+AND p.status = 'SOLD'
+ORDER BY p.player_name
+`,
+            [auction_id]
+        );
+
+        res.json(result.rows);
+
+    }
+    catch (err) {
+        console.error("Sold Players Error", err);
+        res.status(500).json({ error: "Server Error" });
+    }
+
+});
 module.exports = router;
