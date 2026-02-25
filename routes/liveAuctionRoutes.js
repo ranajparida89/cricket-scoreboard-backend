@@ -382,4 +382,161 @@ WHERE id=$1`,
     }
 });
 
+/*
+=========================================
+MODULE 2.5 – PLACE BID ENGINE
+=========================================
+POST /api/live-auction/place-bid
+*/
+router.post("/place-bid", async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        const {
+            auction_id,
+            board_id
+        } = req.body;
+        /*
+        STEP 1 — Get Live State (LOCKED)
+        */
+        const liveState = await client.query(
+            `SELECT *
+FROM auction_live_state
+WHERE auction_id=$1
+FOR UPDATE`,
+            [auction_id]
+        );
+        if (liveState.rows.length === 0) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+                error: "Auction not live"
+            });
+        }
+        const state = liveState.rows[0];
+        /*
+        STEP 2 — Get Player
+        */
+        const playerData = await client.query(
+            `SELECT *
+FROM auction_players_live
+WHERE id=$1`,
+            [state.current_player_id]
+        );
+        const player = playerData.rows[0];
+        /*
+        STEP 3 — Get Board (LOCKED)
+        */
+        const boardData = await client.query(
+            `SELECT *
+FROM auction_boards_live
+WHERE id=$1
+FOR UPDATE`,
+            [board_id]
+        );
+        if (boardData.rows.length === 0) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+                error: "Board not found"
+            });
+        }
+        const board = boardData.rows[0];
+        /*
+        STEP 4 — Get Auction Rules
+        */
+        const auctionData = await client.query(
+            `SELECT *
+FROM auction_master_live
+WHERE id=$1`,
+            [auction_id]
+        );
+        const auction = auctionData.rows[0];
+        /*
+        STEP 5 — Determine Increment
+        */
+        let increment = 0;
+        if (player.category === "DIAMOND")
+            increment = auction.diamond_increment;
+        if (player.category === "PLATINUM")
+            increment = auction.platinum_increment;
+        if (player.category === "GOLD")
+            increment = auction.gold_increment;
+        if (player.category === "SILVER")
+            increment = auction.silver_increment;
+        /*
+        STEP 6 — Calculate Next Bid
+        */
+        const nextBid =
+            Number(state.current_highest_bid)
+            +
+            Number(increment);
+        /*
+        STEP 7 — Purse Check
+        */
+        if (Number(board.purse_remaining) < nextBid) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+                error: "Insufficient purse"
+            });
+
+        }
+        /*
+        STEP 8 — Insert Bid
+        */
+        await client.query(
+            `
+INSERT INTO auction_bids_live(
+auction_id,
+player_id,
+board_id,
+bid_amount
+)
+VALUES($1,$2,$3,$4)
+`,
+            [
+                auction_id,
+                player.id,
+                board_id,
+                nextBid
+            ]
+        );
+        /*
+        STEP 9 — Update Live State
+        */
+        await client.query(
+            `
+UPDATE auction_live_state
+SET
+current_highest_bid=$1,
+highest_bidder_board_id=$2,
+timer_end_time=NOW()
++ INTERVAL '10 seconds'
+WHERE auction_id=$3
+`,
+            [
+                nextBid,
+                board_id,
+                auction_id
+            ]
+        );
+
+        await client.query("COMMIT");
+        res.json({
+            success: true,
+            bidAmount: nextBid,
+            board: board.board_name,
+            player: player.player_name
+        });
+    }
+    catch (err) {
+        await client.query("ROLLBACK");
+        console.log(err);
+        res.status(500).json({
+            error: "Server Error"
+        });
+    }
+    finally {
+        client.release();
+    }
+});
+
 module.exports = router;
