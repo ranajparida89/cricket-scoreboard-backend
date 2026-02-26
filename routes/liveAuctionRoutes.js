@@ -461,13 +461,18 @@ WHERE id=$1`,
         STEP 5 — Determine Increment
         */
         let increment = 0;
-        if (player.category === "DIAMOND")
+
+        // ✅ DIAMOND + LEGEND use same increment
+        if (player.category === "DIAMOND" || player.category === "LEGEND")
             increment = auction.diamond_increment;
-        if (player.category === "PLATINUM")
+
+        else if (player.category === "PLATINUM")
             increment = auction.platinum_increment;
-        if (player.category === "GOLD")
+
+        else if (player.category === "GOLD")
             increment = auction.gold_increment;
-        if (player.category === "SILVER")
+
+        else if (player.category === "SILVER")
             increment = auction.silver_increment;
         /*
         STEP 6 — Calculate Next Bid
