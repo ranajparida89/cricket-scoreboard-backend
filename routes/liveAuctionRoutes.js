@@ -1486,6 +1486,8 @@ router.post("/pause-auction/:auction_id", async (req, res) => {
 
 /*
 =========================================
+/*
+=========================================
 MODULE 2.9 – LOAD PLAYERS FROM MASTER
 =========================================
 POST /api/live-auction/load-from-master/:auction_id
@@ -1510,8 +1512,23 @@ router.post("/load-from-master/:auction_id", async (req, res) => {
         }
         const auction = auctionCheck.rows[0];
         /*
-        STEP 2 — Delete Old Players (SAFE RESET)
+        STEP 2 — SAFE RESET (VERY IMPORTANT)
+        Delete in correct order
         */
+        /* Delete bids first */
+        await pool.query(
+            `DELETE FROM auction_bids_live
+             WHERE auction_id=$1`,
+            [auction_id]
+        );
+        /* Delete live state */
+        await pool.query(
+            `DELETE FROM auction_live_state
+             WHERE auction_id=$1`,
+            [auction_id]
+        );
+
+        /* Then delete players */
         await pool.query(
             `DELETE FROM auction_players_live
              WHERE auction_id=$1`,
@@ -1522,7 +1539,7 @@ router.post("/load-from-master/:auction_id", async (req, res) => {
         */
         const insertResult =
             await pool.query(
-              `
+                `
 INSERT INTO auction_players_live
 (
 auction_id,
