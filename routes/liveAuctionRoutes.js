@@ -1756,34 +1756,47 @@ FROM player_master
 });
 
 // ===========================================
-// END AUCTION
+// END LIVE AUCTION (FINAL FIX)
 // ===========================================
 
 router.post("/end-auction/:auction_id", async (req, res) => {
-    const { auction_id } = req.params;
-    try {
 
-        await pool.query(`
+  const { auction_id } = req.params;
+
+  try {
+
+    console.log("Ending auction:", auction_id);
+
+    // Update auction status
+    await pool.query(`
       UPDATE auction_master_live
       SET status='COMPLETED'
-      WHERE auction_id=$1
-    `, [auction_id]);
+      WHERE id=$1
+    `,[auction_id]);
 
-        await pool.query(`
+
+    // Remove live state
+    await pool.query(`
       DELETE FROM auction_live_state
       WHERE auction_id=$1
-    `, [auction_id]);
+    `,[auction_id]);
 
-        res.json({
-            success: true,
-            message: "Auction Ended Successfully"
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({
-            success: false,
-            error: "Failed to end auction"
-        });
-    }
+
+    res.json({
+      success:true,
+      message:"Auction Ended Successfully"
+    });
+
+  } catch(err){
+
+    console.error("END AUCTION ERROR:",err);
+
+    res.status(500).json({
+      success:false,
+      error:err.message
+    });
+
+  }
+
 });
 module.exports = router;
