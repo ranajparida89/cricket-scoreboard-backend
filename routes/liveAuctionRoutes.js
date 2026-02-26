@@ -400,9 +400,9 @@ router.post("/place-bid", async (req, res) => {
         */
         const liveState = await client.query(
             `SELECT *
-FROM auction_live_state
-WHERE auction_id=$1
-FOR UPDATE`,
+            FROM auction_live_state
+            WHERE auction_id=$1
+            FOR UPDATE`,
             [auction_id]
         );
         if (liveState.rows.length === 0) {
@@ -417,8 +417,8 @@ FOR UPDATE`,
         */
         const playerData = await client.query(
             `SELECT *
-FROM auction_players_live
-WHERE id=$1`,
+            FROM auction_players_live
+            WHERE id=$1`,
             [state.current_player_id]
         );
         const player = playerData.rows[0];
@@ -614,13 +614,30 @@ FOR UPDATE`,
         */
         const playerData = await client.query(
             `SELECT *
-FROM auction_players_live
-WHERE id=$1
-FOR UPDATE`,
+            FROM auction_players_live
+            WHERE id=$1
+            FOR UPDATE`,
             [state.current_player_id]
 
         );
         const player = playerData.rows[0];
+        /*
+🚫 NO BID PROTECTION
+If no board bid → player UNSOLD
+*/
+
+        if (!state.highest_bidder_board_id) {
+            await client.query(`
+    UPDATE auction_players_live
+    SET status='UNSOLD'
+    WHERE id=$1
+    `, [player.id]);
+            await client.query("COMMIT");
+            return res.json({
+                success: true,
+                message: "Player Unsold (No Bids)"
+            });
+        }
         /*
         STEP 3 — Get Winning Board
         */
@@ -1766,42 +1783,42 @@ FROM player_master
 
 router.post("/end-auction/:auction_id", async (req, res) => {
 
-  const { auction_id } = req.params;
+    const { auction_id } = req.params;
 
-  try {
+    try {
 
-    console.log("Ending auction:", auction_id);
+        console.log("Ending auction:", auction_id);
 
-    // Update auction status
-    await pool.query(`
+        // Update auction status
+        await pool.query(`
       UPDATE auction_master_live
       SET status='COMPLETED'
       WHERE id=$1
-    `,[auction_id]);
+    `, [auction_id]);
 
 
-    // Remove live state
-    await pool.query(`
+        // Remove live state
+        await pool.query(`
       DELETE FROM auction_live_state
       WHERE auction_id=$1
-    `,[auction_id]);
+    `, [auction_id]);
 
 
-    res.json({
-      success:true,
-      message:"Auction Ended Successfully"
-    });
+        res.json({
+            success: true,
+            message: "Auction Ended Successfully"
+        });
 
-  } catch(err){
+    } catch (err) {
 
-    console.error("END AUCTION ERROR:",err);
+        console.error("END AUCTION ERROR:", err);
 
-    res.status(500).json({
-      success:false,
-      error:err.message
-    });
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
 
-  }
+    }
 
 });
 module.exports = router;
