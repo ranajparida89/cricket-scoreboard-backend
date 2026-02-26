@@ -1483,4 +1483,95 @@ router.post("/pause-auction/:auction_id", async (req, res) => {
         });
     }
 });
+
+/*
+=========================================
+MODULE 2.9 – LOAD PLAYERS FROM MASTER
+=========================================
+POST /api/live-auction/load-from-master/:auction_id
+*/
+
+router.post("/load-from-master/:auction_id", async (req, res) => {
+    try {
+        const { auction_id } = req.params;
+        /*
+        STEP 1 — Check Auction Exists
+        */
+        const auctionCheck =
+            await pool.query(
+                `SELECT * FROM auction_master_live
+                 WHERE id=$1`,
+                [auction_id]
+            );
+        if (auctionCheck.rows.length === 0) {
+            return res.status(404).json({
+                error: "Auction not found"
+            });
+        }
+        const auction = auctionCheck.rows[0];
+        /*
+        STEP 2 — Delete Old Players (SAFE RESET)
+        */
+        await pool.query(
+            `DELETE FROM auction_players_live
+             WHERE auction_id=$1`,
+            [auction_id]
+        );
+        /*
+        STEP 3 — Insert From player_master
+        */
+        const insertResult =
+            await pool.query(
+              `
+INSERT INTO auction_players_live
+(
+auction_id,
+player_name,
+category,
+role,
+is_wicketkeeper,
+base_price,
+status
+)
+SELECT
+$1,
+player_name,
+category,
+skills,
+false,
+CASE
+WHEN category='DIAMOND'
+THEN $2
+WHEN category='PLATINUM'
+THEN $3
+WHEN category='GOLD'
+THEN $4
+WHEN category='SILVER'
+THEN $5
+END,
+'PENDING'
+FROM player_master
+`,
+                [
+                    auction_id,
+                    auction.diamond_base_price,
+                    auction.platinum_base_price,
+                    auction.gold_base_price,
+                    auction.silver_base_price
+                ]
+            );
+        res.json({
+            success: true,
+            message:
+                insertResult.rowCount +
+                " Players Loaded From Master"
+        });
+    }
+    catch (err) {
+        console.log("LOAD PLAYERS ERROR:", err);
+        res.status(500).json({
+            error: "Server Error"
+        });
+    }
+});
 module.exports = router;
