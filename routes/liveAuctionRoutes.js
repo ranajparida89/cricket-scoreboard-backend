@@ -1271,15 +1271,22 @@ ORDER BY category DESC
 `,
             [auction_id, board_id]
         );
-        /* Get Board Purse */
+        /* Get Board Purse (REAL-TIME CALCULATION) */
+
         const board = await pool.query(
             `
-SELECT
-board_name,
-purse_remaining,
-players_bought
-FROM auction_boards_live
-WHERE id=$1
+        SELECT
+        b.board_name,
+        b.purse_remaining,
+        COUNT(p.id) AS players_bought
+        FROM auction_boards_live b
+        LEFT JOIN auction_players_live p
+        ON p.sold_to_board_id=b.id
+        AND p.status='SOLD'
+        WHERE b.id=$1
+        GROUP BY
+        b.board_name,
+        b.purse_remaining
 `,
             [board_id]
         );
