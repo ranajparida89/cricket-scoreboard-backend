@@ -1548,7 +1548,7 @@ router.post("/load-from-master/:auction_id", async (req, res) => {
 
         const insertResult =
             await pool.query(
-                `
+               `
 INSERT INTO auction_players_live
 (
 auction_id,
@@ -1559,27 +1559,29 @@ is_wicketkeeper,
 base_price,
 status
 )
-
 SELECT
 $1,
 player_name,
-category,
+/* Force category mapping */
+CASE
+WHEN category='LEGEND' THEN 'DIAMOND'
+WHEN category='INTERNATIONAL' THEN 'PLATINUM'
+WHEN category='DOMESTIC' THEN 'GOLD'
+ELSE 'SILVER'
+END,
 skills,
 false,
-
+/* Base Price */
 CASE
-WHEN category='DIAMOND'
+WHEN category='LEGEND'
 THEN $2::bigint
-WHEN category='PLATINUM'
+WHEN category='INTERNATIONAL'
 THEN $3::bigint
-WHEN category='GOLD'
+WHEN category='DOMESTIC'
 THEN $4::bigint
-WHEN category='SILVER'
-THEN $5::bigint
+ELSE $5::bigint
 END,
-
 'PENDING'
-
 FROM player_master
 `,
                 [
