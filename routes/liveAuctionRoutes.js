@@ -1754,4 +1754,36 @@ FROM player_master
     }
 
 });
+
+// ===========================================
+// END AUCTION
+// ===========================================
+
+router.post("/end-auction/:auction_id", async (req, res) => {
+    const { auction_id } = req.params;
+    try {
+
+        await pool.query(`
+      UPDATE auction_master_live
+      SET status='COMPLETED'
+      WHERE auction_id=$1
+    `, [auction_id]);
+
+        await pool.query(`
+      DELETE FROM auction_live_state
+      WHERE auction_id=$1
+    `, [auction_id]);
+
+        res.json({
+            success: true,
+            message: "Auction Ended Successfully"
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            success: false,
+            error: "Failed to end auction"
+        });
+    }
+});
 module.exports = router;
