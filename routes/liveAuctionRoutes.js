@@ -1486,6 +1486,92 @@ router.post("/pause-auction/:auction_id", async (req, res) => {
 
 /*
 =========================================
+RESUME AUCTION API
+=========================================
+POST /api/live-auction/resume-auction/:auction_id
+*/
+
+router.post("/resume-auction/:auction_id", async (req, res) => {
+
+    try {
+
+        const { auction_id } = req.params;
+
+        /*
+        STEP 1 — Get Live State
+        */
+
+        const stateCheck = await pool.query(
+            `
+            SELECT is_paused, paused_seconds
+            FROM auction_live_state
+            WHERE auction_id=$1
+            `,
+            [auction_id]
+        );
+
+        if (stateCheck.rows.length === 0) {
+
+            return res.status(400).json({
+                error: "Auction not live"
+            });
+
+        }
+
+        const state = stateCheck.rows[0];
+
+        /*
+        STEP 2 — If not paused
+        */
+
+        if (!state.is_paused) {
+
+            return res.json({
+                success: true,
+                message: "Auction Already Running"
+            });
+
+        }
+
+        /*
+        STEP 3 — Resume Timer
+        */
+
+        await pool.query(
+            `
+            UPDATE auction_live_state
+            SET
+            is_paused=false,
+            timer_end_time =
+            NOW() + (paused_seconds || ' seconds')::interval
+            WHERE auction_id=$1
+            `,
+            [auction_id]
+        );
+
+        res.json({
+
+            success: true,
+            message: "Auction Resumed"
+
+        });
+
+    }
+
+    catch (err) {
+
+        console.log("Resume Error:", err);
+
+        res.status(500).json({
+            error: "Resume Failed"
+        });
+
+    }
+
+});
+
+/*
+=========================================
 /*
 =========================================
 MODULE 2.9 – LOAD PLAYERS FROM MASTER
