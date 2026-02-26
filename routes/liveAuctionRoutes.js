@@ -1176,7 +1176,7 @@ b.bowler_count,
 b.wicketkeeper_count
 FROM auction_boards_live b
 LEFT JOIN board_registration br
-ON br.board_name=b.board_name
+ON TRIM(UPPER(br.board_name)) = TRIM(UPPER(b.board_name))
 WHERE b.auction_id=$1
 ORDER BY b.board_name
 `,
