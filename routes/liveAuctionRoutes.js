@@ -1236,7 +1236,7 @@ LEFT JOIN auction_boards_live b
 ON p.sold_to_board_id = b.id
 WHERE p.auction_id = $1
 AND p.status = 'SOLD'
-ORDER BY p.player_name
+ORDER BY p.id DESC
 `,
             [auction_id]
         );
