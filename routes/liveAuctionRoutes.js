@@ -1499,56 +1499,66 @@ MODULE 2.9 – LOAD PLAYERS FROM MASTER
 =========================================
 POST /api/live-auction/load-from-master/:auction_id
 */
+/*
+=========================================
+MODULE 2.9 – LOAD PLAYERS FROM MASTER (FINAL STABLE)
+=========================================
+POST /api/live-auction/load-from-master/:auction_id
+*/
+
 router.post("/load-from-master/:auction_id", async (req, res) => {
 
     try {
 
         const { auction_id } = req.params;
 
+        /*
+        STEP 1 — Check Auction Exists
+        */
+
         const auctionCheck =
-            await pool.query(
-                `SELECT * FROM auction_master_live
-                 WHERE id=$1`,
-                [auction_id]
-            );
+        await pool.query(
+        `SELECT * FROM auction_master_live
+         WHERE id=$1`,
+        [auction_id]
+        );
 
         if (auctionCheck.rows.length === 0) {
+
             return res.status(404).json({
                 error: "Auction not found"
             });
+
         }
 
         const auction = auctionCheck.rows[0];
 
+
         /*
-        SAFE RESET
+        STEP 2 — SAFE RESET
         */
 
         await pool.query(
-            `DELETE FROM auction_bids_live
-             WHERE auction_id=$1`,
-            [auction_id]
+        `DELETE FROM auction_bids_live
+         WHERE auction_id=$1`,
+        [auction_id]
         );
 
         await pool.query(
-            `DELETE FROM auction_live_state
-             WHERE auction_id=$1`,
-            [auction_id]
+        `DELETE FROM auction_players_live
+         WHERE auction_id=$1`,
+        [auction_id]
         );
 
-        await pool.query(
-            `DELETE FROM auction_players_live
-             WHERE auction_id=$1`,
-            [auction_id]
-        );
 
         /*
-        INSERT FROM MASTER
+        STEP 3 — LOAD FROM player_master
         */
 
-        const insertResult =
-            await pool.query(
-               `
+        const result =
+        await pool.query(
+
+`
 INSERT INTO auction_players_live
 (
 auction_id,
@@ -1559,54 +1569,72 @@ is_wicketkeeper,
 base_price,
 status
 )
+
 SELECT
+
 $1,
+
 player_name,
-/* Force category mapping */
-CASE
-WHEN category='LEGEND' THEN 'DIAMOND'
-WHEN category='INTERNATIONAL' THEN 'PLATINUM'
-WHEN category='DOMESTIC' THEN 'GOLD'
-ELSE 'SILVER'
-END,
+
+category,
+
 skills,
+
 false,
-/* Base Price */
+
 CASE
+
 WHEN category='LEGEND'
 THEN $2::bigint
-WHEN category='INTERNATIONAL'
+
+WHEN category='PLATINUM'
 THEN $3::bigint
-WHEN category='DOMESTIC'
+
+WHEN category='GOLD'
 THEN $4::bigint
-ELSE $5::bigint
+
+WHEN category='SILVER'
+THEN $5::bigint
+
 END,
+
 'PENDING'
+
 FROM player_master
+
+WHERE category IN
+('LEGEND','PLATINUM','GOLD','SILVER')
+
 `,
-                [
-                    auction_id,
-                    auction.diamond_base_price,
-                    auction.platinum_base_price,
-                    auction.gold_base_price,
-                    auction.silver_base_price
-                ]
-            );
+[
+auction_id,
+auction.diamond_base_price,
+auction.platinum_base_price,
+auction.gold_base_price,
+auction.silver_base_price
+]
+
+);
+
 
         res.json({
-            success: true,
+
+            success:true,
             message:
-                insertResult.rowCount +
-                " Players Loaded From Master"
+            result.rowCount +
+            " Players Loaded From Master"
+
         });
 
     }
-    catch (err) {
+    catch(err){
 
-        console.log("LOAD PLAYERS ERROR:", err);
+        console.log("LOAD PLAYERS ERROR:",err);
 
         res.status(500).json({
-            error: err.message
+
+            error:err.message
+
         });
 
     }
