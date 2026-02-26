@@ -1506,6 +1506,13 @@ MODULE 2.9 – LOAD PLAYERS FROM MASTER (FINAL STABLE)
 POST /api/live-auction/load-from-master/:auction_id
 */
 
+/*
+=========================================
+MODULE 2.9 – LOAD PLAYERS FROM MASTER (FINAL STABLE)
+=========================================
+POST /api/live-auction/load-from-master/:auction_id
+*/
+
 router.post("/load-from-master/:auction_id", async (req, res) => {
 
     try {
@@ -1516,11 +1523,10 @@ router.post("/load-from-master/:auction_id", async (req, res) => {
         STEP 1 — Check Auction Exists
         */
 
-        const auctionCheck =
-        await pool.query(
-        `SELECT * FROM auction_master_live
-         WHERE id=$1`,
-        [auction_id]
+        const auctionCheck = await pool.query(
+            `SELECT * FROM auction_master_live
+             WHERE id=$1`,
+            [auction_id]
         );
 
         if (auctionCheck.rows.length === 0) {
@@ -1535,28 +1541,27 @@ router.post("/load-from-master/:auction_id", async (req, res) => {
 
 
         /*
-        STEP 2 — SAFE RESET
+        STEP 2 — SAFE DELETE ORDER
         */
 
         await pool.query(
-        `DELETE FROM auction_bids_live
-         WHERE auction_id=$1`,
-        [auction_id]
+            `DELETE FROM auction_bids_live
+             WHERE auction_id=$1`,
+            [auction_id]
         );
 
         await pool.query(
-        `DELETE FROM auction_players_live
-         WHERE auction_id=$1`,
-        [auction_id]
+            `DELETE FROM auction_players_live
+             WHERE auction_id=$1`,
+            [auction_id]
         );
 
 
         /*
-        STEP 3 — LOAD FROM player_master
+        STEP 3 — INSERT FROM MASTER (ROLE MAPPING)
         */
 
-        const result =
-        await pool.query(
+        const insertResult = await pool.query(
 
 `
 INSERT INTO auction_players_live
@@ -1571,40 +1576,65 @@ status
 )
 
 SELECT
-
 $1,
 
 player_name,
 
 category,
 
-skills,
 
-false,
+CASE
+
+WHEN skills ILIKE '%round%' THEN 'ALLROUNDER'
+
+WHEN skills ILIKE '%bowl%' 
+OR skills ILIKE '%rf%'
+OR skills ILIKE '%lf%'
+OR skills ILIKE '%spin%'
+OR skills ILIKE '%os%'
+OR skills ILIKE '%slo%'
+OR skills ILIKE '%ls%'
+THEN 'BOWLER'
+
+ELSE 'BATSMAN'
+
+END,
+
+
+CASE
+WHEN role ILIKE '%wk%'
+OR skills ILIKE '%wk%'
+THEN true
+ELSE false
+END,
+
 
 CASE
 
 WHEN category='LEGEND'
-THEN $2::bigint
+THEN $2
+
+WHEN category='DIAMOND'
+THEN $2
 
 WHEN category='PLATINUM'
-THEN $3::bigint
+THEN $3
 
 WHEN category='GOLD'
-THEN $4::bigint
+THEN $4
 
 WHEN category='SILVER'
-THEN $5::bigint
+THEN $5
+
+ELSE $5
 
 END,
 
+
 'PENDING'
 
+
 FROM player_master
-
-WHERE category IN
-('LEGEND','PLATINUM','GOLD','SILVER')
-
 `,
 [
 auction_id,
@@ -1616,25 +1646,23 @@ auction.silver_base_price
 
 );
 
-
         res.json({
 
-            success:true,
+            success: true,
             message:
-            result.rowCount +
+            insertResult.rowCount +
             " Players Loaded From Master"
 
         });
 
     }
-    catch(err){
 
-        console.log("LOAD PLAYERS ERROR:",err);
+    catch (err) {
+
+        console.log("LOAD PLAYERS ERROR:", err);
 
         res.status(500).json({
-
-            error:err.message
-
+            error: err.message
         });
 
     }
