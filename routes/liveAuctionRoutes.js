@@ -1159,21 +1159,26 @@ router.get("/boards/:auction_id", async (req, res) => {
             await pool.query(
                 `
 SELECT
-id as board_id,
-board_name,
-purse_remaining,
-players_bought,
-diamond_count,
-platinum_count,
-gold_count,
-silver_count,
-batsmen_count,
-allrounder_count,
-bowler_count,
-wicketkeeper_count
-FROM auction_boards_live
-WHERE auction_id=$1
-ORDER BY board_name
+b.id as board_id,
+b.board_name,
+br.owner_name,
+b.board_name || '-' || br.owner_name
+AS display_name,
+b.purse_remaining,
+b.players_bought,
+b.diamond_count,
+b.platinum_count,
+b.gold_count,
+b.silver_count,
+b.batsmen_count,
+b.allrounder_count,
+b.bowler_count,
+b.wicketkeeper_count
+FROM auction_boards_live b
+LEFT JOIN board_registration br
+ON br.board_name=b.board_name
+WHERE b.auction_id=$1
+ORDER BY b.board_name
 `,
                 [auction_id]
             );
