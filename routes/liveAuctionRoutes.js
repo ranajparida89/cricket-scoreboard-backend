@@ -741,17 +741,61 @@ WHERE id=$3
                 board.id
             ]);
         /*
-        STEP 8 — Select Next Player
-        */
+       /*
+STEP 8 — Select Next Player (Admin Control + Random Mix)
+*/
+
+        // Get Admin Filters
+        const controlData = await client.query(
+            `
+SELECT *
+FROM auction_admin_control
+WHERE auction_id=$1
+`,
+            [auction_id]
+        );
+
+        let categoryFilter = 'ALL';
+        let roleFilter = 'ALL';
+
+        if (controlData.rows.length > 0) {
+
+            categoryFilter =
+                controlData.rows[0].category_filter;
+
+            roleFilter =
+                controlData.rows[0].role_filter;
+
+        }
+
+        // Select Next Player
+
         const nextPlayer = await client.query(
-            `SELECT *
+            `
+SELECT *
 FROM auction_players_live
 WHERE auction_id=$1
 AND status='PENDING'
-ORDER BY RANDOM()
-LIMIT 1`,
-            [auction_id]
 
+AND (
+$2='ALL'
+OR TRIM(UPPER(category))=$2
+)
+
+AND (
+$3='ALL'
+OR TRIM(UPPER(role))=$3
+)
+
+ORDER BY RANDOM()
+
+LIMIT 1
+`,
+            [
+                auction_id,
+                categoryFilter,
+                roleFilter
+            ]
         );
         if (nextPlayer.rows.length > 0) {
             const np = nextPlayer.rows[0];
@@ -1633,59 +1677,44 @@ POST /api/live-auction/load-from-master/:auction_id
 */
 
 router.post("/load-from-master/:auction_id", async (req, res) => {
-
     try {
-
         const { auction_id } = req.params;
 
         /*
         STEP 1 — Check Auction Exists
         */
-
         const auctionCheck = await pool.query(
             `SELECT * FROM auction_master_live
  WHERE id=$1`,
             [auction_id]
         );
-
         if (auctionCheck.rows.length === 0) {
-
             return res.status(404).json({
                 error: "Auction not found"
             });
-
         }
-
         const auction = auctionCheck.rows[0];
-
-
         /*
         STEP 2 — SAFE DELETE ORDER
         */
-
         await pool.query(
             `DELETE FROM auction_live_state
  WHERE auction_id=$1`,
             [auction_id]
         );
-
         await pool.query(
             `DELETE FROM auction_bids_live
  WHERE auction_id=$1`,
             [auction_id]
         );
-
         await pool.query(
             `DELETE FROM auction_players_live
  WHERE auction_id=$1`,
             [auction_id]
         );
-
-
         /*
         STEP 3 — INSERT FROM MASTER (FINAL SAFE)
         */
-
         const insertResult = await pool.query(
 
             `
@@ -1699,19 +1728,12 @@ is_wicketkeeper,
 base_price,
 status
 )
-
 SELECT
-
 $1,
-
 player_name,
-
 UPPER(category),
-
 CASE
-
 WHEN skills ILIKE '%round%' THEN 'ALLROUNDER'
-
 WHEN skills ILIKE '%bowl%' 
 OR skills ILIKE '%rf%'
 OR skills ILIKE '%lf%'
@@ -1720,41 +1742,28 @@ OR skills ILIKE '%os%'
 OR skills ILIKE '%slo%'
 OR skills ILIKE '%ls%'
 THEN 'BOWLER'
-
 ELSE 'BATSMAN'
-
 END,
-
 CASE
 WHEN role ILIKE '%wk%'
 OR skills ILIKE '%wk%'
 THEN true
 ELSE false
 END,
-
 CASE
-
 WHEN UPPER(category)='LEGEND'
 THEN $2::bigint
-
 WHEN UPPER(category)='DIAMOND'
 THEN $2::bigint
-
 WHEN UPPER(category)='PLATINUM'
 THEN $3::bigint
-
 WHEN UPPER(category)='GOLD'
 THEN $4::bigint
-
 WHEN UPPER(category)='SILVER'
 THEN $5::bigint
-
 ELSE $5::bigint
-
 END,
-
 'PENDING'
-
 FROM player_master
 `,
             [
@@ -1785,7 +1794,6 @@ FROM player_master
         });
 
     }
-
 });
 
 // ===========================================
@@ -1793,13 +1801,10 @@ FROM player_master
 // ===========================================
 
 router.post("/end-auction/:auction_id", async (req, res) => {
-
     const { auction_id } = req.params;
 
     try {
-
         console.log("Ending auction:", auction_id);
-
         // Update auction status
         await pool.query(`
       UPDATE auction_master_live
@@ -1807,13 +1812,11 @@ router.post("/end-auction/:auction_id", async (req, res) => {
       WHERE id=$1
     `, [auction_id]);
 
-
         // Remove live state
         await pool.query(`
       DELETE FROM auction_live_state
       WHERE auction_id=$1
     `, [auction_id]);
-
 
         res.json({
             success: true,
@@ -1823,13 +1826,53 @@ router.post("/end-auction/:auction_id", async (req, res) => {
     } catch (err) {
 
         console.error("END AUCTION ERROR:", err);
-
         res.status(500).json({
             success: false,
             error: err.message
         });
-
     }
 
+});
+
+/*
+=========================================
+ADMIN CONTROL – CATEGORY / ROLE FILTER
+=========================================
+POST /api/live-auction/admin-control/:auction_id
+*/
+
+router.post("/admin-control/:auction_id", async (req, res) => {
+    try {
+        const { auction_id } = req.params;
+        const { category, role } = req.body;
+        await pool.query(`
+INSERT INTO auction_admin_control
+(
+auction_id,
+category_filter,
+role_filter
+)
+VALUES($1,$2,$3)
+ON CONFLICT(auction_id)
+DO UPDATE SET
+category_filter=$2,
+role_filter=$3,
+updated_at=NOW()
+`, [
+            auction_id,
+            category || 'ALL',
+            role || 'ALL'
+        ]);
+        res.json({
+            success: true,
+            message: "Admin Control Updated"
+        });
+    }
+    catch (err) {
+        console.log("Admin Control Error", err);
+        res.status(500).json({
+            error: "Admin Control Failed"
+        });
+    }
 });
 module.exports = router;
