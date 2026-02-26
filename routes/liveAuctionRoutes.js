@@ -1493,50 +1493,59 @@ MODULE 2.9 – LOAD PLAYERS FROM MASTER
 POST /api/live-auction/load-from-master/:auction_id
 */
 
+/*
+=========================================
+MODULE 2.9 – LOAD PLAYERS FROM MASTER
+=========================================
+POST /api/live-auction/load-from-master/:auction_id
+*/
 router.post("/load-from-master/:auction_id", async (req, res) => {
+
     try {
+
         const { auction_id } = req.params;
-        /*
-        STEP 1 — Check Auction Exists
-        */
+
         const auctionCheck =
             await pool.query(
                 `SELECT * FROM auction_master_live
                  WHERE id=$1`,
                 [auction_id]
             );
+
         if (auctionCheck.rows.length === 0) {
             return res.status(404).json({
                 error: "Auction not found"
             });
         }
+
         const auction = auctionCheck.rows[0];
+
         /*
-        STEP 2 — SAFE RESET (VERY IMPORTANT)
-        Delete in correct order
+        SAFE RESET
         */
-        /* Delete bids first */
+
         await pool.query(
             `DELETE FROM auction_bids_live
              WHERE auction_id=$1`,
             [auction_id]
         );
-        /* Delete live state */
+
         await pool.query(
             `DELETE FROM auction_live_state
              WHERE auction_id=$1`,
             [auction_id]
         );
 
-        /* Then delete players */
         await pool.query(
             `DELETE FROM auction_players_live
              WHERE auction_id=$1`,
             [auction_id]
         );
+
         /*
-        STEP 3 — Insert From player_master
+        INSERT FROM MASTER
         */
+
         const insertResult =
             await pool.query(
                 `
@@ -1550,23 +1559,27 @@ is_wicketkeeper,
 base_price,
 status
 )
+
 SELECT
 $1,
 player_name,
 category,
 skills,
 false,
+
 CASE
 WHEN category='DIAMOND'
-THEN $2
+THEN $2::bigint
 WHEN category='PLATINUM'
-THEN $3
+THEN $3::bigint
 WHEN category='GOLD'
-THEN $4
+THEN $4::bigint
 WHEN category='SILVER'
-THEN $5
+THEN $5::bigint
 END,
+
 'PENDING'
+
 FROM player_master
 `,
                 [
@@ -1577,18 +1590,24 @@ FROM player_master
                     auction.silver_base_price
                 ]
             );
+
         res.json({
             success: true,
             message:
                 insertResult.rowCount +
                 " Players Loaded From Master"
         });
+
     }
     catch (err) {
+
         console.log("LOAD PLAYERS ERROR:", err);
+
         res.status(500).json({
-            error: "Server Error"
+            error: err.message
         });
+
     }
+
 });
 module.exports = router;
