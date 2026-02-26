@@ -1525,7 +1525,7 @@ router.post("/load-from-master/:auction_id", async (req, res) => {
 
         const auctionCheck = await pool.query(
             `SELECT * FROM auction_master_live
-             WHERE id=$1`,
+ WHERE id=$1`,
             [auction_id]
         );
 
@@ -1545,25 +1545,31 @@ router.post("/load-from-master/:auction_id", async (req, res) => {
         */
 
         await pool.query(
+            `DELETE FROM auction_live_state
+ WHERE auction_id=$1`,
+            [auction_id]
+        );
+
+        await pool.query(
             `DELETE FROM auction_bids_live
-             WHERE auction_id=$1`,
+ WHERE auction_id=$1`,
             [auction_id]
         );
 
         await pool.query(
             `DELETE FROM auction_players_live
-             WHERE auction_id=$1`,
+ WHERE auction_id=$1`,
             [auction_id]
         );
 
 
         /*
-        STEP 3 — INSERT FROM MASTER (ROLE MAPPING)
+        STEP 3 — INSERT FROM MASTER (FINAL SAFE)
         */
 
         const insertResult = await pool.query(
 
-`
+            `
 INSERT INTO auction_players_live
 (
 auction_id,
@@ -1576,12 +1582,12 @@ status
 )
 
 SELECT
+
 $1,
 
 player_name,
 
-category,
-
+UPPER(category),
 
 CASE
 
@@ -1600,7 +1606,6 @@ ELSE 'BATSMAN'
 
 END,
 
-
 CASE
 WHEN role ILIKE '%wk%'
 OR skills ILIKE '%wk%'
@@ -1608,50 +1613,45 @@ THEN true
 ELSE false
 END,
 
-
 CASE
 
-WHEN category='LEGEND'
-THEN $2
+WHEN UPPER(category)='LEGEND'
+THEN $2::bigint
 
-WHEN category='DIAMOND'
-THEN $2
+WHEN UPPER(category)='DIAMOND'
+THEN $2::bigint
 
-WHEN category='PLATINUM'
-THEN $3
+WHEN UPPER(category)='PLATINUM'
+THEN $3::bigint
 
-WHEN category='GOLD'
-THEN $4
+WHEN UPPER(category)='GOLD'
+THEN $4::bigint
 
-WHEN category='SILVER'
-THEN $5
+WHEN UPPER(category)='SILVER'
+THEN $5::bigint
 
-ELSE $5
+ELSE $5::bigint
 
 END,
 
-
 'PENDING'
-
 
 FROM player_master
 `,
-[
-auction_id,
-auction.diamond_base_price,
-auction.platinum_base_price,
-auction.gold_base_price,
-auction.silver_base_price
-]
+            [
+                auction_id,
+                auction.diamond_base_price,
+                auction.platinum_base_price,
+                auction.gold_base_price,
+                auction.silver_base_price
+            ]
 
-);
+        );
 
         res.json({
 
             success: true,
-            message:
-            insertResult.rowCount +
-            " Players Loaded From Master"
+            message: insertResult.rowCount + " Players Loaded From Master"
 
         });
 
