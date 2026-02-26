@@ -319,7 +319,7 @@ WHERE auction_id=$1`,
 FROM auction_players_live
 WHERE auction_id=$1
 AND status='PENDING'
-ORDER BY category DESC
+ORDER BY RANDOM()
 LIMIT 1`,
             [auction_id]
         );
@@ -748,6 +748,7 @@ WHERE id=$3
 FROM auction_players_live
 WHERE auction_id=$1
 AND status='PENDING'
+ORDER BY RANDOM()
 LIMIT 1`,
             [auction_id]
 
