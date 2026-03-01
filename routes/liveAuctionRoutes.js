@@ -625,21 +625,161 @@ FOR UPDATE`,
         );
         const player = playerData.rows[0];
         /*
+
 🚫 NO BID PROTECTION
 If no board bid → player UNSOLD
+BUT AUTO RECOVERY MUST RUN
 */
 
         if (!state.highest_bidder_board_id) {
+
+            const squadLimit = 13;
+
+            /*
+            Get Silver Base Price
+            */
+
+            const minPriceQuery =
+                await client.query(`
+SELECT silver_base_price
+FROM auction_master_live
+WHERE id=$1
+`, [auction_id]);
+
+            const minPrice =
+                Number(minPriceQuery.rows[0].silver_base_price);
+
+
+            /*
+            Get all boards
+            */
+
+            const boardsCheck =
+                await client.query(`
+SELECT *
+FROM auction_boards_live
+WHERE auction_id=$1
+FOR UPDATE
+`, [auction_id]);
+
+
+            for (const b of boardsCheck.rows) {
+
+                /*
+                Condition:
+                Less than 13 players
+                AND
+                Cannot buy Silver player
+                */
+
+                if (
+                    Number(b.players_bought) < squadLimit
+                    &&
+                    Number(b.purse_remaining) < minPrice
+                ) {
+
+                    console.log(
+                        "AUTO RECOVERY (UNSOLD CASE):",
+                        b.board_name
+                    );
+
+                    /*
+                    Get highest price players
+                    */
+
+                    const highPlayers =
+                        await client.query(`
+SELECT id,
+sold_price
+FROM auction_players_live
+WHERE auction_id=$1
+AND sold_to_board_id=$2
+AND status='SOLD'
+ORDER BY sold_price DESC
+`, [
+                            auction_id,
+                            b.id
+                        ]);
+
+
+                    let purseCredit = 0;
+                    let removedPlayers = 0;
+
+
+                    for (const hp of highPlayers.rows) {
+
+                        purseCredit += Number(hp.sold_price);
+                        removedPlayers++;
+
+                        /*
+                        Return player to auction
+                        */
+
+                        await client.query(`
+UPDATE auction_players_live
+SET
+status='PENDING',
+sold_price=NULL,
+sold_to_board_id=NULL
+WHERE id=$1
+`, [hp.id]);
+
+
+                        /*
+                        Stop when purse enough
+                        */
+
+                        if (
+                            (Number(b.purse_remaining) + purseCredit)
+                            >= minPrice
+                        ) {
+                            break;
+                        }
+
+                    }
+
+
+                    /*
+                    Update board purse
+                    */
+
+                    await client.query(`
+UPDATE auction_boards_live
+SET
+purse_remaining = purse_remaining + $1,
+players_bought = players_bought - $2
+WHERE id=$3
+`, [
+                        purseCredit,
+                        removedPlayers,
+                        b.id
+                    ]);
+
+                }
+
+            }
+
+
+            /*
+            Mark Player Unsold
+            */
+
             await client.query(`
-    UPDATE auction_players_live
-    SET status='UNSOLD'
-    WHERE id=$1
-    `, [player.id]);
+UPDATE auction_players_live
+SET status='UNSOLD'
+WHERE id=$1
+`, [player.id]);
+
+
             await client.query("COMMIT");
+
+
             return res.json({
                 success: true,
-                message: "Player Unsold (No Bids)"
+                message:
+                    "Player Unsold + Auto Recovery Executed"
             });
+
         }
         /*
         STEP 3 — Get Winning Board
@@ -840,7 +980,7 @@ WHERE id=$3
             );
 
         }
-        
+
 
         /*
         STEP 6 — Update Category Count
