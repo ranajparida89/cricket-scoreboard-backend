@@ -691,6 +691,157 @@ WHERE id=$2
                 board.id
             ]
         );
+
+        /*
+==============================================================
+AUTO PURSE RECOVERY ENGINE updated by Ranaj Parida 01/03/2026
+==============================================================
+*/
+
+        const squadLimit = 13;
+
+        /*
+        Get minimum silver price
+        */
+
+        const minPriceQuery =
+            await client.query(`
+SELECT silver_base_price
+FROM auction_master_live
+WHERE id=$1
+`, [auction_id]);
+
+        const minPrice =
+            Number(minPriceQuery.rows[0].silver_base_price);
+
+        /*
+        Remaining players needed
+        */
+
+        const remainingPlayers =
+            squadLimit -
+            (Number(board.players_bought) + 1);
+
+        /*
+        Minimum purse required
+        */
+
+        const minimumRequired =
+            remainingPlayers * minPrice;
+
+        /*
+        Check purse viability
+        */
+
+        if (newPurse < minimumRequired) {
+
+            console.log("AUTO RECOVERY STARTED");
+
+            /*
+            Get highest priced players
+            */
+
+            const highPlayers =
+                await client.query(
+
+                    `
+SELECT id,
+player_name,
+sold_price,
+category,
+role,
+is_wicketkeeper
+FROM auction_players_live
+WHERE auction_id=$1
+AND sold_to_board_id=$2
+AND status='SOLD'
+ORDER BY sold_price DESC
+`,
+                    [
+                        auction_id,
+                        board.id
+                    ]
+
+                );
+
+            let purseCredit = 0;
+            let playersRemoved = 0;
+
+            for (const hp of highPlayers.rows) {
+
+                purseCredit += Number(hp.sold_price);
+                playersRemoved++;
+
+                /*
+                Return player to auction
+                */
+
+                await client.query(`
+UPDATE auction_players_live
+SET
+status='PENDING',
+sold_price=NULL,
+sold_to_board_id=NULL
+WHERE id=$1
+`, [hp.id]);
+
+                /*
+                Stop when purse enough
+                */
+
+                const purseAfterRecovery =
+                    newPurse + purseCredit;
+
+                const playersAfterRecovery =
+                    (Number(board.players_bought) + 1)
+                    -
+                    playersRemoved;
+
+                const remainingNeeded =
+                    squadLimit -
+                    playersAfterRecovery;
+
+                const requiredAfterRecovery =
+                    remainingNeeded * minPrice;
+
+                if (purseAfterRecovery >= requiredAfterRecovery) {
+
+                    break;
+
+                }
+
+            }
+
+            /*
+            Update board purse
+            */
+
+            await client.query(
+
+                `
+UPDATE auction_boards_live
+SET
+purse_remaining=$1,
+players_bought=
+players_bought-$2
+WHERE id=$3
+`,
+                [
+                    newPurse + purseCredit,
+                    playersRemoved,
+                    board.id
+                ]
+
+            );
+
+            console.log(
+                "RECOVERY COMPLETE:",
+                purseCredit
+            );
+
+        }
+        
+
         /*
         STEP 6 — Update Category Count
         */
