@@ -860,7 +860,7 @@ WHERE id=$1
 
         const remainingPlayers =
             squadLimit -
-            (Number(board.players_bought) + 1);
+            Number(board.players_bought);
 
         /*
         Minimum purse required
@@ -933,7 +933,7 @@ WHERE id=$1
                     newPurse + purseCredit;
 
                 const playersAfterRecovery =
-                    (Number(board.players_bought) + 1)
+                    Number(board.players_bought)
                     -
                     playersRemoved;
 
