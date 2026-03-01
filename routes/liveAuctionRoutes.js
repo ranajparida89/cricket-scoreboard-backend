@@ -488,6 +488,8 @@ WHERE id=$1`,
 
         let purseNow = Number(board.purse_remaining);
 
+        let recoveryMessage = null;
+
         if (purseNow < nextBid) {
 
             console.log("IMMEDIATE RECOVERY STARTED");
@@ -636,12 +638,12 @@ WHERE auction_id=$4
 
         await client.query("COMMIT");
         res.json({
-        success: true,
-        bidAmount: nextBid,
-        board: board.board_name,
-        player: player.player_name,
-        updatedPurse: purseNow,
-        recoveryMessage: recoveryMessage
+            success: true,
+            bidAmount: nextBid,
+            board: board.board_name,
+            player: player.player_name,
+            updatedPurse: purseNow,
+            recoveryMessage: recoveryMessage
         });
     }
     catch (err) {
