@@ -482,11 +482,82 @@ WHERE id=$1`,
         /*
         STEP 7 — Purse Check
         */
-        if (Number(board.purse_remaining) < nextBid) {
-            await client.query("ROLLBACK");
-            return res.status(400).json({
-                error: "Insufficient purse"
-            });
+        /*
+       IMMEDIATE AUTO RECOVERY ENGINE
+       */
+
+        let purseNow = Number(board.purse_remaining);
+
+        if (purseNow < nextBid) {
+
+            console.log("IMMEDIATE RECOVERY STARTED");
+
+            const highPlayers =
+                await client.query(
+                    `
+SELECT id,
+sold_price
+FROM auction_players_live
+WHERE auction_id=$1
+AND sold_to_board_id=$2
+AND status='SOLD'
+ORDER BY sold_price DESC
+`,
+                    [auction_id, board.id]
+                );
+
+            let purseCredit = 0;
+            let playersRemoved = 0;
+
+            for (const hp of highPlayers.rows) {
+
+                purseCredit += Number(hp.sold_price);
+                playersRemoved++;
+
+                await client.query(`
+UPDATE auction_players_live
+SET
+status='PENDING',
+sold_price=NULL,
+sold_to_board_id=NULL
+WHERE id=$1
+`, [hp.id]);
+
+                if ((purseNow + purseCredit) >= nextBid)
+                    break;
+
+            }
+
+            await client.query(`
+UPDATE auction_boards_live
+SET
+purse_remaining = purse_remaining + $1,
+players_bought = players_bought - $2
+WHERE id=$3
+`,
+                [
+                    purseCredit,
+                    playersRemoved,
+                    board.id
+                ]
+            );
+
+            purseNow =
+                purseNow + purseCredit;
+
+            console.log(
+                "IMMEDIATE RECOVERY DONE:",
+                purseCredit
+            );
+
+            recoveryMessage =
+                "⚠️ AUTO RECOVERY\n\n"
+                + board.board_name
+                + " had insufficient purse.\n\n"
+                + "₹ " + purseCredit.toLocaleString()
+                + " credited back.\n\n"
+                + playersRemoved
+                + " player(s) returned to auction.";
 
         }
         /*
@@ -565,10 +636,12 @@ WHERE auction_id=$4
 
         await client.query("COMMIT");
         res.json({
-            success: true,
-            bidAmount: nextBid,
-            board: board.board_name,
-            player: player.player_name
+        success: true,
+        bidAmount: nextBid,
+        board: board.board_name,
+        player: player.player_name,
+        updatedPurse: purseNow,
+        recoveryMessage: recoveryMessage
         });
     }
     catch (err) {
@@ -904,6 +977,7 @@ ORDER BY sold_price DESC
 
                 );
 
+            let recoveryMessage = null;
             let purseCredit = 0;
             let playersRemoved = 0;
 
