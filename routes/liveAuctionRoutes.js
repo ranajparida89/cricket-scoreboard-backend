@@ -561,6 +561,20 @@ WHERE id=$3
                 + playersRemoved
                 + " player(s) returned to auction.";
 
+            await client.query(
+
+                `
+INSERT INTO auction_global_messages
+(auction_id,message)
+VALUES($1,$2)
+`,
+                [
+                    auction_id,
+                    recoveryMessage
+                ]
+
+            );
+
         }
         /*
         STEP 8 — Insert Bid
@@ -2241,5 +2255,61 @@ updated_at=NOW()
             error: "Admin Control Failed"
         });
     }
+});
+
+/*
+=========================================
+GLOBAL AUCTION MESSAGE API
+=========================================
+GET /api/live-auction/global-message/:auction_id
+*/
+
+router.get("/global-message/:auction_id", async (req, res) => {
+
+    try {
+
+        const { auction_id } = req.params;
+
+        /*
+        Get latest message
+        */
+
+        const result =
+            await pool.query(
+
+                `
+SELECT id,message
+FROM auction_global_messages
+WHERE auction_id=$1
+ORDER BY id DESC
+LIMIT 1
+`,
+                [auction_id]
+
+            );
+
+        res.json({
+
+            success: true,
+            message:
+                result.rows.length
+                    ? result.rows[0].message
+                    : null
+
+        });
+
+    }
+    catch (err) {
+
+        console.log("Global Message Error", err);
+
+        res.status(500).json({
+
+            error: "Server Error"
+
+        });
+
+    }
+
 });
 module.exports = router;
