@@ -1069,6 +1069,25 @@ WHERE id=$3
                 purseCredit
             );
 
+            recoveryMessage =
+                "⚠️ AUTO RECOVERY\n\n"
+                + board.board_name
+                + " had insufficient purse.\n\n"
+                + "₹ " + purseCredit.toLocaleString()
+                + " credited back.\n\n"
+                + playersRemoved
+                + " player(s) returned.";
+
+            await client.query(`
+INSERT INTO auction_global_messages
+(auction_id,message)
+VALUES($1,$2)
+`,
+                [
+                    auction_id,
+                    recoveryMessage
+                ]);
+
         }
 
 
