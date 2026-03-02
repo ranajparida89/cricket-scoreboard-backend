@@ -482,98 +482,11 @@ WHERE id=$1`,
         /*
         STEP 7 — Purse Check
         */
-        /*
-       IMMEDIATE AUTO RECOVERY ENGINE
-       */
-
-        let purseNow = Number(board.purse_remaining);
-
-        let recoveryMessage = null;
-
-        if (purseNow < nextBid) {
-
-            console.log("IMMEDIATE RECOVERY STARTED");
-
-            const highPlayers =
-                await client.query(
-                    `
-SELECT id,
-sold_price
-FROM auction_players_live
-WHERE auction_id=$1
-AND sold_to_board_id=$2
-AND status='SOLD'
-ORDER BY sold_price DESC
-`,
-                    [auction_id, board.id]
-                );
-
-            let purseCredit = 0;
-            let playersRemoved = 0;
-
-            for (const hp of highPlayers.rows) {
-
-                purseCredit += Number(hp.sold_price);
-                playersRemoved++;
-
-                await client.query(`
-UPDATE auction_players_live
-SET
-status='PENDING',
-sold_price=NULL,
-sold_to_board_id=NULL
-WHERE id=$1
-`, [hp.id]);
-
-                if ((purseNow + purseCredit) >= nextBid)
-                    break;
-
-            }
-
-            await client.query(`
-UPDATE auction_boards_live
-SET
-purse_remaining = purse_remaining + $1,
-players_bought = players_bought - $2
-WHERE id=$3
-`,
-                [
-                    purseCredit,
-                    playersRemoved,
-                    board.id
-                ]
-            );
-
-            purseNow =
-                purseNow + purseCredit;
-
-            console.log(
-                "IMMEDIATE RECOVERY DONE:",
-                purseCredit
-            );
-
-            recoveryMessage =
-                "⚠️ AUTO RECOVERY\n\n"
-                + board.board_name
-                + " had insufficient purse.\n\n"
-                + "₹ " + purseCredit.toLocaleString()
-                + " credited back.\n\n"
-                + playersRemoved
-                + " player(s) returned to auction.";
-
-            await client.query(
-
-                `
-INSERT INTO auction_global_messages
-(auction_id,message)
-VALUES($1,$2)
-`,
-                [
-                    auction_id,
-                    recoveryMessage
-                ]
-
-            );
+        if (Number(board.purse_remaining) < nextBid) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+                error: "Insufficient purse"
+            });
 
         }
         /*
@@ -655,9 +568,7 @@ WHERE auction_id=$4
             success: true,
             bidAmount: nextBid,
             board: board.board_name,
-            player: player.player_name,
-            updatedPurse: purseNow,
-            recoveryMessage: recoveryMessage
+            player: player.player_name
         });
     }
     catch (err) {
@@ -714,161 +625,21 @@ FOR UPDATE`,
         );
         const player = playerData.rows[0];
         /*
-
 🚫 NO BID PROTECTION
 If no board bid → player UNSOLD
-BUT AUTO RECOVERY MUST RUN
 */
 
         if (!state.highest_bidder_board_id) {
-
-            const squadLimit = 13;
-
-            /*
-            Get Silver Base Price
-            */
-
-            const minPriceQuery =
-                await client.query(`
-SELECT silver_base_price
-FROM auction_master_live
-WHERE id=$1
-`, [auction_id]);
-
-            const minPrice =
-                Number(minPriceQuery.rows[0].silver_base_price);
-
-
-            /*
-            Get all boards
-            */
-
-            const boardsCheck =
-                await client.query(`
-SELECT *
-FROM auction_boards_live
-WHERE auction_id=$1
-FOR UPDATE
-`, [auction_id]);
-
-
-            for (const b of boardsCheck.rows) {
-
-                /*
-                Condition:
-                Less than 13 players
-                AND
-                Cannot buy Silver player
-                */
-
-                if (
-                    Number(b.players_bought) < squadLimit
-                    &&
-                    Number(b.purse_remaining) < minPrice
-                ) {
-
-                    console.log(
-                        "AUTO RECOVERY (UNSOLD CASE):",
-                        b.board_name
-                    );
-
-                    /*
-                    Get highest price players
-                    */
-
-                    const highPlayers =
-                        await client.query(`
-SELECT id,
-sold_price
-FROM auction_players_live
-WHERE auction_id=$1
-AND sold_to_board_id=$2
-AND status='SOLD'
-ORDER BY sold_price DESC
-`, [
-                            auction_id,
-                            b.id
-                        ]);
-
-
-                    let purseCredit = 0;
-                    let removedPlayers = 0;
-
-
-                    for (const hp of highPlayers.rows) {
-
-                        purseCredit += Number(hp.sold_price);
-                        removedPlayers++;
-
-                        /*
-                        Return player to auction
-                        */
-
-                        await client.query(`
-UPDATE auction_players_live
-SET
-status='PENDING',
-sold_price=NULL,
-sold_to_board_id=NULL
-WHERE id=$1
-`, [hp.id]);
-
-
-                        /*
-                        Stop when purse enough
-                        */
-
-                        if (
-                            (Number(b.purse_remaining) + purseCredit)
-                            >= minPrice
-                        ) {
-                            break;
-                        }
-
-                    }
-
-
-                    /*
-                    Update board purse
-                    */
-
-                    await client.query(`
-UPDATE auction_boards_live
-SET
-purse_remaining = purse_remaining + $1,
-players_bought = players_bought - $2
-WHERE id=$3
-`, [
-                        purseCredit,
-                        removedPlayers,
-                        b.id
-                    ]);
-
-                }
-
-            }
-
-
-            /*
-            Mark Player Unsold
-            */
-
             await client.query(`
-UPDATE auction_players_live
-SET status='UNSOLD'
-WHERE id=$1
-`, [player.id]);
-
-
+    UPDATE auction_players_live
+    SET status='UNSOLD'
+    WHERE id=$1
+    `, [player.id]);
             await client.query("COMMIT");
-
-
             return res.json({
                 success: true,
-                message:
-                    "Player Unsold + Auto Recovery Executed"
+                message: "Player Unsold (No Bids)"
             });
-
         }
         /*
         STEP 3 — Get Winning Board
@@ -920,177 +691,6 @@ WHERE id=$2
                 board.id
             ]
         );
-
-        /*
-==============================================================
-AUTO PURSE RECOVERY ENGINE updated by Ranaj Parida 01/03/2026
-==============================================================
-*/
-
-        const squadLimit = 13;
-
-        /*
-        Get minimum silver price
-        */
-
-        const minPriceQuery =
-            await client.query(`
-SELECT silver_base_price
-FROM auction_master_live
-WHERE id=$1
-`, [auction_id]);
-
-        const minPrice =
-            Number(minPriceQuery.rows[0].silver_base_price);
-
-        /*
-        Remaining players needed
-        */
-
-        const remainingPlayers =
-            squadLimit -
-            Number(board.players_bought);
-
-        /*
-        Minimum purse required
-        */
-
-        const minimumRequired =
-            remainingPlayers * minPrice;
-
-        /*
-        Check purse viability
-        */
-
-        if (newPurse < minimumRequired) {
-
-            console.log("AUTO RECOVERY STARTED");
-
-            /*
-            Get highest priced players
-            */
-
-            const highPlayers =
-                await client.query(
-
-                    `
-SELECT id,
-player_name,
-sold_price,
-category,
-role,
-is_wicketkeeper
-FROM auction_players_live
-WHERE auction_id=$1
-AND sold_to_board_id=$2
-AND status='SOLD'
-ORDER BY sold_price DESC
-`,
-                    [
-                        auction_id,
-                        board.id
-                    ]
-
-                );
-
-            let recoveryMessage = null;
-            let purseCredit = 0;
-            let playersRemoved = 0;
-
-            for (const hp of highPlayers.rows) {
-
-                purseCredit += Number(hp.sold_price);
-                playersRemoved++;
-
-                /*
-                Return player to auction
-                */
-
-                await client.query(`
-UPDATE auction_players_live
-SET
-status='PENDING',
-sold_price=NULL,
-sold_to_board_id=NULL
-WHERE id=$1
-`, [hp.id]);
-
-                /*
-                Stop when purse enough
-                */
-
-                const purseAfterRecovery =
-                    newPurse + purseCredit;
-
-                const playersAfterRecovery =
-                    Number(board.players_bought)
-                    -
-                    playersRemoved;
-
-                const remainingNeeded =
-                    squadLimit -
-                    playersAfterRecovery;
-
-                const requiredAfterRecovery =
-                    remainingNeeded * minPrice;
-
-                if (purseAfterRecovery >= requiredAfterRecovery) {
-
-                    break;
-
-                }
-
-            }
-
-            /*
-            Update board purse
-            */
-
-            await client.query(
-
-                `
-UPDATE auction_boards_live
-SET
-purse_remaining=$1,
-players_bought=
-players_bought-$2
-WHERE id=$3
-`,
-                [
-                    newPurse + purseCredit,
-                    playersRemoved,
-                    board.id
-                ]
-
-            );
-
-            console.log(
-                "RECOVERY COMPLETE:",
-                purseCredit
-            );
-
-            recoveryMessage =
-                "⚠️ AUTO RECOVERY\n\n"
-                + board.board_name
-                + " had insufficient purse.\n\n"
-                + "₹ " + purseCredit.toLocaleString()
-                + " credited back.\n\n"
-                + playersRemoved
-                + " player(s) returned.";
-
-            await client.query(`
-INSERT INTO auction_global_messages
-(auction_id,message)
-VALUES($1,$2)
-`,
-                [
-                    auction_id,
-                    recoveryMessage
-                ]);
-
-        }
-
-
         /*
         STEP 6 — Update Category Count
         */
@@ -2274,61 +1874,5 @@ updated_at=NOW()
             error: "Admin Control Failed"
         });
     }
-});
-
-/*
-=========================================
-GLOBAL AUCTION MESSAGE API
-=========================================
-GET /api/live-auction/global-message/:auction_id
-*/
-
-router.get("/global-message/:auction_id", async (req, res) => {
-
-    try {
-
-        const { auction_id } = req.params;
-
-        /*
-        Get latest message
-        */
-
-        const result =
-            await pool.query(
-
-                `
-SELECT id,message
-FROM auction_global_messages
-WHERE auction_id=$1
-ORDER BY id DESC
-LIMIT 1
-`,
-                [auction_id]
-
-            );
-
-        res.json({
-
-            success: true,
-            message:
-                result.rows.length
-                    ? result.rows[0].message
-                    : null
-
-        });
-
-    }
-    catch (err) {
-
-        console.log("Global Message Error", err);
-
-        res.status(500).json({
-
-            error: "Server Error"
-
-        });
-
-    }
-
 });
 module.exports = router;
