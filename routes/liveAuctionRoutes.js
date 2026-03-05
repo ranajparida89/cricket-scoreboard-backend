@@ -1918,7 +1918,7 @@ updated_at=NOW()
 
 /*
 =========================================
-PLAYER SEARCH API
+PLAYER SEARCH API (MASTER + AUCTION)
 =========================================
 GET /api/live-auction/player-search/:auction_id
 */
@@ -1927,29 +1927,33 @@ router.get("/player-search/:auction_id", async (req, res) => {
 
     try {
 
-        const { auction_id } = req.params;
         const { name } = req.query;
 
+        if (!name || name.length < 2) {
+            return res.json([]);
+        }
+
         const result = await pool.query(
-
             `
-SELECT player_name
-FROM auction_players_live
-WHERE auction_id=$1
-AND player_name ILIKE $2
-LIMIT 5
+SELECT DISTINCT player_name
+FROM player_master
+WHERE player_name ILIKE $1
+ORDER BY player_name
+LIMIT 10
 `,
-            [auction_id, `%${name}%`]
-
+            [`%${name}%`]
         );
 
         res.json(result.rows);
 
-    } catch (err) {
+    }
+    catch (err) {
 
         console.log("Player Search Error", err);
 
-        res.status(500).json({ error: "Search failed" });
+        res.status(500).json({
+            error: "Search failed"
+        });
 
     }
 
