@@ -191,11 +191,14 @@ AND LOWER(player_name)=LOWER($2)
             'GOLD',
             'SILVER'
         ];
-        if (!validCategories.includes(category)) {
+        const categoryUpper = String(category).trim().toUpperCase();
+
+        if (!validCategories.includes(categoryUpper)) {
 
             return res.status(400).json({
                 error: "Invalid category"
             });
+
         }
 
         /*
@@ -207,7 +210,9 @@ AND LOWER(player_name)=LOWER($2)
             'BOWLER'
         ];
 
-        if (!validRoles.includes(role)) {
+        const roleUpper = String(role).trim().toUpperCase();
+
+        if (!validRoles.includes(roleUpper)) {
             return res.status(400).json({
                 error: "Invalid role"
             });
