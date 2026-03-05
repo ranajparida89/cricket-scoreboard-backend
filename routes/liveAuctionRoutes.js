@@ -186,6 +186,7 @@ AND LOWER(player_name)=LOWER($2)
         STEP 1 — Validate Category
         */
         const validCategories = [
+            'LEGEND',
             'DIAMOND',
             'PLATINUM',
             'GOLD',
@@ -231,13 +232,20 @@ WHERE id=$1`,
         STEP 4 — Set Base Price Automatically
         */
         let basePrice = 0;
-        if (category === "DIAMOND")
+
+        if (categoryUpper === "LEGEND")
             basePrice = auction.diamond_base_price;
-        if (category === "PLATINUM")
+
+        if (categoryUpper === "DIAMOND")
+            basePrice = auction.diamond_base_price;
+
+        if (categoryUpper === "PLATINUM")
             basePrice = auction.platinum_base_price;
-        if (category === "GOLD")
+
+        if (categoryUpper === "GOLD")
             basePrice = auction.gold_base_price;
-        if (category === "SILVER")
+
+        if (categoryUpper === "SILVER")
             basePrice = auction.silver_base_price;
         /*
         STEP 5 — Insert Player
@@ -269,8 +277,8 @@ RETURNING *
             [
                 auction_id,
                 player_name,
-                category,
-                role,
+                categoryUpper,
+                roleUpper,
                 is_wicketkeeper || false
             ]
         );
