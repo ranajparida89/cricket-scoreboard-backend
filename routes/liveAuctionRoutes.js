@@ -157,6 +157,26 @@ router.post("/add-player/:auction_id", async (req, res) => {
             is_wicketkeeper
         } = req.body;
 
+        // DUPLICATE PLAYER CHECK
+
+        const duplicateCheck = await pool.query(
+            `
+SELECT player_name
+FROM auction_players_live
+WHERE auction_id=$1
+AND LOWER(player_name)=LOWER($2)
+`,
+            [auction_id, player_name]
+        );
+
+        if (duplicateCheck.rows.length > 0) {
+
+            return res.status(400).json({
+                error: "Player already exists in auction"
+            });
+
+        }
+
         if (!player_name || !category || !role) {
             return res.status(400).json({
                 error: "Missing player fields"
@@ -217,6 +237,8 @@ WHERE id=$1`,
         /*
         STEP 5 — Insert Player
         */
+
+
         const result = await pool.query(
             `
 INSERT INTO auction_players_live(
@@ -225,22 +247,27 @@ player_name,
 category,
 role,
 is_wicketkeeper,
-base_price
+base_price,
+status
 )
-
-VALUES($1,$2,$3,$4,$5,$6)
+VALUES(
+$1,
+INITCAP($2),
+UPPER($3),
+UPPER($4),
+$5,
+1200000000,
+'PENDING'
+)
 RETURNING *
 `,
-
             [
                 auction_id,
                 player_name,
                 category,
                 role,
-                is_wicketkeeper || false,
-                basePrice
+                is_wicketkeeper || false
             ]
-
         );
         res.json({
             success: true,
@@ -1874,5 +1901,44 @@ updated_at=NOW()
             error: "Admin Control Failed"
         });
     }
+});
+
+/*
+=========================================
+PLAYER SEARCH API
+=========================================
+GET /api/live-auction/player-search/:auction_id
+*/
+
+router.get("/player-search/:auction_id", async (req, res) => {
+
+    try {
+
+        const { auction_id } = req.params;
+        const { name } = req.query;
+
+        const result = await pool.query(
+
+            `
+SELECT player_name
+FROM auction_players_live
+WHERE auction_id=$1
+AND player_name ILIKE $2
+LIMIT 5
+`,
+            [auction_id, `%${name}%`]
+
+        );
+
+        res.json(result.rows);
+
+    } catch (err) {
+
+        console.log("Player Search Error", err);
+
+        res.status(500).json({ error: "Search failed" });
+
+    }
+
 });
 module.exports = router;
