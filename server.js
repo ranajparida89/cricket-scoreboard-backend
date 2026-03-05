@@ -168,8 +168,8 @@ app.use("/api/simple-auction", simpleAuctionRoutes);
 app.use("/api", rulesRoutes); // rules for crickedge 22/01/2026
 app.use("/api/forum", forumRoutes);
 app.use("/api/player-auction", playerAuctionRoutes); // Auction
-app.use("/api/crickedge-season",crickedgeSeasonRoutes);
-app.use('/api/live-auction',liveAuctionRoutes);
+app.use("/api/crickedge-season", crickedgeSeasonRoutes);
+app.use('/api/live-auction', liveAuctionRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
@@ -235,29 +235,29 @@ app.post("/api/match", async (req, res) => {
 // ✅ Match Result Submission (T20/ODI) — NOW ALSO STORES mom_player_id (FK → players.id)
 // ✅ Match Result Submission (T20/ODI) — SAFE OVERS FIX (UI vs NRR SEPARATION)
 app.post("/api/submit-result", async (req, res) => {
-try {
-const {
-  match_id,
-  team1,
-  team2,
-  runs1,
-  overs1,
-  wickets1,
-  runs2,
-  overs2,
-  wickets2,
-  user_id,
-  tournament_name = null,
-  season_year = null,
-  match_date = null,
-  mom_player = null,
-  mom_reason = null,
-  mom_player_id = null,
-  // ✅ CrickEdge Season
-crickedge_season_id = null,
-season_type = "INTERNATIONAL"
+  try {
+    const {
+      match_id,
+      team1,
+      team2,
+      runs1,
+      overs1,
+      wickets1,
+      runs2,
+      overs2,
+      wickets2,
+      user_id,
+      tournament_name = null,
+      season_year = null,
+      match_date = null,
+      mom_player = null,
+      mom_reason = null,
+      mom_player_id = null,
+      // ✅ CrickEdge Season
+      crickedge_season_id = null,
+      season_type = "INTERNATIONAL"
 
-} = req.body;
+    } = req.body;
 
     if (!mom_player || !mom_reason)
       return res.status(400).json({ error: "Man of the Match and Reason are required." });
@@ -378,7 +378,7 @@ season_type = "INTERNATIONAL"
       season_type
     ]);
 
-// AUTOMATION FOR MATCH HISTORY STARTS
+    // AUTOMATION FOR MATCH HISTORY STARTS
     // =====================================================
     // 🔥 AUTO UPDATE FIXTURE STATUS
     // =====================================================
@@ -393,11 +393,24 @@ season_type = "INTERNATIONAL"
         LIMIT 1
       `);
 
-       // 🔒 SAFETY GUARD — Only ONE active tournament allowed
-  if (activeGroupRes.rowCount !== 1) {
-    console.error("🚨 Invalid active tournament state. Expected exactly 1 active tournament.");
-    return;
-  }
+      // 🔒 SAFETY GUARD — Only ONE active tournament allowed
+      if (activeGroupRes.rowCount !== 1) {
+
+        console.warn("⚠️ No active tournament found. Skipping fixture automation.");
+
+      } else {
+
+        const groupId = activeGroupRes.rows[0].id;
+
+        const fixturesRes = await pool.query(`
+    SELECT id, row_data
+    FROM cr_excel_fixture
+    WHERE fixture_group_id = $1
+    AND status = 'NOT_PLAYED'
+  `, [groupId]);
+
+        // existing fixture loop continues here
+      }
 
       if (activeGroupRes.rowCount > 0) {
         const groupId = activeGroupRes.rows[0].id;
@@ -471,24 +484,24 @@ season_type = "INTERNATIONAL"
     } catch (automationError) {
       console.error("Scheduler Automation Error:", automationError);
     }
-     // AUTOMATION MATCH_HISTORY ENDS HERE
+    // AUTOMATION MATCH_HISTORY ENDS HERE
 
-   io.emit("matchUpdate", { match_id, winner });
+    io.emit("matchUpdate", { match_id, winner });
 
-res.json({
-  message: winner
-});
+    res.json({
+      message: winner
+    });
 
-}
-catch (err) {
+  }
+  catch (err) {
 
-console.error(err);
+    console.error(err);
 
-res.status(500).json({
-  error: err.message
-});
+    res.status(500).json({
+      error: err.message
+    });
 
-}
+  }
 
 });
 
@@ -626,7 +639,7 @@ app.get("/api/match-history", async (req, res) => {
 // Live Auction Timer Engine
 // =============================
 const startAuctionTimer =
-require('./timer/auctionTimer');
+  require('./timer/auctionTimer');
 startAuctionTimer();
 
 // ✅ Start the backend server
