@@ -71,7 +71,7 @@ router.post("/start", async (req, res) => {
     } catch (err) {
 
         console.error("LIVE MATCH ERROR:", err);
-        res.status(500).json({ success: false });
+        res.status(500).json({ error: err.message });
 
     }
 
