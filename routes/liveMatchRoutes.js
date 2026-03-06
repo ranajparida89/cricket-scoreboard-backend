@@ -37,6 +37,7 @@ router.post("/start", async (req, res) => {
 
 ```
 try {
+console.log("Incoming Live Match Request:", req.body);
 
     const {
         match_name,
@@ -54,7 +55,7 @@ try {
         });
     }
 
-    const embed_url = generateEmbedUrl(stream_url);
+    const embed_url = generateEmbedUrl(stream_url) || stream_url;
 
     const result = await pool.query(
         "INSERT INTO live_matches (match_name, team1, team2, match_type, stream_url, embed_url, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
