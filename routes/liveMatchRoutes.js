@@ -31,7 +31,8 @@ router.post("/start", async (req, res) => {
 
     try {
 
-        console.log("Incoming Live Match Request:", req.body);
+        console.log("STEP 1 - Request received");
+        console.log("BODY:", req.body);
 
         const {
             match_name,
@@ -42,26 +43,40 @@ router.post("/start", async (req, res) => {
             created_by
         } = req.body;
 
+        console.log("STEP 2 - Fields extracted");
+
         if (!match_name || !team1 || !team2 || !match_type || !stream_url) {
+
+            console.log("STEP 3 - Validation failed");
+
             return res.status(400).json({
                 success: false,
                 message: "Missing required fields"
             });
+
         }
-        const matchId = uuidv4();
+
         const embed_url = generateEmbedUrl(stream_url) || stream_url;
 
+        console.log("STEP 4 - Embed URL generated:", embed_url);
+
         const result = await pool.query(
-            "INSERT INTO live_matches (id, match_name, team1, team2, match_type, stream_url, embed_url, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
-            [matchId, match_name, team1, team2, match_type, stream_url, embed_url, created_by]
+            "INSERT INTO live_matches (match_name,team1,team2,match_type,stream_url,embed_url,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+            [match_name, team1, team2, match_type, stream_url, embed_url, created_by]
         );
 
+        console.log("STEP 5 - First insert success");
+
         const match = result.rows[0];
+
+        console.log("STEP 6 - Match ID:", match.id);
 
         await pool.query(
             "INSERT INTO live_match_stats (match_id,total_views,peak_viewers) VALUES ($1,0,0)",
             [match.id]
         );
+
+        console.log("STEP 7 - Stats insert success");
 
         res.json({
             success: true,
@@ -71,12 +86,15 @@ router.post("/start", async (req, res) => {
     } catch (err) {
 
         console.error("LIVE MATCH ERROR:", err);
-        res.status(500).json({ error: err.message });
+
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
 
     }
 
 });
-
 
 // GET ALL LIVE MATCHES
 router.get("/live", async (req, res) => {
