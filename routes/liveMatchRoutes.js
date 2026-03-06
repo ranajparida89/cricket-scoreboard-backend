@@ -2,9 +2,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 
-//-------------------------------------------------------------
 // Convert YouTube / Twitch URL to embed URL
-//-------------------------------------------------------------
 function generateEmbedUrl(url) {
 
 ```
@@ -30,14 +28,13 @@ return url;
 
 }
 
-//-------------------------------------------------------------
 // START LIVE MATCH
-//-------------------------------------------------------------
 router.post("/start", async (req, res) => {
 
 ```
 try {
-console.log("Incoming Live Match Request:", req.body);
+
+    console.log("Incoming Live Match Request:", req.body);
 
     const {
         match_name,
@@ -76,7 +73,7 @@ console.log("Incoming Live Match Request:", req.body);
 
 } catch (err) {
 
-    console.error(err);
+    console.error("LIVE MATCH ERROR:", err);
     res.status(500).json({ success: false });
 
 }
@@ -84,9 +81,7 @@ console.log("Incoming Live Match Request:", req.body);
 
 });
 
-//-------------------------------------------------------------
 // GET ALL LIVE MATCHES
-//-------------------------------------------------------------
 router.get("/live", async (req, res) => {
 
 ```
@@ -108,9 +103,7 @@ try {
 
 });
 
-//-------------------------------------------------------------
 // GET SINGLE MATCH
-//-------------------------------------------------------------
 router.get("/:id", async (req, res) => {
 
 ```
@@ -135,9 +128,7 @@ try {
 
 });
 
-//-------------------------------------------------------------
 // END MATCH
-//-------------------------------------------------------------
 router.post("/end/:id", async (req, res) => {
 
 ```
@@ -165,9 +156,7 @@ try {
 
 });
 
-//-------------------------------------------------------------
 // VIEWER JOIN
-//-------------------------------------------------------------
 router.post("/viewer-join", async (req, res) => {
 
 ```
@@ -197,9 +186,7 @@ try {
 
 });
 
-//-------------------------------------------------------------
 // VIEWER COUNT
-//-------------------------------------------------------------
 router.get("/viewers/:match_id", async (req, res) => {
 
 ```
@@ -224,9 +211,7 @@ try {
 
 });
 
-//-------------------------------------------------------------
 // SEND CHAT MESSAGE
-//-------------------------------------------------------------
 router.post("/chat", async (req, res) => {
 
 ```
@@ -251,9 +236,7 @@ try {
 
 });
 
-//-------------------------------------------------------------
 // GET CHAT MESSAGES
-//-------------------------------------------------------------
 router.get("/chat/:match_id", async (req, res) => {
 
 ```
