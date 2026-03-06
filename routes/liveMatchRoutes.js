@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const { v4: uuidv4 } = require("uuid");
 
 function generateEmbedUrl(url) {
 
@@ -47,12 +48,12 @@ router.post("/start", async (req, res) => {
                 message: "Missing required fields"
             });
         }
-
+        const matchId = uuidv4();
         const embed_url = generateEmbedUrl(stream_url) || stream_url;
 
         const result = await pool.query(
-            "INSERT INTO live_matches (match_name, team1, team2, match_type, stream_url, embed_url, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
-            [match_name, team1, team2, match_type, stream_url, embed_url, created_by]
+            "INSERT INTO live_matches (id, match_name, team1, team2, match_type, stream_url, embed_url, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+            [matchId, match_name, team1, team2, match_type, stream_url, embed_url, created_by]
         );
 
         const match = result.rows[0];
