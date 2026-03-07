@@ -5,24 +5,28 @@ const { v4: uuidv4 } = require("uuid");
 
 function generateEmbedUrl(url) {
 
-    if (!url) return null;
+   if (url.includes("twitch.tv")) {
 
-    if (url.includes("youtube.com/watch")) {
-        const videoId = url.split("v=")[1].split("&")[0];
-        return "https://www.youtube.com/embed/" + videoId + "?autoplay=1";
+    let channel = "";
+
+    if (url.includes("twitch.tv/")) {
+        channel = url.split("twitch.tv/")[1];
     }
 
-    if (url.includes("youtu.be")) {
-        const videoId = url.split("youtu.be/")[1];
-        return "https://www.youtube.com/embed/" + videoId + "?autoplay=1";
+    if (channel.includes("?")) {
+        channel = channel.split("?")[0];
     }
 
-    if (url.includes("twitch.tv")) {
-
-        const channel = url.split("twitch.tv/")[1].split("?")[0];
-
-        return `https://player.twitch.tv/?channel=${channel}&parent=crickedge.in&parent=www.crickedge.in`;
+    if (channel.includes("/")) {
+        channel = channel.split("/")[0];
     }
+
+    if (!channel) {
+        throw new Error("Invalid Twitch URL");
+    }
+
+    return `https://player.twitch.tv/?channel=${channel}&parent=crickedge.in&parent=www.crickedge.in`;
+}
 
     return url;
 }
