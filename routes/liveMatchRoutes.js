@@ -18,8 +18,10 @@ function generateEmbedUrl(url) {
     }
 
     if (url.includes("twitch.tv")) {
-        const channel = url.split("twitch.tv/")[1];
-        return "https://player.twitch.tv/?channel=" + channel + "&parent=localhost";
+
+        const channel = url.split("twitch.tv/")[1].split("?")[0];
+
+        return "https://player.twitch.tv/?channel=" + channel + "&parent=crickedge.in";
     }
 
     return url;
@@ -45,9 +47,7 @@ router.post("/start", async (req, res) => {
 
         console.log("STEP 2 - Fields extracted");
 
-        if (!match_name || !team1 || !team2 || !match_type || !stream_url) {
-
-            console.log("STEP 3 - Validation failed");
+        if (!team1 || !team2 || !match_type || !stream_url) {
 
             return res.status(400).json({
                 success: false,
@@ -56,13 +56,15 @@ router.post("/start", async (req, res) => {
 
         }
 
+        const finalMatchName = match_name || `${team1} vs ${team2}`;
+
         const embed_url = generateEmbedUrl(stream_url) || stream_url;
 
         console.log("STEP 4 - Embed URL generated:", embed_url);
 
         const result = await pool.query(
             "INSERT INTO live_matches (match_name,team1,team2,match_type,stream_url,embed_url,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
-            [match_name, team1, team2, match_type, stream_url, embed_url, created_by]
+            [finalMatchName, team1, team2, match_type, stream_url, embed_url, created_by || 'system']
         );
 
         console.log("STEP 5 - First insert success");
@@ -102,7 +104,7 @@ router.get("/live", async (req, res) => {
     try {
 
         const result = await pool.query(
-            "SELECT * FROM live_matches WHERE status='LIVE' ORDER BY start_time DESC"
+            "SELECT * FROM live_matches WHERE status='LIVE' ORDER BY created_at DESC LIMIT 1"
         );
 
         res.json(result.rows);
