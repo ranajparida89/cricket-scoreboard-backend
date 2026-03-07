@@ -21,7 +21,7 @@ function generateEmbedUrl(url) {
 
         const channel = url.split("twitch.tv/")[1].split("?")[0];
 
-        return "https://player.twitch.tv/?channel=" + channel + "&parent=crickedge.in";
+        return `https://player.twitch.tv/?channel=${channel}&parent=crickedge.in&parent=www.crickedge.in`;
     }
 
     return url;
