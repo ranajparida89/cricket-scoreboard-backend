@@ -269,7 +269,7 @@ INITCAP($2),
 UPPER($3),
 UPPER($4),
 $5,
-1200000000,
+$6,
 'PENDING'
 )
 RETURNING *
@@ -279,9 +279,10 @@ RETURNING *
                 player_name,
                 categoryUpper,
                 roleUpper,
-                is_wicketkeeper || false
+                is_wicketkeeper || false,
+                basePrice
             ]
-        );
+        ); 
         res.json({
             success: true,
             player: result.rows[0]
