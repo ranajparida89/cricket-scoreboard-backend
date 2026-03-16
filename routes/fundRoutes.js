@@ -727,11 +727,9 @@ router.post('/declare-result', async (req, res) => {
             /* PREVENT DOUBLE DISTRIBUTION */
 
             const existingResult = await client.query(`
-
 SELECT result_id
 FROM tournament_results
 WHERE tournament_id=$1
-
 `, [tournament_id]);
 
             if (existingResult.rows.length > 0) {
@@ -747,15 +745,11 @@ WHERE tournament_id=$1
             /* GET REWARD BANK */
 
             const reward = await client.query(`
-
 SELECT reward_bank_id,
 total_collected,
 remaining_balance
-
 FROM reward_bank
-
 WHERE tournament_id=$1
-
 `, [tournament_id]);
 
             if (reward.rows.length === 0) {
@@ -770,13 +764,9 @@ WHERE tournament_id=$1
             /* GET TOURNAMENT */
 
             const tournament = await client.query(`
-
 SELECT tournament_type
-
 FROM ce_tournaments
-
 WHERE tournament_id=$1
-
 `, [tournament_id]);
 
             if (tournament.rows.length === 0) {
@@ -790,14 +780,10 @@ WHERE tournament_id=$1
             /* GET RULE */
 
             const rule = await client.query(`
-
 SELECT winner_percentage,
 runner_percentage
-
 FROM fund_rules
-
 WHERE tournament_type=$1
-
 `, [tournamentType]);
 
             if (rule.rows.length === 0) {
@@ -809,19 +795,17 @@ WHERE tournament_type=$1
             const winnerPercent = rule.rows[0].winner_percentage;
             const runnerPercent = rule.rows[0].runner_percentage;
 
-            /* CALCULATE */
+            /* CALCULATE REWARD */
 
             const winnerReward = Math.floor(totalAmount * winnerPercent / 100);
             const runnerReward = Math.floor(totalAmount * runnerPercent / 100);
 
-            /* FIND BOARDS (CASE SAFE) */
+            /* FIND BOARDS */
 
             const winnerBoard = await client.query(`
-
 SELECT board_id
 FROM board_teams
 WHERE LOWER(team_name)=LOWER($1)
-
 `, [winner_team]);
 
             if (winnerBoard.rows.length === 0) {
@@ -831,11 +815,9 @@ WHERE LOWER(team_name)=LOWER($1)
             }
 
             const runnerBoard = await client.query(`
-
 SELECT board_id
 FROM board_teams
 WHERE LOWER(team_name)=LOWER($1)
-
 `, [runner_team]);
 
             if (runnerBoard.rows.length === 0) {
@@ -850,43 +832,33 @@ WHERE LOWER(team_name)=LOWER($1)
             /* CREDIT WINNER */
 
             await client.query(`
-
 UPDATE board_wallet
 SET balance = balance + $1,
 total_earned = total_earned + $1
-
 WHERE board_id=$2
-
 `, [winnerReward, winnerBoardId]);
 
             /* CREDIT RUNNER */
 
             await client.query(`
-
 UPDATE board_wallet
 SET balance = balance + $1,
 total_earned = total_earned + $1
-
 WHERE board_id=$2
-
 `, [runnerReward, runnerBoardId]);
 
             /* GET UPDATED WALLETS */
 
             const winnerWallet = await client.query(`
-
 SELECT wallet_id,balance
 FROM board_wallet
 WHERE board_id=$1
-
 `, [winnerBoardId]);
 
             const runnerWallet = await client.query(`
-
 SELECT wallet_id,balance
 FROM board_wallet
 WHERE board_id=$1
-
 `, [runnerBoardId]);
 
             if (winnerWallet.rows.length === 0) {
@@ -901,10 +873,17 @@ WHERE board_id=$1
 
             }
 
+            /* CALCULATE BALANCE BEFORE */
+
+            const winnerBalanceAfter = winnerWallet.rows[0].balance;
+            const winnerBalanceBefore = winnerBalanceAfter - winnerReward;
+
+            const runnerBalanceAfter = runnerWallet.rows[0].balance;
+            const runnerBalanceBefore = runnerBalanceAfter - runnerReward;
+
             /* WINNER TRANSACTION */
 
             await client.query(`
-
 INSERT INTO coin_transactions(
 
 board_id,
@@ -924,26 +903,27 @@ VALUES(
 $1,$2,
 'TOURNAMENT_WINNER',
 $3,
-$4-$3,
 $4,
 $5,
+$6,
 'TOURNAMENT',
 'Tournament winner reward'
 
 )
-
 `, [
+
                 winnerBoardId,
                 winnerWallet.rows[0].wallet_id,
                 winnerReward,
-                winnerWallet.rows[0].balance,
+                winnerBalanceBefore,
+                winnerBalanceAfter,
                 tournament_id
+
             ]);
 
             /* RUNNER TRANSACTION */
 
             await client.query(`
-
 INSERT INTO coin_transactions(
 
 board_id,
@@ -963,26 +943,27 @@ VALUES(
 $1,$2,
 'TOURNAMENT_RUNNER',
 $3,
-$4-$3,
 $4,
 $5,
+$6,
 'TOURNAMENT',
 'Tournament runner reward'
 
 )
-
 `, [
+
                 runnerBoardId,
                 runnerWallet.rows[0].wallet_id,
                 runnerReward,
-                runnerWallet.rows[0].balance,
+                runnerBalanceBefore,
+                runnerBalanceAfter,
                 tournament_id
+
             ]);
 
             /* SAVE RESULT */
 
             await client.query(`
-
 INSERT INTO tournament_results(
 
 tournament_id,
@@ -1003,8 +984,8 @@ VALUES(
 $1,$2,$3,$4,$5,$6,$7,$8,true,NOW()
 
 )
-
 `, [
+
                 tournament_id,
                 winner_team,
                 runner_team,
@@ -1013,34 +994,29 @@ $1,$2,$3,$4,$5,$6,$7,$8,true,NOW()
                 winnerReward,
                 runnerReward,
                 rewardBankId
+
             ]);
 
             /* UPDATE BANK */
 
             await client.query(`
-
 UPDATE reward_bank
-
 SET total_distributed = total_distributed + $1,
 remaining_balance = remaining_balance - $1
-
 WHERE tournament_id=$2
-
 `, [
+
                 winnerReward + runnerReward,
                 tournament_id
+
             ]);
 
-            /* CLOSE */
+            /* CLOSE TOURNAMENT */
 
             await client.query(`
-
 UPDATE ce_tournaments
-
 SET tournament_status='COMPLETED'
-
 WHERE tournament_id=$1
-
 `, [tournament_id]);
 
             await client.query('COMMIT');
@@ -1085,5 +1061,4 @@ WHERE tournament_id=$1
     }
 
 });
-
 module.exports = router;
