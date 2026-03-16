@@ -258,7 +258,7 @@ router.post('/register-tournament', async (req, res) => {
 
             const tournament = await client.query(`
 
-SELECT entry_fee
+SELECT entry_fee,tournament_status
 FROM ce_tournaments
 WHERE tournament_id=$1
 
@@ -276,7 +276,39 @@ WHERE tournament_id=$1
 
             const entryFee = tournament.rows[0].entry_fee;
 
+            /* CHECK REGISTRATION STATUS */
 
+            if (tournament.rows[0].tournament_status !== 'REGISTRATION_OPEN') {
+
+                await client.query('ROLLBACK');
+
+                return res.status(400).json({
+                    message: "Registration closed"
+                });
+
+            }
+
+            /* CHECK IF ALREADY REGISTERED */
+
+            const existing = await client.query(`
+
+SELECT registration_id
+FROM tournament_registrations
+
+WHERE tournament_id=$1
+AND board_id=$2
+
+`, [tournament_id, board_id]);
+
+            if (existing.rows.length > 0) {
+
+                await client.query('ROLLBACK');
+
+                return res.status(400).json({
+                    message: "Board already registered"
+                });
+
+            }
             /* GET WALLET */
 
             const wallet = await client.query(`
@@ -490,4 +522,182 @@ ORDER BY created_at DESC
     }
 
 });
+
+/* ==========================================
+GET REGISTERED BOARDS IN TOURNAMENT
+========================================== */
+
+router.get('/tournament-boards/:tournament_id', async (req, res) => {
+
+    try {
+
+        const { tournament_id } = req.params;
+
+        const boards = await pool.query(`
+
+SELECT
+
+tr.board_id,
+br.board_name,
+tr.entry_fee,
+tr.registered_at
+
+FROM tournament_registrations tr
+
+JOIN board_registration br
+ON tr.board_id = br.id
+
+WHERE tr.tournament_id=$1
+
+ORDER BY tr.registered_at
+
+`, [tournament_id]);
+
+        res.json(boards.rows);
+
+    }
+    catch (err) {
+
+        console.error(err);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
+});
+
+/* ==========================================
+CLOSE TOURNAMENT
+========================================== */
+
+router.put('/close-tournament/:tournament_id', async (req, res) => {
+
+    try {
+
+        const { tournament_id } = req.params;
+
+        const result = await pool.query(`
+
+UPDATE ce_tournaments
+
+SET tournament_status='REGISTRATION_CLOSED'
+
+WHERE tournament_id=$1
+
+RETURNING tournament_id
+
+`, [tournament_id]);
+
+        if (result.rows.length === 0) {
+
+            return res.status(404).json({
+                message: "Tournament not found"
+            });
+
+        }
+
+        res.json({
+            message: "Tournament closed",
+            tournament_id: tournament_id
+        });
+
+    }
+    catch (err) {
+
+        console.error(err);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
+});
+/* ==========================================
+GET OPEN TOURNAMENTS
+========================================== */
+
+router.get('/open-tournaments', async (req, res) => {
+
+    try {
+
+        const tournaments = await pool.query(`
+
+SELECT
+tournament_id,
+tournament_name,
+tournament_type,
+entry_fee,
+start_date
+
+FROM ce_tournaments
+
+WHERE tournament_status='REGISTRATION_OPEN'
+
+ORDER BY created_at DESC
+
+`);
+
+        res.json(tournaments.rows);
+
+    }
+    catch (err) {
+
+        console.error(err);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
+});
+/* ==========================================
+GET BOARD TOURNAMENTS
+========================================== */
+
+router.get('/board-tournaments/:board_id', async (req, res) => {
+
+    try {
+
+        const { board_id } = req.params;
+
+        const data = await pool.query(`
+
+SELECT
+
+ct.tournament_id,
+ct.tournament_name,
+ct.tournament_type,
+tr.entry_fee,
+tr.registered_at
+
+FROM tournament_registrations tr
+
+JOIN ce_tournaments ct
+ON tr.tournament_id = ct.tournament_id
+
+WHERE tr.board_id=$1
+
+ORDER BY tr.registered_at DESC
+
+`, [board_id]);
+
+        res.json(data.rows);
+
+    }
+    catch (err) {
+
+        console.error(err);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
+});
+
 module.exports = router;
