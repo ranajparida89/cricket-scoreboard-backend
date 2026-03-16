@@ -249,6 +249,33 @@ router.post("/test-match", async (req, res) => {
       ? "🤝 The match ended in a draw!"
       : `✅ ${winner} won the test match!`;
 
+
+    /* ==========================================
+    TEST MATCH REWARD ENGINE
+    ========================================== */
+
+    try {
+
+      // Only reward if not draw
+      if (!isDrawLike(winner)) {
+
+        await pool.query(`
+SELECT reward_match_win($1,$2,$3)
+`, [winner, 200, match_id]);
+
+      }
+
+    }
+    catch (err) {
+
+      console.error("Test reward error:", err);
+
+    }
+
+    /* ==========================================
+    END REWARD ENGINE
+    ========================================== */
+
     res.json({ message });
   } catch (err) {
     console.error("❌ Test Match Submission Error:", err.message);

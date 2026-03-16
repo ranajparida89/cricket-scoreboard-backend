@@ -173,7 +173,7 @@ app.use("/api/player-auction", playerAuctionRoutes); // Auction
 app.use("/api/crickedge-season", crickedgeSeasonRoutes);
 app.use('/api/live-auction', liveAuctionRoutes);
 app.use("/api/live-match", liveMatchRoutes);
-app.use('/api/funds',fundRoutes);
+app.use('/api/funds', fundRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
@@ -304,6 +304,53 @@ app.post("/api/submit-result", async (req, res) => {
       winner = `${team2} won the match!`;
       points1 = 0; points2 = 2;
     }
+    /* ==========================================
+    MATCH WIN REWARD ENGINE (FUNDS SAFE)
+    ========================================== */
+
+    try {
+
+      let winnerTeam = null;
+
+      if (runs1 > runs2)
+        winnerTeam = team1;
+
+      else if (runs2 > runs1)
+        winnerTeam = team2;
+
+      /* CHECK IF THIS TOURNAMENT SUPPORTS FUNDS */
+
+      if (winnerTeam && tournament_name) {
+
+        const fundCheck = await pool.query(`
+
+SELECT funds_enabled
+FROM ce_tournaments
+WHERE tournament_name=$1
+
+`, [tournament_name]);
+
+        if (
+          fundCheck.rows.length > 0 &&
+          fundCheck.rows[0].funds_enabled === true
+        ) {
+
+          await pool.query(`
+SELECT reward_match_win($1,$2,$3)
+`, [winnerTeam, 200, match_id]);
+
+        }
+
+      }
+
+    }
+    catch (err) {
+
+      console.error("Reward engine error:", err);
+
+    }
+
+    /* ========================================== */
 
     // ✅ TEAM 1 (NRR uses nrrOvers)
     await pool.query(`
