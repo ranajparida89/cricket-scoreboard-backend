@@ -75,6 +75,7 @@ const playerAuctionRoutes = require("./routes/playerAuctionRoutes");
 const crickedgeSeasonRoutes = require("./routes/crickedgeSeasonRoutes");
 const liveAuctionRoutes = require('./routes/liveAuctionRoutes');
 const liveMatchRoutes = require("./routes/liveMatchRoutes");
+const fundRoutes = require('./routes/fundRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -172,6 +173,7 @@ app.use("/api/player-auction", playerAuctionRoutes); // Auction
 app.use("/api/crickedge-season", crickedgeSeasonRoutes);
 app.use('/api/live-auction', liveAuctionRoutes);
 app.use("/api/live-match", liveMatchRoutes);
+app.use('/api/funds',fundRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
