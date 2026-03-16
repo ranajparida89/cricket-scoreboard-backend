@@ -98,5 +98,127 @@ router.get('/transactions/:board_id', async (req, res) => {
 
 });
 
+/* ==========================================
+CREATE TOURNAMENT (ADMIN)
+========================================== */
 
+router.post('/create-tournament', async (req, res) => {
+
+    try {
+
+        const { tournament_name, tournament_type, start_date } = req.body;
+
+        if (!tournament_name || !tournament_type) {
+
+            return res.status(400).json({
+                message: "Tournament name and type required"
+            });
+
+        }
+
+        const client = await pool.connect();
+
+        try {
+
+            await client.query('BEGIN');
+
+            /* FETCH ENTRY FEE */
+
+            const rule = await client.query(`
+SELECT entry_fee
+FROM fund_rules
+WHERE tournament_type=$1
+`, [tournament_type]);
+
+            if (rule.rows.length === 0) {
+
+                await client.query('ROLLBACK');
+
+                return res.status(400).json({
+                    message: "Invalid tournament type"
+                });
+
+            }
+
+            const entryFee = rule.rows[0].entry_fee;
+
+
+            /* CREATE TOURNAMENT */
+
+            const tournament = await client.query(`
+
+INSERT INTO ce_tournaments(
+
+tournament_name,
+tournament_type,
+entry_fee,
+start_date
+
+)
+
+VALUES($1,$2,$3,$4)
+
+RETURNING tournament_id
+
+`, [tournament_name, tournament_type, entryFee, start_date]);
+
+            const tournamentId = tournament.rows[0].tournament_id;
+
+
+            /* CREATE REWARD BANK */
+
+            await client.query(`
+
+INSERT INTO reward_bank(
+
+tournament_id,
+total_collected,
+total_distributed,
+remaining_balance
+
+)
+
+VALUES($1,0,0,0)
+
+`, [tournamentId]);
+
+
+            await client.query('COMMIT');
+
+            res.json({
+
+                message: "Tournament created successfully",
+
+                tournament_id: tournamentId,
+
+                entry_fee: entryFee
+
+            });
+
+        }
+        catch (err) {
+
+            await client.query('ROLLBACK');
+
+            throw err;
+
+        }
+        finally {
+
+            client.release();
+
+        }
+
+    }
+    catch (err) {
+
+        console.error("Tournament creation error:", err.message);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
+});
 module.exports = router;
