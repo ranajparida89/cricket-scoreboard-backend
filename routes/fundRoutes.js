@@ -1042,10 +1042,11 @@ WHERE tournament_id=$1
     }
     catch (err) {
 
-        console.error(err);
+        console.error("DECLARE RESULT ERROR:", err);
 
         res.status(500).json({
-            message: "Server error"
+            message: "Server error",
+            error: err.message   // add this temporarily
         });
 
     }
