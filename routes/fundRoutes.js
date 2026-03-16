@@ -451,4 +451,43 @@ WHERE tournament_id=$2
     }
 
 });
+/* ==========================================
+GET ALL TOURNAMENTS
+========================================== */
+
+router.get('/tournaments', async (req, res) => {
+
+    try {
+
+        const tournaments = await pool.query(`
+
+SELECT
+tournament_id,
+tournament_name,
+tournament_type,
+entry_fee,
+start_date,
+tournament_status,
+created_at
+
+FROM ce_tournaments
+
+ORDER BY created_at DESC
+
+`);
+
+        res.json(tournaments.rows);
+
+    }
+    catch (err) {
+
+        console.error(err);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
+});
 module.exports = router;
