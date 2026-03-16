@@ -700,4 +700,356 @@ ORDER BY tr.registered_at DESC
 
 });
 
+/* ==========================================
+DECLARE TOURNAMENT RESULT + DISTRIBUTE REWARD
+========================================== */
+
+router.post('/declare-result', async (req, res) => {
+
+    try {
+
+        const { tournament_id, winner_team, runner_team } = req.body;
+
+        if (!tournament_id || !winner_team || !runner_team) {
+
+            return res.status(400).json({
+                message: "Tournament, winner and runner required"
+            });
+
+        }
+
+        const client = await pool.connect();
+
+        try {
+
+            await client.query('BEGIN');
+
+            /* GET REWARD BANK */
+
+            const reward = await client.query(`
+
+SELECT reward_bank_id,
+total_collected,
+remaining_balance
+
+FROM reward_bank
+
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+            if (reward.rows.length === 0) {
+
+                await client.query('ROLLBACK');
+
+                return res.status(404).json({
+                    message: "Reward bank not found"
+                });
+
+            }
+
+            const rewardBankId = reward.rows[0].reward_bank_id;
+            const totalAmount = reward.rows[0].remaining_balance;
+
+            /* GET TOURNAMENT TYPE */
+
+            const tournament = await client.query(`
+
+SELECT tournament_type
+
+FROM ce_tournaments
+
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+            const tournamentType = tournament.rows[0].tournament_type;
+
+            /* GET RULE */
+
+            const rule = await client.query(`
+
+SELECT winner_percentage,
+runner_percentage
+
+FROM fund_rules
+
+WHERE tournament_type=$1
+
+`, [tournamentType]);
+
+            const winnerPercent = rule.rows[0].winner_percentage;
+            const runnerPercent = rule.rows[0].runner_percentage;
+
+            /* CALCULATE REWARD */
+
+            const winnerReward = Math.floor(totalAmount * winnerPercent / 100);
+
+            const runnerReward = Math.floor(totalAmount * runnerPercent / 100);
+
+            /* FIND WINNER BOARD */
+
+            const winnerBoard = await client.query(`
+
+SELECT board_id
+
+FROM board_teams
+
+WHERE team_name=$1
+
+`, [winner_team]);
+
+            const runnerBoard = await client.query(`
+
+SELECT board_id
+
+FROM board_teams
+
+WHERE team_name=$1
+
+`, [runner_team]);
+
+            if (winnerBoard.rows.length === 0 || runnerBoard.rows.length === 0) {
+
+                await client.query('ROLLBACK');
+
+                return res.status(404).json({
+                    message: "Board not found"
+                });
+
+            }
+
+            const winnerBoardId = winnerBoard.rows[0].board_id;
+
+            const runnerBoardId = runnerBoard.rows[0].board_id;
+
+            /* CREDIT WINNER */
+
+            await client.query(`
+
+UPDATE board_wallet
+
+SET balance = balance + $1,
+total_earned = total_earned + $1
+
+WHERE board_id=$2
+
+`, [winnerReward, winnerBoardId]);
+
+            /* CREDIT RUNNER */
+
+            await client.query(`
+
+UPDATE board_wallet
+
+SET balance = balance + $1,
+total_earned = total_earned + $1
+
+WHERE board_id=$2
+
+`, [runnerReward, runnerBoardId]);
+
+            /* GET WALLET IDS */
+
+            const winnerWallet = await client.query(`
+
+SELECT wallet_id,balance
+
+FROM board_wallet
+
+WHERE board_id=$1
+
+`, [winnerBoardId]);
+
+            const runnerWallet = await client.query(`
+
+SELECT wallet_id,balance
+
+FROM board_wallet
+
+WHERE board_id=$1
+
+`, [runnerBoardId]);
+
+            /* TRANSACTION WINNER */
+
+            await client.query(`
+
+INSERT INTO coin_transactions(
+
+board_id,
+wallet_id,
+transaction_type,
+amount,
+balance_before,
+balance_after,
+reference_id,
+reference_type,
+remarks
+
+)
+
+VALUES(
+
+$1,$2,
+'TOURNAMENT_WINNER',
+$3,
+$4-$3,
+$4,
+$5,
+'TOURNAMENT',
+'Tournament winner reward'
+
+)
+
+`, [
+                winnerBoardId,
+                winnerWallet.rows[0].wallet_id,
+                winnerReward,
+                winnerWallet.rows[0].balance,
+                tournament_id
+            ]);
+
+            /* TRANSACTION RUNNER */
+
+            await client.query(`
+
+INSERT INTO coin_transactions(
+
+board_id,
+wallet_id,
+transaction_type,
+amount,
+balance_before,
+balance_after,
+reference_id,
+reference_type,
+remarks
+
+)
+
+VALUES(
+
+$1,$2,
+'TOURNAMENT_RUNNER',
+$3,
+$4-$3,
+$4,
+$5,
+'TOURNAMENT',
+'Tournament runner reward'
+
+)
+
+`, [
+                runnerBoardId,
+                runnerWallet.rows[0].wallet_id,
+                runnerReward,
+                runnerWallet.rows[0].balance,
+                tournament_id
+            ]);
+
+            /* SAVE RESULT */
+
+            await client.query(`
+
+INSERT INTO tournament_results(
+
+tournament_id,
+winner_team,
+runner_team,
+winner_board_id,
+runner_board_id,
+winner_reward,
+runner_reward,
+reward_bank_id,
+distributed,
+distributed_at
+
+)
+
+VALUES(
+
+$1,$2,$3,$4,$5,$6,$7,$8,true,NOW()
+
+)
+
+`, [
+                tournament_id,
+                winner_team,
+                runner_team,
+                winnerBoardId,
+                runnerBoardId,
+                winnerReward,
+                runnerReward,
+                rewardBankId
+            ]);
+
+            /* UPDATE BANK */
+
+            await client.query(`
+
+UPDATE reward_bank
+
+SET total_distributed = total_distributed + $1,
+remaining_balance = remaining_balance - $1
+
+WHERE tournament_id=$2
+
+`, [
+                winnerReward + runnerReward,
+                tournament_id
+            ]);
+
+            /* CLOSE TOURNAMENT */
+
+            await client.query(`
+
+UPDATE ce_tournaments
+
+SET tournament_status='COMPLETED'
+
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+            await client.query('COMMIT');
+
+            res.json({
+
+                message: "Rewards distributed",
+
+                winner_reward: winnerReward,
+
+                runner_reward: runnerReward
+
+            });
+
+        }
+        catch (err) {
+
+            await client.query('ROLLBACK');
+
+            throw err;
+
+        }
+        finally {
+
+            client.release();
+
+        }
+
+    }
+    catch (err) {
+
+        console.error(err);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
+});
+
 module.exports = router;
