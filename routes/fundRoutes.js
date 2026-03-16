@@ -221,4 +221,234 @@ VALUES($1,0,0,0)
     }
 
 });
+
+/* ==========================================
+TOURNAMENT REGISTRATION + ENTRY DEDUCTION
+========================================== */
+
+router.post('/register-tournament', async (req, res) => {
+
+    try {
+
+        const { tournament_id, board_id, consent_given } = req.body;
+
+        if (!tournament_id || !board_id) {
+
+            return res.status(400).json({
+                message: "Tournament and board required"
+            });
+
+        }
+
+        if (consent_given !== true) {
+
+            return res.status(400).json({
+                message: "Consent required"
+            });
+
+        }
+
+        const client = await pool.connect();
+
+        try {
+
+            await client.query('BEGIN');
+
+            /* GET TOURNAMENT */
+
+            const tournament = await client.query(`
+
+SELECT entry_fee
+FROM ce_tournaments
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+            if (tournament.rows.length === 0) {
+
+                await client.query('ROLLBACK');
+
+                return res.status(404).json({
+                    message: "Tournament not found"
+                });
+
+            }
+
+            const entryFee = tournament.rows[0].entry_fee;
+
+
+            /* GET WALLET */
+
+            const wallet = await client.query(`
+
+SELECT wallet_id,balance
+FROM board_wallet
+WHERE board_id=$1
+
+`, [board_id]);
+
+            if (wallet.rows.length === 0) {
+
+                await client.query('ROLLBACK');
+
+                return res.status(404).json({
+                    message: "Wallet not found"
+                });
+
+            }
+
+            const walletId = wallet.rows[0].wallet_id;
+            const balance = wallet.rows[0].balance;
+
+
+            /* CHECK BALANCE */
+
+            if (balance < entryFee) {
+
+                await client.query(`
+
+INSERT INTO failed_transactions(
+
+board_id,
+tournament_id,
+required_amount,
+available_balance,
+reason
+
+)
+
+VALUES($1,$2,$3,$4,'INSUFFICIENT_FUNDS')
+
+`, [board_id, tournament_id, entryFee, balance]);
+
+                await client.query('ROLLBACK');
+
+                return res.status(400).json({
+                    message: "Insufficient funds"
+                });
+
+            }
+
+
+            /* DEDUCT ENTRY FEE */
+
+            const newBalance = balance - entryFee;
+
+            await client.query(`
+
+UPDATE board_wallet
+
+SET balance=$1,
+total_spent = total_spent + $2
+
+WHERE board_id=$3
+
+`, [newBalance, entryFee, board_id]);
+
+
+            /* INSERT REGISTRATION */
+
+            await client.query(`
+
+INSERT INTO tournament_registrations(
+
+tournament_id,
+board_id,
+entry_fee,
+consent_given
+
+)
+
+VALUES($1,$2,$3,$4)
+
+`, [tournament_id, board_id, entryFee, consent_given]);
+
+
+            /* LEDGER ENTRY */
+
+            await client.query(`
+
+INSERT INTO coin_transactions(
+
+board_id,
+wallet_id,
+transaction_type,
+amount,
+balance_before,
+balance_after,
+reference_id,
+reference_type,
+remarks
+
+)
+
+VALUES(
+
+$1,
+$2,
+'TOURNAMENT_ENTRY',
+$3,
+$4,
+$5,
+$6,
+'TOURNAMENT',
+'Tournament entry fee deducted'
+
+)
+
+`, [board_id, walletId, entryFee, balance, newBalance, tournament_id]);
+
+
+            /* UPDATE REWARD BANK */
+
+            await client.query(`
+
+UPDATE reward_bank
+
+SET total_collected = total_collected + $1,
+remaining_balance = remaining_balance + $1
+
+WHERE tournament_id=$2
+
+`, [entryFee, tournament_id]);
+
+
+            await client.query('COMMIT');
+
+            res.json({
+
+                message: "Tournament registered",
+
+                entry_fee_deducted: entryFee,
+
+                remaining_balance: newBalance
+
+            });
+
+        }
+        catch (err) {
+
+            await client.query('ROLLBACK');
+
+            throw err;
+
+        }
+        finally {
+
+            client.release();
+
+        }
+
+    }
+    catch (err) {
+
+        console.error("Tournament registration error:", err.message);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
+});
 module.exports = router;
