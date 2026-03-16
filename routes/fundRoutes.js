@@ -710,10 +710,20 @@ router.post('/declare-result', async (req, res) => {
 
         const { tournament_id, winner_team, runner_team } = req.body;
 
+        /* BASIC VALIDATION */
+
         if (!tournament_id || !winner_team || !runner_team) {
 
             return res.status(400).json({
                 message: "Tournament, winner and runner required"
+            });
+
+        }
+
+        if (winner_team.toLowerCase() === runner_team.toLowerCase()) {
+
+            return res.status(400).json({
+                message: "Winner and runner cannot be same team"
             });
 
         }
@@ -727,9 +737,11 @@ router.post('/declare-result', async (req, res) => {
             /* PREVENT DOUBLE DISTRIBUTION */
 
             const existingResult = await client.query(`
+
 SELECT result_id
 FROM tournament_results
 WHERE tournament_id=$1
+
 `, [tournament_id]);
 
             if (existingResult.rows.length > 0) {
@@ -745,11 +757,15 @@ WHERE tournament_id=$1
             /* GET REWARD BANK */
 
             const reward = await client.query(`
+
 SELECT reward_bank_id,
 total_collected,
 remaining_balance
+
 FROM reward_bank
+
 WHERE tournament_id=$1
+
 `, [tournament_id]);
 
             if (reward.rows.length === 0) {
@@ -761,12 +777,23 @@ WHERE tournament_id=$1
             const rewardBankId = reward.rows[0].reward_bank_id;
             const totalAmount = reward.rows[0].remaining_balance;
 
+            if (totalAmount <= 0) {
+
+                throw new Error("Reward bank empty");
+
+            }
+
             /* GET TOURNAMENT */
 
             const tournament = await client.query(`
-SELECT tournament_type
+
+SELECT tournament_type,
+tournament_status
+
 FROM ce_tournaments
+
 WHERE tournament_id=$1
+
 `, [tournament_id]);
 
             if (tournament.rows.length === 0) {
@@ -776,14 +803,25 @@ WHERE tournament_id=$1
             }
 
             const tournamentType = tournament.rows[0].tournament_type;
+            const tournamentStatus = tournament.rows[0].tournament_status;
 
-            /* GET RULE */
+            if (tournamentStatus !== 'REGISTRATION_CLOSED') {
+
+                throw new Error("Tournament must be closed before declaring result");
+
+            }
+
+            /* GET FUND RULE */
 
             const rule = await client.query(`
+
 SELECT winner_percentage,
 runner_percentage
+
 FROM fund_rules
+
 WHERE tournament_type=$1
+
 `, [tournamentType]);
 
             if (rule.rows.length === 0) {
@@ -800,12 +838,14 @@ WHERE tournament_type=$1
             const winnerReward = Math.floor(totalAmount * winnerPercent / 100);
             const runnerReward = Math.floor(totalAmount * runnerPercent / 100);
 
-            /* FIND BOARDS */
+            /* FIND WINNER BOARD */
 
             const winnerBoard = await client.query(`
+
 SELECT board_id
 FROM board_teams
 WHERE LOWER(team_name)=LOWER($1)
+
 `, [winner_team]);
 
             if (winnerBoard.rows.length === 0) {
@@ -814,10 +854,14 @@ WHERE LOWER(team_name)=LOWER($1)
 
             }
 
+            /* FIND RUNNER BOARD */
+
             const runnerBoard = await client.query(`
+
 SELECT board_id
 FROM board_teams
 WHERE LOWER(team_name)=LOWER($1)
+
 `, [runner_team]);
 
             if (runnerBoard.rows.length === 0) {
@@ -832,33 +876,43 @@ WHERE LOWER(team_name)=LOWER($1)
             /* CREDIT WINNER */
 
             await client.query(`
+
 UPDATE board_wallet
 SET balance = balance + $1,
 total_earned = total_earned + $1
+
 WHERE board_id=$2
+
 `, [winnerReward, winnerBoardId]);
 
             /* CREDIT RUNNER */
 
             await client.query(`
+
 UPDATE board_wallet
 SET balance = balance + $1,
 total_earned = total_earned + $1
+
 WHERE board_id=$2
+
 `, [runnerReward, runnerBoardId]);
 
-            /* GET UPDATED WALLETS */
+            /* GET UPDATED WALLET */
 
             const winnerWallet = await client.query(`
+
 SELECT wallet_id,balance
 FROM board_wallet
 WHERE board_id=$1
+
 `, [winnerBoardId]);
 
             const runnerWallet = await client.query(`
+
 SELECT wallet_id,balance
 FROM board_wallet
 WHERE board_id=$1
+
 `, [runnerBoardId]);
 
             if (winnerWallet.rows.length === 0) {
@@ -873,7 +927,7 @@ WHERE board_id=$1
 
             }
 
-            /* CALCULATE BALANCE BEFORE */
+            /* BALANCE CALCULATION */
 
             const winnerBalanceAfter = winnerWallet.rows[0].balance;
             const winnerBalanceBefore = winnerBalanceAfter - winnerReward;
@@ -884,6 +938,7 @@ WHERE board_id=$1
             /* WINNER TRANSACTION */
 
             await client.query(`
+
 INSERT INTO coin_transactions(
 
 board_id,
@@ -910,6 +965,7 @@ $6,
 'Tournament winner reward'
 
 )
+
 `, [
 
                 winnerBoardId,
@@ -924,6 +980,7 @@ $6,
             /* RUNNER TRANSACTION */
 
             await client.query(`
+
 INSERT INTO coin_transactions(
 
 board_id,
@@ -950,6 +1007,7 @@ $6,
 'Tournament runner reward'
 
 )
+
 `, [
 
                 runnerBoardId,
@@ -964,6 +1022,7 @@ $6,
             /* SAVE RESULT */
 
             await client.query(`
+
 INSERT INTO tournament_results(
 
 tournament_id,
@@ -984,6 +1043,7 @@ VALUES(
 $1,$2,$3,$4,$5,$6,$7,$8,true,NOW()
 
 )
+
 `, [
 
                 tournament_id,
@@ -997,13 +1057,17 @@ $1,$2,$3,$4,$5,$6,$7,$8,true,NOW()
 
             ]);
 
-            /* UPDATE BANK */
+            /* UPDATE REWARD BANK */
 
             await client.query(`
+
 UPDATE reward_bank
+
 SET total_distributed = total_distributed + $1,
-remaining_balance = remaining_balance - $1
+remaining_balance = GREATEST(remaining_balance - $1,0)
+
 WHERE tournament_id=$2
+
 `, [
 
                 winnerReward + runnerReward,
@@ -1014,9 +1078,14 @@ WHERE tournament_id=$2
             /* CLOSE TOURNAMENT */
 
             await client.query(`
+
 UPDATE ce_tournaments
-SET tournament_status='COMPLETED'
+
+SET tournament_status='COMPLETED',
+completed_at=NOW()
+
 WHERE tournament_id=$1
+
 `, [tournament_id]);
 
             await client.query('COMMIT');
