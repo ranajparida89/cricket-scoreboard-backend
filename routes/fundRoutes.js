@@ -704,6 +704,15 @@ ORDER BY tr.registered_at DESC
 DECLARE TOURNAMENT RESULT + DISTRIBUTE REWARD
 ========================================== */
 
+/* ==========================================
+DECLARE TOURNAMENT RESULT + DISTRIBUTE REWARD
+PROTECTION:
+1 Prevent double distribution
+2 Prevent cancelled tournaments
+3 Prevent open tournaments
+4 Financial safety validation
+========================================== */
+
 router.post('/declare-result', async (req, res) => {
 
     try {
@@ -719,6 +728,8 @@ router.post('/declare-result', async (req, res) => {
             });
 
         }
+
+        /* PREVENT SAME TEAM */
 
         if (winner_team.toLowerCase() === runner_team.toLowerCase()) {
 
@@ -754,40 +765,12 @@ WHERE tournament_id=$1
 
             }
 
-            /* GET REWARD BANK */
-
-            const reward = await client.query(`
-
-SELECT reward_bank_id,
-total_collected,
-remaining_balance
-
-FROM reward_bank
-
-WHERE tournament_id=$1
-
-`, [tournament_id]);
-
-            if (reward.rows.length === 0) {
-
-                throw new Error("Reward bank not found");
-
-            }
-
-            const rewardBankId = reward.rows[0].reward_bank_id;
-            const totalAmount = reward.rows[0].remaining_balance;
-
-            if (totalAmount <= 0) {
-
-                throw new Error("Reward bank empty");
-
-            }
-
             /* GET TOURNAMENT */
 
             const tournament = await client.query(`
 
-SELECT tournament_type,
+SELECT 
+tournament_type,
 tournament_status
 
 FROM ce_tournaments
@@ -805,9 +788,48 @@ WHERE tournament_id=$1
             const tournamentType = tournament.rows[0].tournament_type;
             const tournamentStatus = tournament.rows[0].tournament_status;
 
-            if (tournamentStatus !== 'REGISTRATION_CLOSED') {
+            /* PREVENT CANCELLED */
 
-                throw new Error("Tournament must be closed before declaring result");
+            if (tournamentStatus === 'CANCELLED') {
+
+                throw new Error("Cannot declare result. Tournament cancelled");
+
+            }
+
+            /* PREVENT OPEN */
+
+            if (tournamentStatus === 'REGISTRATION_OPEN') {
+
+                throw new Error("Close registration before declaring result");
+
+            }
+
+            /* GET REWARD BANK */
+
+            const reward = await client.query(`
+
+SELECT 
+reward_bank_id,
+remaining_balance
+
+FROM reward_bank
+
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+            if (reward.rows.length === 0) {
+
+                throw new Error("Reward bank missing");
+
+            }
+
+            const rewardBankId = reward.rows[0].reward_bank_id;
+            const totalAmount = reward.rows[0].remaining_balance;
+
+            if (totalAmount <= 0) {
+
+                throw new Error("Reward pool empty");
 
             }
 
@@ -815,7 +837,8 @@ WHERE tournament_id=$1
 
             const rule = await client.query(`
 
-SELECT winner_percentage,
+SELECT 
+winner_percentage,
 runner_percentage
 
 FROM fund_rules
@@ -826,16 +849,17 @@ WHERE tournament_type=$1
 
             if (rule.rows.length === 0) {
 
-                throw new Error("Fund rule not found");
+                throw new Error("Fund rule missing");
 
             }
 
             const winnerPercent = rule.rows[0].winner_percentage;
             const runnerPercent = rule.rows[0].runner_percentage;
 
-            /* CALCULATE REWARD */
+            /* CALCULATE REWARDS */
 
             const winnerReward = Math.floor(totalAmount * winnerPercent / 100);
+
             const runnerReward = Math.floor(totalAmount * runnerPercent / 100);
 
             /* FIND WINNER BOARD */
@@ -850,7 +874,7 @@ WHERE LOWER(team_name)=LOWER($1)
 
             if (winnerBoard.rows.length === 0) {
 
-                throw new Error("Winner team not mapped to board");
+                throw new Error("Winner team board mapping missing");
 
             }
 
@@ -866,7 +890,7 @@ WHERE LOWER(team_name)=LOWER($1)
 
             if (runnerBoard.rows.length === 0) {
 
-                throw new Error("Runner team not mapped to board");
+                throw new Error("Runner team board mapping missing");
 
             }
 
@@ -878,24 +902,34 @@ WHERE LOWER(team_name)=LOWER($1)
             await client.query(`
 
 UPDATE board_wallet
-SET balance = balance + $1,
+
+SET 
+balance = balance + $1,
 total_earned = total_earned + $1
 
 WHERE board_id=$2
 
-`, [winnerReward, winnerBoardId]);
+`, [
+                winnerReward,
+                winnerBoardId
+            ]);
 
             /* CREDIT RUNNER */
 
             await client.query(`
 
 UPDATE board_wallet
-SET balance = balance + $1,
+
+SET 
+balance = balance + $1,
 total_earned = total_earned + $1
 
 WHERE board_id=$2
 
-`, [runnerReward, runnerBoardId]);
+`, [
+                runnerReward,
+                runnerBoardId
+            ]);
 
             /* GET UPDATED WALLET */
 
@@ -914,20 +948,6 @@ FROM board_wallet
 WHERE board_id=$1
 
 `, [runnerBoardId]);
-
-            if (winnerWallet.rows.length === 0) {
-
-                throw new Error("Winner wallet missing");
-
-            }
-
-            if (runnerWallet.rows.length === 0) {
-
-                throw new Error("Runner wallet missing");
-
-            }
-
-            /* BALANCE CALCULATION */
 
             const winnerBalanceAfter = winnerWallet.rows[0].balance;
             const winnerBalanceBefore = winnerBalanceAfter - winnerReward;
@@ -967,14 +987,12 @@ $6,
 )
 
 `, [
-
                 winnerBoardId,
                 winnerWallet.rows[0].wallet_id,
                 winnerReward,
                 winnerBalanceBefore,
                 winnerBalanceAfter,
                 tournament_id
-
             ]);
 
             /* RUNNER TRANSACTION */
@@ -1009,14 +1027,12 @@ $6,
 )
 
 `, [
-
                 runnerBoardId,
                 runnerWallet.rows[0].wallet_id,
                 runnerReward,
                 runnerBalanceBefore,
                 runnerBalanceAfter,
                 tournament_id
-
             ]);
 
             /* SAVE RESULT */
@@ -1045,7 +1061,6 @@ $1,$2,$3,$4,$5,$6,$7,$8,true,NOW()
 )
 
 `, [
-
                 tournament_id,
                 winner_team,
                 runner_team,
@@ -1054,34 +1069,33 @@ $1,$2,$3,$4,$5,$6,$7,$8,true,NOW()
                 winnerReward,
                 runnerReward,
                 rewardBankId
-
             ]);
 
-            /* UPDATE REWARD BANK */
+            /* UPDATE BANK */
 
             await client.query(`
 
 UPDATE reward_bank
 
-SET total_distributed = total_distributed + $1,
-remaining_balance = GREATEST(remaining_balance - $1,0)
+SET 
+total_distributed = total_distributed + $1,
+remaining_balance = GREATEST(remaining_balance-$1,0)
 
 WHERE tournament_id=$2
 
 `, [
-
                 winnerReward + runnerReward,
                 tournament_id
-
             ]);
 
-            /* CLOSE TOURNAMENT */
+            /* COMPLETE */
 
             await client.query(`
 
 UPDATE ce_tournaments
 
-SET tournament_status='COMPLETED',
+SET 
+tournament_status='COMPLETED',
 completed_at=NOW()
 
 WHERE tournament_id=$1
@@ -1105,11 +1119,7 @@ WHERE tournament_id=$1
 
             await client.query('ROLLBACK');
 
-            console.error("DECLARE RESULT ERROR:", err.message);
-
-            res.status(500).json({
-                error: err.message
-            });
+            throw err;
 
         }
         finally {
@@ -1121,7 +1131,264 @@ WHERE tournament_id=$1
     }
     catch (err) {
 
-        console.error(err);
+        console.error("DECLARE RESULT ERROR:", err.message);
+
+        res.status(500).json({
+            error: err.message
+        });
+
+    }
+
+});
+
+/* ==========================================
+CANCEL TOURNAMENT + REFUND SYSTEM
+LOGIC:
+
+1 Prevent cancel completed
+2 Refund all boards
+3 Ledger entry
+4 Prevent double refund
+5 Mark cancelled
+
+========================================== */
+
+router.post('/cancel-tournament', async (req, res) => {
+
+    try {
+
+        const { tournament_id, reason } = req.body;
+
+        if (!tournament_id) {
+
+            return res.status(400).json({
+                message: "Tournament id required"
+            });
+
+        }
+
+        const client = await pool.connect();
+
+        try {
+
+            await client.query('BEGIN');
+
+            /* GET TOURNAMENT */
+
+            const tournament = await client.query(`
+
+SELECT tournament_status
+
+FROM ce_tournaments
+
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+            if (tournament.rows.length === 0) {
+
+                throw new Error("Tournament not found");
+
+            }
+
+            if (tournament.rows[0].tournament_status === 'COMPLETED') {
+
+                throw new Error("Completed tournament cannot cancel");
+
+            }
+
+            if (tournament.rows[0].tournament_status === 'CANCELLED') {
+
+                throw new Error("Tournament already cancelled");
+
+            }
+
+            /* GET BOARDS */
+
+            const boards = await client.query(`
+
+SELECT 
+board_id,
+entry_fee
+
+FROM tournament_registrations
+
+WHERE tournament_id=$1
+AND refunded=false
+
+`, [tournament_id]);
+
+            let totalRefund = 0;
+
+            /* REFUND LOOP */
+
+            for (const board of boards.rows) {
+
+                const boardId = board.board_id;
+                const entryFee = board.entry_fee;
+
+                totalRefund += entryFee;
+
+                /* WALLET */
+
+                const wallet = await client.query(`
+
+SELECT wallet_id,balance
+
+FROM board_wallet
+
+WHERE board_id=$1
+
+`, [boardId]);
+
+                const walletId = wallet.rows[0].wallet_id;
+
+                const balanceBefore = wallet.rows[0].balance;
+
+                const balanceAfter = balanceBefore + entryFee;
+
+                /* REFUND */
+
+                await client.query(`
+
+UPDATE board_wallet
+
+SET 
+balance=balance+$1,
+total_earned=total_earned+$1
+
+WHERE board_id=$2
+
+`, [
+                    entryFee,
+                    boardId
+                ]);
+
+                /* TRANSACTION */
+
+                await client.query(`
+
+INSERT INTO coin_transactions(
+
+board_id,
+wallet_id,
+transaction_type,
+amount,
+balance_before,
+balance_after,
+reference_id,
+reference_type,
+remarks
+
+)
+
+VALUES(
+
+$1,$2,
+'TOURNAMENT_REFUND',
+$3,
+$4,
+$5,
+$6,
+'TOURNAMENT',
+'Tournament cancelled refund'
+
+)
+
+`, [
+                    boardId,
+                    walletId,
+                    entryFee,
+                    balanceBefore,
+                    balanceAfter,
+                    tournament_id
+                ]);
+
+                /* MARK REFUNDED */
+
+                await client.query(`
+
+UPDATE tournament_registrations
+
+SET 
+refunded=true,
+refunded_at=NOW()
+
+WHERE tournament_id=$1
+AND board_id=$2
+
+`, [
+                    tournament_id,
+                    boardId
+                ]);
+
+            }
+
+            /* UPDATE BANK */
+
+            await client.query(`
+
+UPDATE reward_bank
+
+SET 
+total_distributed=total_distributed+$1,
+remaining_balance=GREATEST(remaining_balance-$1,0)
+
+WHERE tournament_id=$2
+
+`, [
+                totalRefund,
+                tournament_id
+            ]);
+
+            /* CANCEL */
+
+            await client.query(`
+
+UPDATE ce_tournaments
+
+SET 
+tournament_status='CANCELLED',
+cancel_reason=$2,
+cancelled_at=NOW()
+
+WHERE tournament_id=$1
+
+`, [
+                tournament_id,
+                reason || 'Admin cancelled'
+            ]);
+
+            await client.query('COMMIT');
+
+            res.json({
+
+                message: "Tournament cancelled",
+
+                boards_refunded: boards.rows.length,
+
+                total_refunded: totalRefund
+
+            });
+
+        }
+        catch (err) {
+
+            await client.query('ROLLBACK');
+
+            throw err;
+
+        }
+        finally {
+
+            client.release();
+
+        }
+
+    }
+    catch (err) {
+
+        console.error("CANCEL ERROR:", err.message);
 
         res.status(500).json({
             error: err.message
