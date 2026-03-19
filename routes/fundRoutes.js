@@ -1725,38 +1725,29 @@ router.get('/transactions/all-match-rewards', async (req, res) => {
         const data = await pool.query(`
 
 SELECT
-
-ct.transaction_id,
-ct.board_id,
+br.board_name,
+ct.reference_id as match_ref,
 ct.amount,
 ct.balance_before,
 ct.balance_after,
-ct.reference_id,
 ct.created_at,
-
-br.board_name
-
+ct.transaction_type,
+ct.reference_type
 FROM coin_transactions ct
-
 JOIN board_registration br
-ON br.id=ct.board_id
-
-WHERE ct.transaction_type='MATCH_WIN'
-
+ON br.id = ct.board_id
+WHERE ct.reference_type='MATCH'
+OR ct.transaction_type LIKE 'MATCH%'
 ORDER BY ct.created_at DESC
-
 `);
 
         res.json(data.rows);
-
     }
     catch (err) {
-
+        console.error("MATCH AUDIT ERROR:", err);
         res.status(500).json({
-            message: "error"
+            error: err.message
         });
-
     }
-
 });
 module.exports = router;
