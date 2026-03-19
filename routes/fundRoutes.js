@@ -1737,7 +1737,7 @@ FROM coin_transactions ct
 JOIN board_registration br
 ON br.id = ct.board_id
 WHERE ct.reference_type='MATCH'
-OR ct.transaction_type LIKE 'MATCH%'
+OR ct.transaction_type LIKE 'TOUR%'
 ORDER BY ct.created_at DESC
 `);
 
