@@ -1444,4 +1444,52 @@ ORDER BY bw.balance DESC
     }
 
 });
+/* ==========================================
+REWARD BANK VIEW
+========================================== */
+
+router.get('/reward-banks', async (req, res) => {
+
+    try {
+
+        const data = await pool.query(`
+
+SELECT
+
+ct.tournament_id,
+ct.tournament_name,
+ct.tournament_type,
+ct.entry_fee,
+
+rb.total_collected,
+rb.total_distributed,
+rb.remaining_balance,
+
+ct.tournament_status
+
+FROM reward_bank rb
+
+JOIN ce_tournaments ct
+ON rb.tournament_id = ct.tournament_id
+
+ORDER BY ct.created_at DESC
+
+`);
+
+        res.json(data.rows);
+
+    }
+    catch (err) {
+
+        console.error("Reward bank error:", err);
+
+        res.status(500).json({
+
+            message: "Server error"
+
+        });
+
+    }
+
+});
 module.exports = router;
