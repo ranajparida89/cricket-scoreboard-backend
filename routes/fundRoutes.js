@@ -56,47 +56,6 @@ WHERE bw.board_id = $1
 });
 
 
-/* ==========================================
-TRANSACTION HISTORY
-========================================== */
-
-router.get('/transactions/:board_id', async (req, res) => {
-
-    try {
-
-        const { board_id } = req.params;
-
-        const transactions = await pool.query(`
-            SELECT
-            transaction_id,
-            transaction_type,
-            amount,
-            balance_before,
-            balance_after,
-            remarks,
-            created_at
-
-            FROM coin_transactions
-
-            WHERE board_id = $1
-
-            ORDER BY created_at DESC
-        `, [board_id]);
-
-        res.json(transactions.rows);
-
-    }
-    catch (err) {
-
-        console.error(err);
-
-        res.status(500).json({
-            message: "Server error"
-        });
-
-    }
-
-});
 
 /* ==========================================
 CREATE TOURNAMENT (ADMIN)
@@ -1750,4 +1709,47 @@ ORDER BY ct.created_at DESC
         });
     }
 });
+
+/* ==========================================
+TRANSACTION HISTORY
+========================================== */
+
+router.get('/transactions/:board_id', async (req, res) => {
+
+    try {
+
+        const { board_id } = req.params;
+
+        const transactions = await pool.query(`
+            SELECT
+            transaction_id,
+            transaction_type,
+            amount,
+            balance_before,
+            balance_after,
+            remarks,
+            created_at
+
+            FROM coin_transactions
+
+            WHERE board_id = $1
+
+            ORDER BY created_at DESC
+        `, [board_id]);
+
+        res.json(transactions.rows);
+
+    }
+    catch (err) {
+
+        console.error(err);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
+});
+
 module.exports = router;
