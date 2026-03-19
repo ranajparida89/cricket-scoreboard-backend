@@ -1590,4 +1590,173 @@ LIMIT 5
     }
 
 });
+router.get('/failed-transactions', async (req, res) => {
+
+    try {
+
+        const data = await pool.query(`
+
+SELECT
+
+f.failed_id,
+f.required_amount,
+f.available_balance,
+f.created_at,
+
+br.board_name,
+ct.tournament_name
+
+FROM failed_transactions f
+
+JOIN board_registration br
+ON br.id=f.board_id
+
+JOIN ce_tournaments ct
+ON ct.tournament_id=f.tournament_id
+
+ORDER BY f.created_at DESC
+
+`);
+
+        res.json(data.rows);
+
+    }
+    catch (err) {
+
+        res.status(500).json({
+            message: "error"
+        });
+
+    }
+
+});
+
+router.post('/tournament-interest', async (req, res) => {
+
+    try {
+
+        const {
+            board_id,
+            tournament_id,
+            interest_status
+        } = req.body;
+
+        await pool.query(`
+
+INSERT INTO tournament_interest_log(
+
+board_id,
+tournament_id,
+interest_status
+
+)
+
+VALUES($1,$2,$3)
+
+`, [
+            board_id,
+            tournament_id,
+            interest_status
+        ]);
+
+        res.json({
+            message: "Interest saved"
+        });
+
+    }
+    catch (err) {
+
+        res.status(500).json({
+            message: "error"
+        });
+
+    }
+
+});
+router.get('/tournament-interest', async (req, res) => {
+
+    try {
+
+        const data = await pool.query(`
+
+SELECT
+
+t.interest_id,
+t.interest_status,
+t.created_at,
+
+br.board_name,
+
+ct.tournament_name
+
+FROM tournament_interest_log t
+
+JOIN board_registration br
+ON br.id=t.board_id
+
+JOIN ce_tournaments ct
+ON ct.tournament_id=t.tournament_id
+
+ORDER BY t.created_at DESC
+
+`);
+
+        res.json(data.rows);
+
+    }
+    catch (err) {
+
+        res.status(500).json({
+            message: "error"
+        });
+
+    }
+
+});
+
+/* ==========================================
+MATCH REWARD AUDIT
+========================================== */
+
+router.get('/transactions/all-match-rewards', async (req, res) => {
+
+    try {
+
+        const data = await pool.query(`
+
+SELECT
+
+ct.transaction_id,
+ct.board_id,
+ct.amount,
+ct.balance_before,
+ct.balance_after,
+ct.reference_id,
+ct.created_at,
+
+br.board_name
+
+FROM coin_transactions ct
+
+JOIN board_registration br
+ON br.id=ct.board_id
+
+WHERE ct.transaction_type='MATCH_WIN'
+
+ORDER BY ct.created_at DESC
+
+`);
+
+        res.json(data.rows);
+
+    }
+    catch (err) {
+
+        res.status(500).json({
+            message: "error"
+        });
+
+    }
+
+});
 module.exports = router;
