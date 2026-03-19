@@ -1397,4 +1397,51 @@ WHERE tournament_id=$1
     }
 
 });
+/* ==========================================
+FUNDS LEADERBOARD
+========================================== */
+
+router.get('/leaderboard', async (req, res) => {
+
+    try {
+
+        const data = await pool.query(`
+
+SELECT
+
+br.board_name,
+
+bw.balance,
+
+bw.total_earned,
+
+bw.total_spent,
+
+bw.wallet_status
+
+FROM board_wallet bw
+
+JOIN board_registration br
+ON bw.board_id = br.id
+
+ORDER BY bw.balance DESC
+
+`);
+
+        res.json(data.rows);
+
+    }
+    catch (err) {
+
+        console.error("Leaderboard error:", err);
+
+        res.status(500).json({
+
+            message: "Server error"
+
+        });
+
+    }
+
+});
 module.exports = router;
