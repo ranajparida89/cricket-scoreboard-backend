@@ -1492,4 +1492,88 @@ ORDER BY ct.created_at DESC
     }
 
 });
+
+/* ==========================================
+FUNDS ANALYTICS
+========================================== */
+
+router.get('/analytics', async (req, res) => {
+
+    try {
+
+        const summary = await pool.query(`
+
+SELECT
+
+SUM(balance) total_balance,
+
+SUM(total_earned) total_earned,
+
+SUM(total_spent) total_spent
+
+FROM board_wallet
+
+`);
+
+        const topBoards = await pool.query(`
+
+SELECT
+
+br.board_name,
+bw.total_earned
+
+FROM board_wallet bw
+
+JOIN board_registration br
+ON bw.board_id = br.id
+
+ORDER BY bw.total_earned DESC
+
+LIMIT 5
+
+`);
+
+        const tournaments = await pool.query(`
+
+SELECT
+
+ct.tournament_name,
+
+rb.total_collected
+
+FROM reward_bank rb
+
+JOIN ce_tournaments ct
+ON rb.tournament_id=ct.tournament_id
+
+ORDER BY rb.total_collected DESC
+
+LIMIT 5
+
+`);
+
+        res.json({
+
+            summary: summary.rows[0],
+
+            topBoards: topBoards.rows,
+
+            tournaments: tournaments.rows
+
+        });
+
+    }
+    catch (err) {
+
+        console.error(err);
+
+        res.status(500).json({
+
+            message: "Server error"
+
+        });
+
+    }
+
+});
 module.exports = router;
