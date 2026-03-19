@@ -102,28 +102,6 @@ router.delete('/delete/:id', requireAdminAuth, async (req, res) => {
       [adminId]
     );
     const admin = result.rows[0];
-    // Get board linked to this admin email
-    let boardId = null;
-
-    try {
-
-      const boardRes = await pool.query(
-        `SELECT id 
-     FROM board_registration 
-     WHERE LOWER(owner_email)=LOWER($1)
-     LIMIT 1`,
-        [admin.email]
-      );
-
-      if (boardRes.rows.length > 0) {
-        boardId = boardRes.rows[0].id;
-      }
-
-    } catch (e) {
-
-      console.log("Board lookup failed", e);
-
-    }
     if (!admin) {
       return res.status(404).json({ error: "Admin not found." });
     }
@@ -266,7 +244,6 @@ router.post('/login', async (req, res) => {
     res.json({
       isAdmin: true,
       token,
-      board_id: boardId,   // ADD THIS LINE
       admin: {
         id: admin.id,
         username: admin.username,
@@ -311,8 +288,8 @@ router.post('/add-team', requireAdminAuth, async (req, res) => {
     }
 
     // Insert new team with zero stats
-    await pool.query(
-      `INSERT INTO teams
+   await pool.query(
+  `INSERT INTO teams
    (match_id, name, matches_played, wins, losses, points,
     total_runs, total_overs, total_runs_conceded,
     total_overs_bowled, nrr, matches, user_id)
@@ -320,8 +297,8 @@ router.post('/add-team', requireAdminAuth, async (req, res) => {
    (NULL, $1, 0, 0, 0, 0,
     0, 0, 0,
     0, 0, 0, NULL)`,
-      [cleanName]
-    );
+  [cleanName]
+);
 
     res.json({ success: true, message: "Team added successfully." });
 
