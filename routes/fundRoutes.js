@@ -1505,13 +1505,29 @@ router.get('/analytics', async (req, res) => {
 
 SELECT
 
-SUM(balance) total_balance,
+SUM(balance) as current_total_funds,
 
-SUM(total_earned) total_earned,
+SUM(total_earned) as lifetime_funds_added,
 
-SUM(total_spent) total_spent
+SUM(total_spent) as total_entry_fees
 
 FROM board_wallet
+
+`);
+
+        const rewards = await pool.query(`
+
+SELECT COALESCE(SUM(amount),0) as total_rewards_distributed
+
+FROM coin_transactions
+
+WHERE transaction_type IN (
+
+'TOURNAMENT_WINNER',
+'TOURNAMENT_RUNNER',
+'MATCH_WIN'
+
+)
 
 `);
 
@@ -1538,7 +1554,6 @@ LIMIT 5
 SELECT
 
 ct.tournament_name,
-
 rb.total_collected
 
 FROM reward_bank rb
@@ -1554,7 +1569,12 @@ LIMIT 5
 
         res.json({
 
-            summary: summary.rows[0],
+            summary: {
+                current_total_funds: summary.rows[0].current_total_funds,
+                lifetime_funds_added: summary.rows[0].lifetime_funds_added,
+                total_entry_fees: summary.rows[0].total_entry_fees,
+                total_rewards_distributed: rewards.rows[0].total_rewards_distributed
+            },
 
             topBoards: topBoards.rows,
 
@@ -1565,13 +1585,7 @@ LIMIT 5
     }
     catch (err) {
 
-        console.error(err);
-
-        res.status(500).json({
-
-            message: "Server error"
-
-        });
+        res.status(500).json({ message: "Server error" });
 
     }
 
