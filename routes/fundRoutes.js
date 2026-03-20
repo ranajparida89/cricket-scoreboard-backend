@@ -1617,6 +1617,58 @@ ORDER BY f.created_at DESC
 
 });
 
+/* ==========================================
+TOURNAMENT INTEREST LOG VIEW
+(Admin view)
+========================================== */
+
+router.get('/tournament-interest', async (req, res) => {
+
+    try {
+
+        const data = await pool.query(`
+
+SELECT
+
+til.interest_id,
+
+br.board_name,
+
+ct.tournament_name,
+
+til.interest_status,
+
+til.created_at
+
+FROM tournament_interest_log til
+
+JOIN board_registration br
+ON br.id = til.board_id
+
+JOIN ce_tournaments ct
+ON ct.tournament_id = til.tournament_id
+
+ORDER BY til.created_at DESC
+
+`);
+
+        res.json(data.rows);
+
+    }
+    catch (err) {
+
+        console.error("INTEREST FETCH ERROR:", err);
+
+        res.status(500).json({
+
+            message: "Server error"
+
+        });
+
+    }
+
+});
+
 router.post('/tournament-interest', async (req, res) => {
 
     try {
@@ -1627,7 +1679,7 @@ router.post('/tournament-interest', async (req, res) => {
             interest_status
         } = req.body;
 
-        if (!Number.isInteger(board_id) || !tournament_id) {
+        if (!board_id || !tournament_id) {
             return res.status(400).json({
                 message: "Board and tournament required"
             });
