@@ -1593,7 +1593,7 @@ router.post('/tournament-interest', async (req, res) => {
             interest_status
         } = req.body;
 
-        if (!board_id || !tournament_id) {
+        if (!Number.isInteger(board_id) || !tournament_id) {
             return res.status(400).json({
                 message: "Board and tournament required"
             });
