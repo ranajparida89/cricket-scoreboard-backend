@@ -1380,7 +1380,7 @@ ORDER BY bw.balance DESC
 
 `);
 
-        res.json(data.rows);
+        res.json(data.rows || []);
 
     }
     catch (err) {
@@ -1462,7 +1462,7 @@ ORDER BY rb.created_at DESC
 
 `);
 
-        res.json(data.rows);
+        res.json(data.rows || []);
 
     }
     catch (err) {
@@ -1652,7 +1652,7 @@ ORDER BY til.created_at DESC
 
 `);
 
-        res.json(data.rows);
+       res.json(data.rows || []);
 
     }
     catch (err) {
@@ -1697,10 +1697,18 @@ interest_status
 
 VALUES($1,$2,$3)
 
+ON CONFLICT (board_id,tournament_id)
+
+DO UPDATE SET
+interest_status = EXCLUDED.interest_status,
+created_at = NOW()
+
 `, [
-            board_id,
+
+            parseInt(board_id),
             tournament_id,
             interest_status || 'NOT_INTERESTED'
+
         ]);
 
         res.json({
