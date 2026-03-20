@@ -1593,6 +1593,12 @@ router.post('/tournament-interest', async (req, res) => {
             interest_status
         } = req.body;
 
+        if (!board_id || !tournament_id) {
+            return res.status(400).json({
+                message: "Board and tournament required"
+            });
+        }
+
         await pool.query(`
 
 INSERT INTO tournament_interest_log(
@@ -1608,7 +1614,7 @@ VALUES($1,$2,$3)
 `, [
             board_id,
             tournament_id,
-            interest_status
+            interest_status || 'NOT_INTERESTED'
         ]);
 
         res.json({
@@ -1618,48 +1624,10 @@ VALUES($1,$2,$3)
     }
     catch (err) {
 
-        res.status(500).json({
-            message: "error"
-        });
-
-    }
-
-});
-router.get('/tournament-interest', async (req, res) => {
-
-    try {
-
-        const data = await pool.query(`
-
-SELECT
-
-t.interest_id,
-t.interest_status,
-t.created_at,
-
-br.board_name,
-
-ct.tournament_name
-
-FROM tournament_interest_log t
-
-JOIN board_registration br
-ON br.id=t.board_id
-
-JOIN ce_tournaments ct
-ON ct.tournament_id=t.tournament_id
-
-ORDER BY t.created_at DESC
-
-`);
-
-        res.json(data.rows);
-
-    }
-    catch (err) {
+        console.error("INTEREST ERROR:", err);
 
         res.status(500).json({
-            message: "error"
+            message: err.message
         });
 
     }
