@@ -1583,37 +1583,32 @@ router.get('/failed-transactions', async (req, res) => {
         const data = await pool.query(`
 
 SELECT
-
 f.failed_id,
 f.required_amount,
 f.available_balance,
 f.created_at,
-
-br.board_name,
-ct.tournament_name
-
+COALESCE(br.board_name,'Unknown') as board_name,
+COALESCE(ct.tournament_name,'Unknown') as tournament_name
 FROM failed_transactions f
-
-JOIN board_registration br
-ON br.id=f.board_id
-
-JOIN ce_tournaments ct
-ON ct.tournament_id=f.tournament_id
-
+LEFT JOIN board_registration br
+ON br.id = f.board_id
+LEFT JOIN ce_tournaments ct
+ON ct.tournament_id = f.tournament_id
 ORDER BY f.created_at DESC
-
 `);
 
         res.json(data.rows);
 
     }
-    catch (err) {
+catch (err) {
 
-        res.status(500).json({
-            message: "error"
-        });
+console.error("FAILED TX ERROR:",err);
 
-    }
+res.status(500).json({
+message:err.message
+});
+
+}
 
 });
 
