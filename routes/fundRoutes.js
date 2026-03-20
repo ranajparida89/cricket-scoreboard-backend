@@ -1397,7 +1397,8 @@ ORDER BY bw.balance DESC
 
 });
 /* ==========================================
-REWARD BANK VIEW
+REWARD BANK DASHBOARD
+Financial pool overview
 ========================================== */
 
 router.get('/reward-banks', async (req, res) => {
@@ -1408,6 +1409,8 @@ router.get('/reward-banks', async (req, res) => {
 
 SELECT
 
+rb.reward_bank_id,
+
 ct.tournament_id,
 ct.tournament_name,
 ct.tournament_type,
@@ -1417,14 +1420,45 @@ rb.total_collected,
 rb.total_distributed,
 rb.remaining_balance,
 
-ct.tournament_status
+ct.tournament_status,
+
+rb.created_at,
+
+CASE
+
+WHEN rb.total_collected = 0
+THEN 0
+
+ELSE ROUND(
+(rb.total_distributed::numeric /
+rb.total_collected::numeric)*100
+)
+
+END as distribution_percent,
+
+CASE
+
+WHEN rb.remaining_balance = 0
+THEN 'EMPTY'
+
+WHEN rb.remaining_balance <
+(rb.total_collected * 0.20)
+THEN 'LOW'
+
+WHEN rb.remaining_balance <
+(rb.total_collected * 0.50)
+THEN 'MODERATE'
+
+ELSE 'HEALTHY'
+
+END as pool_health
 
 FROM reward_bank rb
 
 JOIN ce_tournaments ct
 ON rb.tournament_id = ct.tournament_id
 
-ORDER BY ct.created_at DESC
+ORDER BY rb.created_at DESC
 
 `);
 
