@@ -272,9 +272,10 @@ AND board_id=$2
 
             const wallet = await client.query(`
 
-SELECT wallet_id,balance
+SELECT wallet_id,balance,wallet_status
 FROM board_wallet
 WHERE board_id=$1
+FOR UPDATE
 
 `, [board_id]);
 
@@ -1367,22 +1368,14 @@ router.get('/leaderboard', async (req, res) => {
         const data = await pool.query(`
 
 SELECT
-
 br.board_name,
-
 bw.balance,
-
 bw.total_earned,
-
 bw.total_spent,
-
 bw.wallet_status
-
 FROM board_wallet bw
-
 JOIN board_registration br
 ON bw.board_id = br.id
-
 ORDER BY bw.balance DESC
 
 `);
@@ -1743,6 +1736,46 @@ router.get('/transactions/:board_id', async (req, res) => {
     catch (err) {
 
         console.error(err);
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
+});
+
+/* GET BOARD BY OWNER EMAIL */
+
+router.get('/by-owner/:email', async (req, res) => {
+
+    try {
+
+        const { email } = req.params;
+
+        const board = await pool.query(`
+
+SELECT 
+id as board_id,
+board_name,
+owner_email
+FROM board_registration
+WHERE owner_email=$1
+
+`, [email]);
+
+        if (board.rows.length === 0) {
+
+            return res.status(404).json({
+                message: "Board not found"
+            });
+
+        }
+
+        res.json(board.rows[0]);
+
+    }
+    catch (err) {
 
         res.status(500).json({
             message: "Server error"
