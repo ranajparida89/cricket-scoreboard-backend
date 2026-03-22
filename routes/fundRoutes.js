@@ -1600,15 +1600,15 @@ ORDER BY f.created_at DESC
         res.json(data.rows);
 
     }
-catch (err) {
+    catch (err) {
 
-console.error("FAILED TX ERROR:",err);
+        console.error("FAILED TX ERROR:", err);
 
-res.status(500).json({
-message:err.message
-});
+        res.status(500).json({
+            message: err.message
+        });
 
-}
+    }
 
 });
 
@@ -1647,7 +1647,7 @@ ORDER BY til.created_at DESC
 
 `);
 
-       res.json(data.rows || []);
+        res.json(data.rows || []);
 
     }
     catch (err) {
