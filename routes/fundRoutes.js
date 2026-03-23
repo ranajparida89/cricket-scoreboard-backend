@@ -297,6 +297,8 @@ FOR UPDATE
 
             if (balance < entryFee) {
 
+                /* LOG FAILED FUNDING */
+
                 await client.query(`
 
 INSERT INTO failed_transactions(
@@ -311,16 +313,26 @@ reason
 
 VALUES($1,$2,$3,$4,'INSUFFICIENT_FUNDS')
 
-`, [board_id, tournament_id, entryFee, balance]);
+`, [
 
-                await client.query('ROLLBACK');
+                    board_id,
+                    tournament_id,
+                    entryFee,
+                    balance
+
+                ]);
+
+                /* COMMIT FAILED RECORD */
+
+                await client.query('COMMIT');
 
                 return res.status(400).json({
+
                     message: "Insufficient funds"
+
                 });
 
             }
-
 
             /* DEDUCT ENTRY FEE */
 
