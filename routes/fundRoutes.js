@@ -1710,6 +1710,7 @@ IN ('PENDING','ACTIVE')
         /* CALCULATE INTEREST */
 
         const interestRate = 12;
+        const penaltyRate = 3;
 
         const interestAmount =
             Math.floor(
@@ -1721,7 +1722,6 @@ IN ('PENDING','ACTIVE')
 
 
         /* CREATE LOAN */
-
         await pool.query(`
 
 INSERT INTO board_loans(
@@ -1730,7 +1730,9 @@ board_id,
 tournament_id,
 loan_amount,
 interest_rate,
+penalty_rate,
 interest_amount,
+penalty_amount,
 total_payable,
 remaining_amount,
 loan_status,
@@ -1740,7 +1742,7 @@ remarks
 
 VALUES(
 
-$1,$2,$3,$4,$5,$6,$7,'PENDING',
+$1,$2,$3,$4,$5,$6,$7,$8,$9,'PENDING',
 'Loan requested for tournament entry'
 
 )
@@ -1751,12 +1753,13 @@ $1,$2,$3,$4,$5,$6,$7,'PENDING',
             tournament_id,
             loanAmount,
             interestRate,
+            3,                // penalty rate
             interestAmount,
+            0,                // penalty amount initially 0
             totalPayable,
             totalPayable
 
         ]);
-
 
         res.json({
 
