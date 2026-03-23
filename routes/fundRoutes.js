@@ -2666,4 +2666,61 @@ loan_outstanding = loan_outstanding - $1
 
 });
 
+// ============================================
+// CHECK OVERDUE LOANS
+// ============================================
+
+router.post("/check-overdue-loans", async (req, res) => {
+
+    const client = await pool.connect();
+
+    try {
+
+        await client.query("BEGIN");
+
+        const overdueLoans = await client.query(`
+
+UPDATE board_loans
+SET loan_status='OVERDUE'
+
+WHERE loan_status='ACTIVE'
+AND remaining_amount > 0
+AND due_date < NOW()
+
+RETURNING loan_id,board_id,total_payable,remaining_amount,due_date
+
+`);
+
+        await client.query("COMMIT");
+
+        res.json({
+
+            message: "Overdue check completed",
+            overdue_count: overdueLoans.rows.length,
+            loans: overdueLoans.rows
+
+        });
+
+    }
+    catch (err) {
+
+        await client.query("ROLLBACK");
+
+        console.log("OVERDUE ERROR:", err);
+
+        res.status(500).json({
+
+            message: "Overdue check failed"
+
+        });
+
+    }
+    finally {
+
+        client.release();
+
+    }
+
+});
+
 module.exports = router;
