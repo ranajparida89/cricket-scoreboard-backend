@@ -2514,4 +2514,154 @@ WHERE failed_id=$1
 
 });
 
+// ============================================
+// REPAY LOAN
+// ============================================
+router.post("/repay-loan", async (req, res) => {
+
+    const { loan_id, amount } = req.body;
+
+    const client = await pool.connect();
+
+    try {
+
+        await client.query("BEGIN");
+
+        const loanData = await client.query(`
+SELECT *
+FROM board_loans
+WHERE loan_id=$1
+FOR UPDATE
+`, [loan_id]);
+
+        if (loanData.rows.length === 0) {
+            return res.status(404).json({
+                message: "Loan not found"
+            });
+        }
+
+        const loan = loanData.rows[0];
+
+        if (loan.loan_status !== "ACTIVE") {
+            return res.status(400).json({
+                message: "Loan not active"
+            });
+        }
+
+        if (amount <= 0) {
+            return res.status(400).json({
+                message: "Invalid amount"
+            });
+        }
+
+        if (amount > loan.remaining_amount) {
+            return res.status(400).json({
+                message: "Amount exceeds remaining loan"
+            });
+        }
+
+        const walletData = await client.query(`
+SELECT *
+FROM board_wallet
+WHERE board_id=$1
+FOR UPDATE
+`, [loan.board_id]);
+
+        const wallet = walletData.rows[0];
+
+        if (wallet.balance < amount) {
+
+            return res.status(400).json({
+                message: "Insufficient wallet balance"
+            });
+
+        }
+
+        const newBalance = wallet.balance - amount;
+
+        await client.query(`
+UPDATE board_wallet
+SET balance=$1
+WHERE board_id=$2
+`, [newBalance, loan.board_id]);
+
+        const remaining = loan.remaining_amount - amount;
+
+        let status = "ACTIVE";
+
+        if (remaining === 0) {
+            status = "CLOSED";
+        }
+
+        await client.query(`
+UPDATE board_loans
+SET remaining_amount=$1,
+loan_status=$2
+WHERE loan_id=$3
+`, [
+            remaining,
+            status,
+            loan_id
+        ]);
+
+        await client.query(`
+INSERT INTO loan_transactions(
+loan_id,
+board_id,
+amount,
+balance_after,
+txn_type,
+remarks
+)
+VALUES($1,$2,$3,$4,$5,$6)
+`, [
+            loan_id,
+            loan.board_id,
+            amount,
+            remaining,
+            "REPAYMENT",
+            "Loan repayment"
+        ]);
+
+        await client.query(`
+UPDATE central_bank_wallet
+SET 
+available_liquidity = available_liquidity + $1,
+recovered_amount = recovered_amount + $1,
+loan_outstanding = loan_outstanding - $1
+`, [amount]);
+
+        await client.query("COMMIT");
+
+        res.json({
+
+            message: "Payment successful",
+            paid: amount,
+            remaining_amount: remaining,
+            loan_status: status
+
+        });
+
+    }
+    catch (err) {
+
+        await client.query("ROLLBACK");
+
+        console.log("REPAY ERROR:", err);
+
+        res.status(500).json({
+
+            message: "Repayment failed"
+
+        });
+
+    }
+    finally {
+
+        client.release();
+
+    }
+
+});
+
 module.exports = router;
