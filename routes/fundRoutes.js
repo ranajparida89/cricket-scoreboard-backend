@@ -3176,4 +3176,275 @@ last_updated = NOW()
     }
 
 });
+
+// ============================================
+// CALCULATE BOARD FINANCIAL RATING
+// ============================================
+
+router.post("/calculate-ratings", async (req, res) => {
+
+    try {
+
+        const boards = await pool.query(`
+
+SELECT id FROM board_registration
+
+`);
+
+        let results = [];
+
+        for (const board of boards.rows) {
+
+            const stats = await pool.query(`
+
+SELECT
+
+COUNT(*) as total_loans,
+
+COUNT(*) FILTER(
+WHERE loan_status='CLOSED'
+) as closed,
+
+COUNT(*) FILTER(
+WHERE loan_status='DEFAULTED'
+) as defaults,
+
+COUNT(*) FILTER(
+WHERE loan_status='OVERDUE'
+) as overdues,
+
+COALESCE(
+SUM(loan_amount),0
+) as total_taken
+
+FROM board_loans
+
+WHERE board_id=$1
+
+`, [board.id]);
+
+            let score = 750;
+
+            score += stats.rows[0].closed * 10;
+
+            score -= stats.rows[0].defaults * 50;
+
+            score -= stats.rows[0].overdues * 20;
+
+            let rating = "BBB";
+
+            if (score >= 850) rating = "AAA";
+            else if (score >= 800) rating = "AA";
+            else if (score >= 750) rating = "A";
+            else if (score >= 650) rating = "BBB";
+            else if (score >= 550) rating = "BB";
+            else if (score >= 450) rating = "C";
+            else rating = "D";
+
+            await pool.query(`
+
+INSERT INTO board_financial_rating(
+
+board_id,
+credit_score,
+rating,
+total_loans,
+loans_closed,
+defaults,
+overdues
+
+)
+
+VALUES($1,$2,$3,$4,$5,$6,$7)
+
+ON CONFLICT(board_id)
+
+DO UPDATE SET
+
+credit_score=$2,
+rating=$3,
+total_loans=$4,
+loans_closed=$5,
+defaults=$6,
+overdues=$7,
+last_calculated=NOW()
+
+`, [
+
+                board.id,
+                score,
+                rating,
+                stats.rows[0].total_loans,
+                stats.rows[0].closed,
+                stats.rows[0].defaults,
+                stats.rows[0].overdues
+
+            ]);
+
+            results.push({
+
+                board_id: board.id,
+                score,
+                rating
+
+            });
+
+        }
+
+        res.json({
+
+            message: "Ratings calculated",
+            boards: results
+
+        });
+
+    }
+    catch (err) {
+
+        console.log(err);
+
+        res.status(500).json({
+
+            message: "Rating calculation failed"
+
+        });
+
+    }
+
+});
+// ============================================
+// CALCULATE BOARD FINANCIAL RATING
+// ============================================
+
+router.post("/calculate-ratings", async (req, res) => {
+
+    try {
+
+        const boards = await pool.query(`
+
+SELECT id FROM board_registration
+
+`);
+
+        let results = [];
+
+        for (const board of boards.rows) {
+
+            const stats = await pool.query(`
+
+SELECT
+
+COUNT(*) as total_loans,
+
+COUNT(*) FILTER(
+WHERE loan_status='CLOSED'
+) as closed,
+
+COUNT(*) FILTER(
+WHERE loan_status='DEFAULTED'
+) as defaults,
+
+COUNT(*) FILTER(
+WHERE loan_status='OVERDUE'
+) as overdues,
+
+COALESCE(
+SUM(loan_amount),0
+) as total_taken
+
+FROM board_loans
+
+WHERE board_id=$1
+
+`, [board.id]);
+
+            let score = 750;
+
+            score += stats.rows[0].closed * 10;
+
+            score -= stats.rows[0].defaults * 50;
+
+            score -= stats.rows[0].overdues * 20;
+
+            let rating = "BBB";
+
+            if (score >= 850) rating = "AAA";
+            else if (score >= 800) rating = "AA";
+            else if (score >= 750) rating = "A";
+            else if (score >= 650) rating = "BBB";
+            else if (score >= 550) rating = "BB";
+            else if (score >= 450) rating = "C";
+            else rating = "D";
+
+            await pool.query(`
+
+INSERT INTO board_financial_rating(
+
+board_id,
+credit_score,
+rating,
+total_loans,
+loans_closed,
+defaults,
+overdues
+
+)
+
+VALUES($1,$2,$3,$4,$5,$6,$7)
+
+ON CONFLICT(board_id)
+
+DO UPDATE SET
+
+credit_score=$2,
+rating=$3,
+total_loans=$4,
+loans_closed=$5,
+defaults=$6,
+overdues=$7,
+last_calculated=NOW()
+
+`, [
+
+                board.id,
+                score,
+                rating,
+                stats.rows[0].total_loans,
+                stats.rows[0].closed,
+                stats.rows[0].defaults,
+                stats.rows[0].overdues
+
+            ]);
+
+            results.push({
+
+                board_id: board.id,
+                score,
+                rating
+
+            });
+
+        }
+
+        res.json({
+
+            message: "Ratings calculated",
+            boards: results
+
+        });
+
+    }
+    catch (err) {
+
+        console.log(err);
+
+        res.status(500).json({
+
+            message: "Rating calculation failed"
+
+        });
+
+    }
+
+});
 module.exports = router;
