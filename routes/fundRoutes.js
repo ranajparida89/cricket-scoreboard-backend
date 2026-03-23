@@ -1613,6 +1613,169 @@ ORDER BY f.created_at DESC
 });
 
 /* ==========================================
+REQUEST LOAN
+Board requests loan after insufficient funds
+========================================== */
+
+router.post('/request-loan', async (req, res) => {
+
+    try {
+
+        const { board_id, tournament_id } = req.body;
+
+        if (!board_id || !tournament_id) {
+
+            return res.status(400).json({
+
+                message: "Board and tournament required"
+
+            });
+
+        }
+
+
+        /* CHECK FAILED TRANSACTION */
+
+        const failed = await pool.query(`
+
+SELECT required_amount,available_balance
+
+FROM failed_transactions
+
+WHERE board_id=$1
+AND tournament_id=$2
+
+ORDER BY created_at DESC
+
+LIMIT 1
+
+`, [board_id, tournament_id]);
+
+
+        if (failed.rows.length === 0) {
+
+            return res.status(400).json({
+
+                message: "No failed funding record found"
+
+            });
+
+        }
+
+
+        const loanAmount =
+            failed.rows[0].required_amount;
+
+
+        /* PREVENT DUPLICATE LOAN */
+
+        const existingLoan =
+            await pool.query(`
+
+SELECT loan_id
+
+FROM board_loans
+
+WHERE board_id=$1
+AND tournament_id=$2
+AND loan_status
+IN ('PENDING','ACTIVE')
+
+`, [board_id, tournament_id]);
+
+
+        if (existingLoan.rows.length > 0) {
+
+            return res.status(400).json({
+
+                message: "Loan already requested"
+
+            });
+
+        }
+
+
+        /* CALCULATE INTEREST */
+
+        const interestRate = 12;
+
+        const interestAmount =
+            Math.floor(
+                loanAmount * interestRate / 100
+            );
+
+        const totalPayable =
+            loanAmount + interestAmount;
+
+
+        /* CREATE LOAN */
+
+        await pool.query(`
+
+INSERT INTO board_loans(
+
+board_id,
+tournament_id,
+loan_amount,
+interest_rate,
+interest_amount,
+total_payable,
+remaining_amount,
+loan_status,
+remarks
+
+)
+
+VALUES(
+
+$1,$2,$3,$4,$5,$6,$7,'PENDING',
+'Loan requested for tournament entry'
+
+)
+
+`, [
+
+            board_id,
+            tournament_id,
+            loanAmount,
+            interestRate,
+            interestAmount,
+            totalPayable,
+            totalPayable
+
+        ]);
+
+
+        res.json({
+
+            message: "Loan request submitted",
+
+            loan_amount: loanAmount,
+
+            interest: interestAmount,
+
+            total_payable: totalPayable,
+
+            status: "PENDING_APPROVAL"
+
+        });
+
+    }
+    catch (err) {
+
+        console.error("LOAN REQUEST ERROR:", err);
+
+        res.status(500).json({
+
+            message: "Loan request failed"
+
+        });
+
+    }
+
+});
+
+/* ==========================================
 TOURNAMENT INTEREST LOG VIEW
 (Admin view)
 ========================================== */
