@@ -2723,4 +2723,118 @@ RETURNING loan_id,board_id,total_payable,remaining_amount,due_date
 
 });
 
+// ============================================
+// APPLY PENALTY ON OVERDUE LOANS
+// ============================================
+
+router.post("/apply-penalty", async (req, res) => {
+
+    const client = await pool.connect();
+
+    try {
+
+        await client.query("BEGIN");
+
+        const overdueLoans = await client.query(`
+
+SELECT *
+FROM board_loans
+WHERE loan_status='OVERDUE'
+AND remaining_amount > 0
+
+FOR UPDATE
+
+`);
+
+        let updatedLoans = [];
+
+        for (const loan of overdueLoans.rows) {
+
+            const penalty = Math.floor(
+                loan.remaining_amount * loan.penalty_rate / 100
+            );
+
+            const newRemaining = loan.remaining_amount + penalty;
+
+            await client.query(`
+
+UPDATE board_loans
+SET 
+penalty_amount = COALESCE(penalty_amount,0) + $1,
+remaining_amount=$2,
+total_payable = total_payable + $1
+
+WHERE loan_id=$3
+
+`, [
+                penalty,
+                newRemaining,
+                loan.loan_id
+            ]);
+
+            await client.query(`
+
+INSERT INTO loan_transactions(
+loan_id,
+board_id,
+amount,
+balance_after,
+transaction_type,
+remarks,
+balance_before
+)
+
+VALUES($1,$2,$3,$4,$5,$6,$7)
+
+`, [
+                loan.loan_id,
+                loan.board_id,
+                penalty,
+                newRemaining,
+                "PENALTY",
+                "Overdue penalty applied",
+                loan.remaining_amount
+            ]);
+
+            updatedLoans.push({
+
+                loan_id: loan.loan_id,
+                penalty: penalty,
+                new_remaining: newRemaining
+
+            });
+
+        }
+
+        await client.query("COMMIT");
+
+        res.json({
+
+            message: "Penalty applied",
+            count: updatedLoans.length,
+            loans: updatedLoans
+
+        });
+
+    }
+    catch (err) {
+
+        await client.query("ROLLBACK");
+
+        console.log("PENALTY ERROR:", err);
+
+        res.status(500).json({
+
+            message: "Penalty failed"
+
+        });
+
+    }
+    finally {
+
+        client.release();
+
+    }
+
+});
 module.exports = router;
