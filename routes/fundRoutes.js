@@ -2431,6 +2431,44 @@ total_loans_given + $1
 
 `, [loanAmount]);
 
+            /* STEP 5 — AUTO RESOLVE FAILED FUNDING */
+
+            const failed =
+                await client.query(`
+
+SELECT *
+
+FROM failed_transactions
+
+WHERE board_id=$1
+AND status='PENDING'
+
+ORDER BY created_at DESC
+
+LIMIT 1
+
+`, [boardId]);
+
+
+            if (failed.rows.length > 0) {
+
+                await client.query(`
+
+UPDATE failed_transactions
+
+SET status='RESOLVED',
+resolved_at=NOW()
+
+WHERE failed_id=$1
+
+`, [failed.rows[0].failed_id]);
+
+            }
+
+
+            /* COMMIT */
+
+
 
             await client.query('COMMIT');
 
