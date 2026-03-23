@@ -2649,7 +2649,24 @@ VALUES($1,$2,$3,$4,$5,$6,$7)
             wallet.balance
         ]);
 
-        loan_outstanding = loan_outstanding - $1
+        await client.query(`
+
+UPDATE central_bank_wallet
+
+SET
+
+loan_outstanding =
+GREATEST(loan_outstanding - $1,0),
+
+recovered_amount =
+recovered_amount + $1,
+
+available_liquidity =
+available_liquidity + $1,
+
+last_updated = NOW()
+
+`, [amount]);
 
         await client.query("COMMIT");
 
@@ -3313,125 +3330,43 @@ last_calculated=NOW()
 
 });
 // ============================================
-// CALCULATE BOARD FINANCIAL RATING
+// GET FINANCIAL RATINGS
 // ============================================
 
-router.post("/calculate-ratings", async (req, res) => {
+router.get("/financial-ratings", async (req, res) => {
 
     try {
 
-        const boards = await pool.query(`
-
-SELECT id FROM board_registration
-
-`);
-
-        let results = [];
-
-        for (const board of boards.rows) {
-
-            const stats = await pool.query(`
+        const data = await pool.query(`
 
 SELECT
 
-COUNT(*) as total_loans,
+br.board_name,
 
-COUNT(*) FILTER(
-WHERE loan_status='CLOSED'
-) as closed,
+bfr.credit_score,
 
-COUNT(*) FILTER(
-WHERE loan_status='DEFAULTED'
-) as defaults,
+bfr.rating,
 
-COUNT(*) FILTER(
-WHERE loan_status='OVERDUE'
-) as overdues,
+bfr.total_loans,
 
-COALESCE(
-SUM(loan_amount),0
-) as total_taken
+bfr.loans_closed,
 
-FROM board_loans
+bfr.defaults,
 
-WHERE board_id=$1
+bfr.overdues,
 
-`, [board.id]);
+bfr.last_calculated
 
-            let score = 750;
+FROM board_financial_rating bfr
 
-            score += stats.rows[0].closed * 10;
+JOIN board_registration br
+ON br.id = bfr.board_id
 
-            score -= stats.rows[0].defaults * 50;
+ORDER BY bfr.credit_score DESC
 
-            score -= stats.rows[0].overdues * 20;
+`);
 
-            let rating = "BBB";
-
-            if (score >= 850) rating = "AAA";
-            else if (score >= 800) rating = "AA";
-            else if (score >= 750) rating = "A";
-            else if (score >= 650) rating = "BBB";
-            else if (score >= 550) rating = "BB";
-            else if (score >= 450) rating = "C";
-            else rating = "D";
-
-            await pool.query(`
-
-INSERT INTO board_financial_rating(
-
-board_id,
-credit_score,
-rating,
-total_loans,
-loans_closed,
-defaults,
-overdues
-
-)
-
-VALUES($1,$2,$3,$4,$5,$6,$7)
-
-ON CONFLICT(board_id)
-
-DO UPDATE SET
-
-credit_score=$2,
-rating=$3,
-total_loans=$4,
-loans_closed=$5,
-defaults=$6,
-overdues=$7,
-last_calculated=NOW()
-
-`, [
-
-                board.id,
-                score,
-                rating,
-                stats.rows[0].total_loans,
-                stats.rows[0].closed,
-                stats.rows[0].defaults,
-                stats.rows[0].overdues
-
-            ]);
-
-            results.push({
-
-                board_id: board.id,
-                score,
-                rating
-
-            });
-
-        }
-
-        res.json({
-
-            message: "Ratings calculated",
-            boards: results
-
-        });
+        res.json(data.rows);
 
     }
     catch (err) {
@@ -3440,7 +3375,7 @@ last_calculated=NOW()
 
         res.status(500).json({
 
-            message: "Rating calculation failed"
+            message: "Failed to fetch ratings"
 
         });
 
