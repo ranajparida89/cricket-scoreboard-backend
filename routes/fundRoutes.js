@@ -2191,4 +2191,289 @@ last_updated=NOW()
 
 });
 
+/* ==========================================
+APPROVE LOAN
+Admin approval and wallet credit
+========================================== */
+
+router.post('/approve-loan', async (req, res) => {
+
+    try {
+
+        const { loan_id, approved_by } = req.body;
+
+        if (!loan_id) {
+
+            return res.status(400).json({
+
+                message: "Loan id required"
+
+            });
+
+        }
+
+        const client = await pool.connect();
+
+        try {
+
+            await client.query('BEGIN');
+
+
+            /* GET LOAN */
+
+            const loan =
+                await client.query(`
+
+SELECT *
+
+FROM board_loans
+
+WHERE loan_id=$1
+
+FOR UPDATE
+
+`, [loan_id]);
+
+
+            if (loan.rows.length === 0) {
+
+                await client.query('ROLLBACK');
+
+                return res.status(404).json({
+
+                    message: "Loan not found"
+
+                });
+
+            }
+
+
+            if (loan.rows[0].loan_status !== 'PENDING') {
+
+                await client.query('ROLLBACK');
+
+                return res.status(400).json({
+
+                    message: "Loan already processed"
+
+                });
+
+            }
+
+
+            const boardId =
+                loan.rows[0].board_id;
+
+            const loanAmount =
+                loan.rows[0].loan_amount;
+
+            const totalPayable =
+                loan.rows[0].total_payable;
+
+
+            /* GET WALLET */
+
+            const wallet =
+                await client.query(`
+
+SELECT wallet_id,balance
+
+FROM board_wallet
+
+WHERE board_id=$1
+
+FOR UPDATE
+
+`, [boardId]);
+
+
+            const walletId =
+                wallet.rows[0].wallet_id;
+
+            const balanceBefore =
+                wallet.rows[0].balance;
+
+            const balanceAfter =
+                balanceBefore + loanAmount;
+
+
+            /* CREDIT WALLET */
+
+            await client.query(`
+
+UPDATE board_wallet
+
+SET balance=$1,
+total_earned = total_earned + $2
+
+WHERE board_id=$3
+
+`, [
+
+                balanceAfter,
+                loanAmount,
+                boardId
+
+            ]);
+
+
+            /* LEDGER ENTRY */
+
+            await client.query(`
+
+INSERT INTO coin_transactions(
+
+board_id,
+wallet_id,
+transaction_type,
+amount,
+balance_before,
+balance_after,
+reference_id,
+reference_type,
+remarks
+
+)
+
+VALUES(
+
+$1,$2,
+'LOAN_GRANTED',
+$3,
+$4,
+$5,
+$6,
+'LOAN',
+'Central bank loan approved'
+
+)
+
+`, [
+
+                boardId,
+                walletId,
+                loanAmount,
+                balanceBefore,
+                balanceAfter,
+                loan_id
+
+            ]);
+
+
+            /* UPDATE LOAN */
+
+            await client.query(`
+
+UPDATE board_loans
+
+SET
+
+loan_status='ACTIVE',
+approved_by=$1,
+approved_at=NOW(),
+due_date = NOW() + INTERVAL '60 days'
+
+WHERE loan_id=$2
+
+`, [
+
+                approved_by || null,
+                loan_id
+
+            ]);
+
+
+            /* LOAN TRANSACTION */
+
+            await client.query(`
+
+INSERT INTO loan_transactions(
+
+loan_id,
+board_id,
+txn_type,
+amount,
+remarks
+
+)
+
+VALUES(
+
+$1,$2,
+'LOAN_GRANTED',
+$3,
+'Loan approved and credited'
+
+)
+
+`, [
+
+                loan_id,
+                boardId,
+                loanAmount
+
+            ]);
+
+
+            /* UPDATE CENTRAL BANK */
+
+            await client.query(`
+
+UPDATE central_bank_wallet
+
+SET
+
+loan_outstanding =
+loan_outstanding + $1,
+
+total_loans_given =
+total_loans_given + $1
+
+`, [loanAmount]);
+
+
+            await client.query('COMMIT');
+
+
+            res.json({
+
+                message: "Loan approved",
+
+                loan_amount: loanAmount,
+
+                status: "ACTIVE",
+
+                due_in_days: 60
+
+            });
+
+        }
+        catch (err) {
+
+            await client.query('ROLLBACK');
+
+            throw err;
+
+        }
+        finally {
+
+            client.release();
+
+        }
+
+    }
+    catch (err) {
+
+        console.error("LOAN APPROVAL ERROR:", err);
+
+        res.status(500).json({
+
+            message: "Loan approval failed"
+
+        });
+
+    }
+
+});
+
 module.exports = router;
