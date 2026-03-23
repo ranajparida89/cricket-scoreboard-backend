@@ -2388,7 +2388,6 @@ WHERE loan_id=$2
             await client.query(`
 
 INSERT INTO loan_transactions(
-
 loan_id,
 board_id,
 transaction_type,
@@ -2583,9 +2582,15 @@ FOR UPDATE
 
         await client.query(`
 UPDATE board_wallet
-SET balance=$1
-WHERE board_id=$2
-`, [newBalance, loan.board_id]);
+SET 
+balance=$1,
+total_spent = total_spent + $2
+WHERE board_id=$3
+`, [
+            newBalance,
+            amount,
+            loan.board_id
+        ]);
 
         const remaining = loan.remaining_amount - amount;
 
@@ -2628,25 +2633,36 @@ WHERE loan_id=$3
 
         await client.query(`
 INSERT INTO loan_transactions(
+
 loan_id,
 board_id,
-amount,
-balance_after,
 transaction_type,
+amount,
+balance_before,
+balance_after,
 remarks,
-balance_before
+created_at
 )
-VALUES($1,$2,$3,$4,$5,$6,$7)
+VALUES(
+$1,
+$2,
+$3,
+$4,
+$5,
+$6,
+$7,
+NOW()
+)
 `, [
             loan_id,
             loan.board_id,
-            amount,
-            remaining,
             loan.loan_status === 'DEFAULTED'
                 ? "RECOVERY_PAYMENT"
                 : "REPAYMENT",
-            "Loan repayment",
-            wallet.balance
+            amount,
+            wallet.balance,
+            remaining,
+            "Loan repayment"
         ]);
 
         await client.query(`
