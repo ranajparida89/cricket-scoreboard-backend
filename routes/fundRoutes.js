@@ -1842,4 +1842,175 @@ WHERE owner_email=$1
 
 });
 
+/* ==========================================
+CENTRAL BANK SUMMARY
+System Treasury Overview
+========================================== */
+
+router.get('/central-bank-summary', async (req, res) => {
+
+    try {
+
+        /* TOTAL BOARDS */
+
+        const boards = await pool.query(`
+
+SELECT COUNT(*) FROM board_wallet
+
+`);
+
+        const totalBoards =
+            parseInt(boards.rows[0].count);
+
+
+        /* INITIAL GRANT */
+
+        const initialGrant = 200000;
+
+        const totalSystemFunds =
+            totalBoards * initialGrant;
+
+
+        /* TOURNAMENT CONTRIBUTION (10%) */
+
+        const contribution =
+            await pool.query(`
+
+SELECT
+COALESCE(SUM(total_collected * 0.10),0)
+AS total
+
+FROM reward_bank
+
+`);
+
+        const tournamentContribution =
+            parseInt(contribution.rows[0].total);
+
+
+        /* LOAN OUTSTANDING */
+
+        const loans =
+            await pool.query(`
+
+SELECT
+COALESCE(SUM(remaining_amount),0)
+AS outstanding
+
+FROM board_loans
+
+WHERE loan_status='ACTIVE'
+
+`);
+
+        const loanOutstanding =
+            parseInt(loans.rows[0].outstanding);
+
+
+        /* INTEREST EARNED */
+
+        const interest =
+            await pool.query(`
+
+SELECT
+COALESCE(SUM(interest_amount),0)
+AS interest
+
+FROM board_loans
+
+WHERE loan_status
+IN ('ACTIVE','CLOSED')
+
+`);
+
+        const interestEarned =
+            parseInt(interest.rows[0].interest);
+
+
+        /* RECOVERED */
+
+        const recovered =
+            await pool.query(`
+
+SELECT
+COALESCE(SUM(amount),0)
+AS recovered
+
+FROM loan_transactions
+
+WHERE txn_type='RECOVERY_PAYMENT'
+
+`);
+
+        const recoveredAmount =
+            parseInt(recovered.rows[0].recovered);
+
+
+        /* AVAILABLE LIQUIDITY */
+
+        const availableLiquidity =
+
+            tournamentContribution
+            + recoveredAmount
+            + interestEarned
+            - loanOutstanding;
+
+
+        /* UPDATE CENTRAL BANK */
+
+        await pool.query(`
+
+UPDATE central_bank_wallet
+
+SET
+
+total_system_funds=$1,
+tournament_contributions=$2,
+loan_outstanding=$3,
+interest_earned=$4,
+recovered_amount=$5,
+available_liquidity=$6,
+last_updated=NOW()
+
+`, [
+
+            totalSystemFunds,
+            tournamentContribution,
+            loanOutstanding,
+            interestEarned,
+            recoveredAmount,
+            availableLiquidity
+
+        ]);
+
+
+        /* RESPONSE */
+
+        res.json({
+
+            totalBoards,
+            totalSystemFunds,
+            tournamentContribution,
+            loanOutstanding,
+            interestEarned,
+            recoveredAmount,
+            availableLiquidity
+
+        });
+
+    }
+    catch (err) {
+
+        console.error("CENTRAL BANK ERROR:", err);
+
+        res.status(500).json({
+
+            message: "Central bank summary failed"
+
+        });
+
+    }
+
+});
+
 module.exports = router;
