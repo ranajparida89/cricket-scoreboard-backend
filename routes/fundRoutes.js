@@ -2837,4 +2837,128 @@ VALUES($1,$2,$3,$4,$5,$6,$7)
     }
 
 });
+
+// ============================================
+// MARK DEFAULTED LOANS
+// ============================================
+
+router.post("/mark-defaults", async (req, res) => {
+
+    const client = await pool.connect();
+
+    try {
+
+        await client.query("BEGIN");
+
+        const defaultLoans = await client.query(`
+
+SELECT *
+FROM board_loans
+
+WHERE loan_status='OVERDUE'
+
+AND remaining_amount > 0
+
+AND due_date < NOW() - INTERVAL '30 days'
+
+FOR UPDATE
+
+`);
+
+        let defaults = [];
+
+        for (const loan of defaultLoans.rows) {
+
+            await client.query(`
+
+UPDATE board_loans
+SET loan_status='DEFAULTED',
+is_defaulted=true
+
+WHERE loan_id=$1
+
+`, [loan.loan_id]);
+
+            // record transaction
+
+            await client.query(`
+
+INSERT INTO loan_transactions(
+
+loan_id,
+board_id,
+amount,
+balance_after,
+transaction_type,
+remarks,
+balance_before
+
+)
+
+VALUES($1,$2,$3,$4,$5,$6,$7)
+
+`, [
+                loan.loan_id,
+                loan.board_id,
+                0,
+                loan.remaining_amount,
+                "DEFAULT",
+                "Loan marked default",
+                loan.remaining_amount
+            ]);
+
+            // update central bank risk
+
+            await client.query(`
+
+UPDATE central_bank_wallet
+
+SET total_defaults = total_defaults + 1,
+loan_outstanding = loan_outstanding - $1,
+last_updated = NOW()
+
+`, [
+                loan.remaining_amount
+            ]);
+
+            defaults.push({
+
+                loan_id: loan.loan_id,
+                amount: loan.remaining_amount
+
+            });
+
+        }
+
+        await client.query("COMMIT");
+
+        res.json({
+
+            message: "Defaults processed",
+            count: defaults.length,
+            loans: defaults
+
+        });
+
+    }
+    catch (err) {
+
+        await client.query("ROLLBACK");
+
+        console.log("DEFAULT ERROR:", err);
+
+        res.status(500).json({
+
+            message: "Default processing failed"
+
+        });
+
+    }
+    finally {
+
+        client.release();
+
+    }
+
+});
 module.exports = router;
