@@ -2542,10 +2542,12 @@ FOR UPDATE
 
         const loan = loanData.rows[0];
 
-        if (loan.loan_status !== "ACTIVE") {
+        if (!['ACTIVE', 'OVERDUE', 'DEFAULTED'].includes(loan.loan_status)) {
+
             return res.status(400).json({
-                message: "Loan not active"
+                message: "Loan not payable"
             });
+
         }
 
         if (amount <= 0) {
@@ -2587,10 +2589,30 @@ WHERE board_id=$2
 
         const remaining = loan.remaining_amount - amount;
 
-        let status = "ACTIVE";
+        let status = loan.loan_status;
+
+        /* FULL PAYMENT */
 
         if (remaining === 0) {
+
             status = "CLOSED";
+
+        }
+
+        /* RECOVERY FROM DEFAULT */
+
+        else if (loan.loan_status === 'DEFAULTED') {
+
+            status = "ACTIVE";
+
+        }
+
+        /* RECOVERY FROM OVERDUE */
+
+        else if (loan.loan_status === 'OVERDUE') {
+
+            status = "ACTIVE";
+
         }
 
         await client.query(`
@@ -2620,18 +2642,14 @@ VALUES($1,$2,$3,$4,$5,$6,$7)
             loan.board_id,
             amount,
             remaining,
-            "REPAYMENT",
+            loan.loan_status === 'DEFAULTED'
+                ? "RECOVERY_PAYMENT"
+                : "REPAYMENT",
             "Loan repayment",
             wallet.balance
         ]);
 
-        await client.query(`
-UPDATE central_bank_wallet
-SET 
-available_liquidity = available_liquidity + $1,
-recovered_amount = recovered_amount + $1,
-loan_outstanding = loan_outstanding - $1
-`, [amount]);
+        loan_outstanding = loan_outstanding - $1
 
         await client.query("COMMIT");
 
