@@ -23,6 +23,7 @@ const performanceRoutes = require("./routes/performanceRoutes"); // ✅ New perf
 const upcomingMatchRoutes = require("./routes/upcomingMatchRoutes"); // upcomimg matches
 const ratingRoutes = require("./routes/ratingRoutes"); // player ratings routes
 const { startRatingScheduler } = require("./routes/ratingScheduler"); // scheduler
+const { startLoanScheduler } = require("./routes/loanScheduler");   // ADDED Loan scheduler
 const matchStoryRoutes = require("./routes/matchStoryRoutes"); // for matchStory 14th MAY 2025 Ranaj Parida
 const playerInfoRoutes = require("./routes/playerInfoRoutes"); // for H2H comparison 15th MAY 2025 Ranaj Parida
 const h2hRoutes = require("./routes/h2hRoutes"); // for H2H comparison 15th MAY 2025 Ranaj Parida
@@ -81,6 +82,7 @@ const announcementRoutes = require("./routes/announcementRoutes");
 const app = express();
 const server = http.createServer(app);
 startRatingScheduler();
+startLoanScheduler();
 app.set("db", pool); // ✅ make pg pool available to scheduler router
 
 // ✅ Enable CORS for Vercel + Custom Domains (Updated by Ranaj Parida | 15-April-2025)
