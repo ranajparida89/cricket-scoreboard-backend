@@ -2610,17 +2610,19 @@ loan_id,
 board_id,
 amount,
 balance_after,
-txn_type,
-remarks
+transaction_type,
+remarks,
+balance_before
 )
-VALUES($1,$2,$3,$4,$5,$6)
+VALUES($1,$2,$3,$4,$5,$6,$7)
 `, [
             loan_id,
             loan.board_id,
             amount,
             remaining,
             "REPAYMENT",
-            "Loan repayment"
+            "Loan repayment",
+            wallet.balance
         ]);
 
         await client.query(`
