@@ -2116,7 +2116,7 @@ AS recovered
 
 FROM loan_transactions
 
-WHERE txn_type='RECOVERY_PAYMENT'
+WHERE transaction_type='RECOVERY_PAYMENT'
 
 `);
 
@@ -2391,7 +2391,7 @@ INSERT INTO loan_transactions(
 
 loan_id,
 board_id,
-txn_type,
+transaction_type,
 amount,
 remarks
 
