@@ -2440,7 +2440,6 @@ SELECT *
 FROM failed_transactions
 
 WHERE board_id=$1
-AND status='PENDING'
 
 ORDER BY created_at DESC
 
@@ -2455,8 +2454,7 @@ LIMIT 1
 
 UPDATE failed_transactions
 
-SET status='RESOLVED',
-resolved_at=NOW()
+SET reason='LOAN_RESOLVED'
 
 WHERE failed_id=$1
 
@@ -3409,34 +3407,27 @@ router.get('/loans', async (req, res) => {
         const loans = await pool.query(`
 
 SELECT
-
 bl.loan_id,
 bl.board_id,
 br.board_name,
-
 bl.tournament_id,
-
+ct.tournament_name,
 bl.loan_amount,
 bl.interest_rate,
 bl.total_payable,
 bl.remaining_amount,
 bl.loan_status,
-
 bl.approved_at,
 bl.due_date,
-
 bw.balance as current_balance
-
 FROM board_loans bl
-
 JOIN board_registration br
 ON br.id = bl.board_id
-
+LEFT JOIN ce_tournaments ct
+ON ct.tournament_id = bl.tournament_id
 LEFT JOIN board_wallet bw
 ON bw.board_id = bl.board_id
-
-ORDER BY bl.loan_id DESC
-
+ORDER BY bl.approved_at DESC NULLS LAST
 `);
 
         res.json(loans.rows);
