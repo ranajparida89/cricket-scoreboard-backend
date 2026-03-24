@@ -2386,33 +2386,34 @@ WHERE loan_id=$2
             /* LOAN TRANSACTION */
 
             await client.query(`
-
 INSERT INTO loan_transactions(
 loan_id,
 board_id,
 transaction_type,
 amount,
-remarks
-
+balance_before,
+balance_after,
+remarks,
+created_at
 )
-
 VALUES(
-
-$1,$2,
+$1,
+$2,
 'LOAN_GRANTED',
 $3,
-'Loan approved and credited'
-
+$4,
+$5,
+'Loan approved and credited',
+NOW()
 )
-
 `, [
 
                 loan_id,
                 boardId,
-                loanAmount
-
+                loanAmount,
+                balanceBefore,
+                balanceAfter
             ]);
-
 
             /* UPDATE CENTRAL BANK */
 
@@ -2505,6 +2506,74 @@ WHERE failed_id=$1
 
             message: "Loan approval failed"
 
+        });
+
+    }
+
+});
+
+/* ==========================================
+REJECT LOAN
+========================================== */
+
+router.post('/reject-loan', async (req, res) => {
+
+    try {
+
+        const { loan_id } = req.body;
+
+        if (!loan_id) {
+
+            return res.status(400).json({
+                message: "Loan id required"
+            });
+
+        }
+
+        const loan = await pool.query(`
+
+SELECT loan_status
+FROM board_loans
+WHERE loan_id=$1
+
+`, [loan_id]);
+
+        if (loan.rows.length === 0) {
+
+            return res.status(404).json({
+                message: "Loan not found"
+            });
+
+        }
+
+        if (loan.rows[0].loan_status !== 'PENDING') {
+
+            return res.status(400).json({
+                message: "Only pending loans can be rejected"
+            });
+
+        }
+
+        await pool.query(`
+
+UPDATE board_loans
+SET loan_status='REJECTED'
+
+WHERE loan_id=$1
+
+`, [loan_id]);
+
+        res.json({
+            message: "Loan rejected"
+        });
+
+    }
+    catch (err) {
+
+        console.log(err);
+
+        res.status(500).json({
+            message: "Reject failed"
         });
 
     }
@@ -3427,7 +3496,8 @@ LEFT JOIN ce_tournaments ct
 ON ct.tournament_id = bl.tournament_id
 LEFT JOIN board_wallet bw
 ON bw.board_id = bl.board_id
-ORDER BY bl.approved_at DESC NULLS LAST
+ORDER BY bl.loan_status,
+bl.approved_at DESC NULLS LAST 
 `);
 
         res.json(loans.rows);
