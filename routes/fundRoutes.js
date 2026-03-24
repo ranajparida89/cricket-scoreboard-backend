@@ -3413,13 +3413,17 @@ SELECT
 bl.loan_id,
 bl.board_id,
 br.board_name,
-ct.tournament_name,
+
+bl.tournament_id,
+
 bl.loan_amount,
 bl.interest_rate,
 bl.total_payable,
 bl.remaining_amount,
 bl.loan_status,
-bl.created_at,
+
+bl.approved_at,
+bl.due_date,
 
 bw.balance as current_balance
 
@@ -3428,13 +3432,10 @@ FROM board_loans bl
 JOIN board_registration br
 ON br.id = bl.board_id
 
-LEFT JOIN ce_tournaments ct
-ON ct.tournament_id = bl.tournament_id
-
 LEFT JOIN board_wallet bw
 ON bw.board_id = bl.board_id
 
-ORDER BY bl.created_at DESC
+ORDER BY bl.loan_id DESC
 
 `);
 
@@ -3443,11 +3444,12 @@ ORDER BY bl.created_at DESC
     }
     catch (err) {
 
-        console.log("LOANS FETCH ERROR", err);
+        console.log("LOANS FETCH ERROR:", err);
 
         res.status(500).json({
 
-            message: "Failed to fetch loans"
+            message: "Failed to fetch loans",
+            error: err.message
 
         });
 
