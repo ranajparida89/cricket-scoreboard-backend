@@ -291,4 +291,90 @@ Reset Password
   }
 
 });
+// ✅ Route: Reset Password Final Step
+
+router.post("/reset-password", async (req, res) => {
+
+  const { token, newPassword } = req.body;
+
+  if (!token || !newPassword) {
+
+    return res.status(400).json({
+
+      error: "Invalid request"
+
+    });
+
+  }
+
+  try {
+
+    const tokenCheck =
+      await pool.query(
+
+        `SELECT email
+FROM password_resets
+WHERE reset_token=$1
+AND used=false
+AND expires_at > NOW()`,
+
+        [token]
+
+      );
+
+    if (tokenCheck.rows.length === 0) {
+
+      return res.status(400).json({
+
+        error: "Invalid or expired token"
+
+      });
+
+    }
+
+    const email =
+      tokenCheck.rows[0].email;
+
+    const hashed =
+      await bcrypt.hash(newPassword, 10);
+
+    await pool.query(
+
+      "UPDATE users SET password=$1 WHERE email=$2",
+
+      [hashed, email]
+
+    );
+
+    // ⭐ Mark token used
+    await pool.query(
+
+      "UPDATE password_resets SET used=true WHERE reset_token=$1",
+
+      [token]
+
+    );
+
+    res.json({
+
+      message: "Password reset successful"
+
+    });
+
+  } catch (err) {
+
+    console.error(
+      "Reset password error:",
+      err
+    );
+
+    res.status(500).json({
+
+      error: "Server error"
+
+    });
+
+  }
+
+});
 module.exports = router;
