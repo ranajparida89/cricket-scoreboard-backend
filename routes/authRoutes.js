@@ -36,12 +36,12 @@ router.post("/signup", async (req, res) => {
     );
 
     const otp = generateOtp();
-const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
 
-            await pool.query(
-                "INSERT INTO email_otps (email, otp, expires_at) VALUES ($1, $2, $3)",
-                    [email, otp, expiresAt]
-                );
+    await pool.query(
+      "INSERT INTO email_otps (email, otp, expires_at) VALUES ($1, $2, $3)",
+      [email, otp, expiresAt]
+    );
 
 
     await transporter.sendMail({
@@ -85,10 +85,10 @@ router.post("/verify-otp", async (req, res) => {
     );
 
     // ✅ Mark the user as verified
-      await pool.query(
-       "UPDATE users SET is_verified = true WHERE email = $1",
-       [email]
-            );
+    await pool.query(
+      "UPDATE users SET is_verified = true WHERE email = $1",
+      [email]
+    );
 
     res.json({ message: "OTP verified. Happy Cricket!" });
   } catch (err) {
@@ -97,7 +97,7 @@ router.post("/verify-otp", async (req, res) => {
   }
 });
 
-  
+
 // ✅ Route: Resend OTP
 router.post("/resend-otp", async (req, res) => {
   const { email } = req.body;
@@ -154,8 +154,10 @@ router.post("/login", async (req, res) => {
 
     // ✅ Step 3: Sign JWT token
     const token = jwt.sign(
-      { user_id: user.id,  // user_id: user.id chnaged here for UUID 06/02/2026
-        email: user.email },
+      {
+        user_id: user.id,  // user_id: user.id chnaged here for UUID 06/02/2026
+        email: user.email
+      },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
@@ -170,45 +172,123 @@ router.post("/login", async (req, res) => {
 });
 
 
-// ✅ Route: Reset Password Request
+// ✅ Route: Reset Password Request (FINAL SAFE VERSION)
+
 router.post("/request-reset", async (req, res) => {
+
   const { email } = req.body;
-  const token = crypto.randomBytes(20).toString("hex");
 
-  try {
-    await pool.query("INSERT INTO password_resets (email, token) VALUES ($1, $2)", [email, token]);
+  if (!email) {
 
-    const resetLink = `https://crickedge.in/reset-password?token=${token}`;
-    await transporter.sendMail({
-      to: email,
-      subject: "CrickEdge Password Reset",
-      html: `<p>Click to reset: <a href='${resetLink}'>Reset Password</a></p>`
+    return res.status(400).json({
+
+      error: "Email required"
+
     });
 
-    res.json({ message: "Reset link sent." });
-  } catch (err) {
-    console.error("Reset request error:", err);
-    res.status(500).json({ error: "Server error" });
   }
-});
 
-// ✅ Route: Complete Password Reset
-router.post("/reset-password", async (req, res) => {
-  const { token, newPassword } = req.body;
+  // ⭐ Strong token
+  const token =
+    crypto.randomBytes(32).toString("hex");
 
   try {
-    const tokenCheck = await pool.query("SELECT email FROM password_resets WHERE token = $1", [token]);
-    const email = tokenCheck.rows[0]?.email;
-    if (!email) return res.status(400).json({ error: "Invalid or expired reset token" });
 
-    const hashed = await bcrypt.hash(newPassword, 10);
-    await pool.query("UPDATE users SET password = $1 WHERE email = $2", [hashed, email]);
+    // ⭐ Check user exists first
+    const userCheck =
+      await pool.query(
 
-    res.json({ message: "Password reset successfully." });
+        "SELECT email FROM users WHERE email=$1",
+
+        [email]
+
+      );
+
+    if (userCheck.rows.length === 0) {
+
+      return res.status(404).json({
+
+        error: "Email not registered"
+
+      });
+
+    }
+
+    // ⭐ Insert reset token
+    await pool.query(
+
+      `INSERT INTO password_resets 
+(email, reset_token, expires_at, used)
+
+VALUES(
+
+$1,
+$2,
+NOW()+INTERVAL '30 minutes',
+false
+
+)`,
+
+      [email, token]
+
+    );
+
+    // ⭐ Reset link
+    const resetLink =
+
+      `https://crickedge.in/reset-password?token=${token}`;
+
+    // ⭐ Send email
+    await transporter.sendMail({
+
+      from: process.env.EMAIL_USER,
+
+      to: email,
+
+      subject: "CrickEdge Password Reset",
+
+      html: `
+
+<h3>CrickEdge Password Reset</h3>
+
+<p>You requested password reset.</p>
+
+<p>Click below link:</p>
+
+<a href="${resetLink}">
+Reset Password
+</a>
+
+<p>This link expires in 30 minutes.</p>
+
+<p>If not requested ignore.</p>
+
+`
+
+    });
+
+    res.json({
+
+      message: "Reset link sent successfully"
+
+    });
+
   } catch (err) {
-    console.error("Password reset error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
 
+    console.error(
+
+      "Reset request error:",
+      err
+
+    );
+
+    res.status(500).json({
+
+      error: "Reset failed"
+
+    });
+
+  }
+
+});
 module.exports = router;
