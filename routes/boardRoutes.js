@@ -135,8 +135,17 @@ router.post("/register", async (req, res) => {
       ]);
 
       const br = ins.rows[0];
+
+      /* CREATE WALLET (CRITICAL FIX) */
+
+      await client.query(
+        `INSERT INTO board_wallet
+(wallet_id,balance,total_earned,total_spent,wallet_status,created_at,updated_at,board_id)
+VALUES(gen_random_uuid(),200000,200000,0,'ACTIVE',NOW(),NOW(),$1)`,
+        [br.id]
+      );
+
       /* LINK USER TO BOARD */
-      /* LINK USER ONLY IF AVAILABLE */
 
       if (userId) {
 
@@ -332,7 +341,7 @@ router.put("/update/:registration_id", async (req, res) => {
     }
 
     const client = await pool.connect();
-
+    await client.query("BEGIN");
     try {
       await client.query("BEGIN");
 
