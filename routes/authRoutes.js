@@ -131,8 +131,26 @@ router.post("/login", async (req, res) => {
   try {
     // ✅ Step 1: Fetch user with email + verification check
     const userRes = await pool.query(
-      "SELECT * FROM users WHERE email = $1 AND is_verified = true",
+
+      `SELECT 
+
+id,
+first_name,
+last_name,
+email,
+password,
+is_verified,
+created_at,
+user_uuid,
+board_id
+
+FROM users 
+
+WHERE email = $1 
+AND is_verified = true`,
+
       [email]
+
     );
 
     if (userRes.rows.length === 0) {

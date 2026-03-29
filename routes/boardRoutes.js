@@ -107,29 +107,59 @@ router.post("/register", async (req, res) => {
         error: "Registration date must be today or in the future.",
       });
     }
-
     const registration_id = uuidv4();
     const client = await pool.connect();
-
     try {
       await client.query("BEGIN");
-
+      /* FIND OWNER USER */
+      const userCheck =
+        await client.query(
+          `SELECT id 
+FROM users
+WHERE LOWER(email)=LOWER($1)`,
+          [owner_email]
+        );
+      if (userCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error:
+            "Board owner must first register as user"
+        });
+      }
+      const userId =
+        userCheck.rows[0].id;
       const insertBoard = `
-        INSERT INTO board_registration (registration_id, board_name, owner_name, registration_date, owner_email)
-        VALUES ($1, $2, $3, to_date($4,'YYYY-MM-DD'), $5)
-        RETURNING id, registration_id
+      INSERT INTO board_registration (
+      registration_id,
+      board_name,
+      owner_name,
+      registration_date,
+      owner_email,
+      user_id
+      )
+      VALUES ($1,$2,$3,to_date($4,'YYYY-MM-DD'),$5,$6)
+      RETURNING id, registration_id
       `;
-
       const ins = await client.query(insertBoard, [
         registration_id,
         board_name,
         owner_name,
         isoDate,
         owner_email,
+        userId
       ]);
 
       const br = ins.rows[0];
-
+      /* LINK USER TO BOARD */
+      await client.query(
+        `UPDATE users
+SET board_id=$1
+WHERE id=$2`,
+        [
+          br.id,
+          userId
+        ]
+      );
       const insertTeam = `
         INSERT INTO board_teams (board_id, registration_id, team_name, joined_at)
         VALUES ($1, $2, $3, to_date($4,'YYYY-MM-DD'))
