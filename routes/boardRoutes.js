@@ -110,23 +110,9 @@ router.post("/register", async (req, res) => {
     const registration_id = uuidv4();
     const client = await pool.connect();
     try {
-      /* OWNER USER FROM UI */
+      /* OPTIONAL USER LINK */
 
-      const userId =
-        req.body.user_id;
-
-      if (!userId) {
-
-        await client.query('ROLLBACK');
-
-        return res.status(400).json({
-
-          error:
-            "user_id required for board creation"
-
-        });
-
-      }
+      let userId = req.body.user_id || null;
       const insertBoard = `
       INSERT INTO board_registration (
       registration_id,
@@ -150,15 +136,21 @@ router.post("/register", async (req, res) => {
 
       const br = ins.rows[0];
       /* LINK USER TO BOARD */
-      await client.query(
-        `UPDATE users
+      /* LINK USER ONLY IF AVAILABLE */
+
+      if (userId) {
+
+        await client.query(
+          `UPDATE users
 SET board_id=$1
 WHERE id=$2`,
-        [
-          br.id,
-          userId
-        ]
-      );
+          [
+            br.id,
+            userId
+          ]
+        );
+
+      }
       const insertTeam = `
         INSERT INTO board_teams (board_id, registration_id, team_name, joined_at)
         VALUES ($1, $2, $3, to_date($4,'YYYY-MM-DD'))
