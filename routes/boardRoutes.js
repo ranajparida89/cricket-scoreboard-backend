@@ -110,24 +110,23 @@ router.post("/register", async (req, res) => {
     const registration_id = uuidv4();
     const client = await pool.connect();
     try {
-      await client.query("BEGIN");
-      /* FIND OWNER USER */
-      const userCheck =
-        await client.query(
-          `SELECT id 
-FROM users
-WHERE LOWER(email)=LOWER($1)`,
-          [owner_email]
-        );
-      if (userCheck.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({
-          error:
-            "Board owner must first register as user"
-        });
-      }
+      /* OWNER USER FROM UI */
+
       const userId =
-        userCheck.rows[0].id;
+        req.body.user_id;
+
+      if (!userId) {
+
+        await client.query('ROLLBACK');
+
+        return res.status(400).json({
+
+          error:
+            "user_id required for board creation"
+
+        });
+
+      }
       const insertBoard = `
       INSERT INTO board_registration (
       registration_id,
