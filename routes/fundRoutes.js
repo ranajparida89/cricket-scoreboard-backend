@@ -3584,7 +3584,7 @@ DELETE TOURNAMENT (ADMIN CLEANUP)
 SAFE DELETE WITH DEPENDENCIES
 ========================================== */
 
-router.delete('/delete-tournament/:tournament_id', async (req, res) => {
+router.delete('/delete-tournament/:tournament_id', verifyToken, async (req,res)=>{
 
     try {
 
@@ -3605,6 +3605,24 @@ FROM ce_tournaments
 WHERE tournament_id=$1
 
 `, [tournament_id]);
+
+            /* ===========================
+            ADMIN SECURITY CHECK (ADD HERE)
+            =========================== */
+
+            const userRole = req.user?.role;   // from auth middleware
+
+            if (userRole !== 'admin') {
+
+                await client.query('ROLLBACK');
+
+                return res.status(403).json({
+
+                    message: "Only admin can delete tournaments"
+
+                });
+
+            }
 
             if (check.rows.length === 0) {
 
@@ -3709,6 +3727,7 @@ DELETE FROM ce_tournaments
 WHERE tournament_id=$1
 
 `, [tournament_id]);
+
 
             await client.query('COMMIT');
 
