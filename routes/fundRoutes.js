@@ -507,11 +507,11 @@ router.get('/tournament-boards/:tournament_id', async (req, res) => {
 
         const boards = await pool.query(`
 
-SELECT
+SELECT DISTINCT
 
-bt.team_name,
 br.board_name,
 tr.board_id,
+tr.entry_fee,
 tr.registered_at
 
 FROM tournament_registrations tr
@@ -519,12 +519,9 @@ FROM tournament_registrations tr
 JOIN board_registration br
 ON tr.board_id = br.id
 
-JOIN board_teams bt
-ON bt.board_id = br.id
-
 WHERE tr.tournament_id=$1
 
-ORDER BY bt.team_name
+ORDER BY tr.registered_at DESC
 
 `, [tournament_id]);
 
