@@ -509,9 +509,9 @@ router.get('/tournament-boards/:tournament_id', async (req, res) => {
 
 SELECT
 
-tr.board_id,
+bt.team_name,
 br.board_name,
-tr.entry_fee,
+tr.board_id,
 tr.registered_at
 
 FROM tournament_registrations tr
@@ -519,9 +519,12 @@ FROM tournament_registrations tr
 JOIN board_registration br
 ON tr.board_id = br.id
 
+JOIN board_teams bt
+ON bt.board_id = br.id
+
 WHERE tr.tournament_id=$1
 
-ORDER BY tr.registered_at
+ORDER BY bt.team_name
 
 `, [tournament_id]);
 
