@@ -3578,4 +3578,77 @@ ORDER BY tr.distributed_at DESC
     }
 
 });
+
+/* ==========================================
+DELETE TOURNAMENT (ADMIN CLEANUP)
+========================================== */
+
+router.delete('/delete-tournament/:tournament_id', async (req, res) => {
+
+    try {
+
+        const { tournament_id } = req.params;
+
+        const check = await pool.query(`
+
+SELECT tournament_status
+FROM ce_tournaments
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+        if (check.rows.length === 0) {
+
+            return res.status(404).json({
+                message: "Tournament not found"
+            });
+
+        }
+
+        /* only allow delete if closed/completed/cancelled */
+
+        const status = check.rows[0].tournament_status;
+
+        if (status === "REGISTRATION_OPEN") {
+
+            return res.status(400).json({
+                message: "Close tournament first"
+            });
+
+        }
+
+        /* SAFE DELETE ORDER */
+
+        await pool.query(`
+DELETE FROM tournament_registrations
+WHERE tournament_id=$1
+`, [tournament_id]);
+
+        await pool.query(`
+DELETE FROM reward_bank
+WHERE tournament_id=$1
+`, [tournament_id]);
+
+        await pool.query(`
+DELETE FROM ce_tournaments
+WHERE tournament_id=$1
+`, [tournament_id]);
+
+        res.json({
+
+            message: "Tournament removed"
+
+        });
+
+    } catch (err) {
+
+        console.log(err);
+
+        res.status(500).json({
+            message: "Delete failed"
+        });
+
+    }
+
+});
 module.exports = router;
