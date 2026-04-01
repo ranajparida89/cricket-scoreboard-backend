@@ -3581,6 +3581,7 @@ ORDER BY tr.distributed_at DESC
 
 /* ==========================================
 DELETE TOURNAMENT (ADMIN CLEANUP)
+SAFE DELETE WITH DEPENDENCIES
 ========================================== */
 
 router.delete('/delete-tournament/:tournament_id', async (req, res) => {
@@ -3589,7 +3590,15 @@ router.delete('/delete-tournament/:tournament_id', async (req, res) => {
 
         const { tournament_id } = req.params;
 
-        const check = await pool.query(`
+        const client = await pool.connect();
+
+        try {
+
+            await client.query('BEGIN');
+
+            /* CHECK TOURNAMENT */
+
+            const check = await client.query(`
 
 SELECT tournament_status
 FROM ce_tournaments
@@ -3597,55 +3606,143 @@ WHERE tournament_id=$1
 
 `, [tournament_id]);
 
-        if (check.rows.length === 0) {
+            if (check.rows.length === 0) {
 
-            return res.status(404).json({
-                message: "Tournament not found"
-            });
+                await client.query('ROLLBACK');
 
-        }
+                return res.status(404).json({
 
-        /* only allow delete if closed/completed/cancelled */
+                    message: "Tournament not found"
 
-        const status = check.rows[0].tournament_status;
+                });
 
-        if (status === "REGISTRATION_OPEN") {
+            }
 
-            return res.status(400).json({
-                message: "Close tournament first"
-            });
+            /* PREVENT DELETE IF OPEN */
 
-        }
+            if (check.rows[0].tournament_status === "REGISTRATION_OPEN") {
 
-        /* SAFE DELETE ORDER */
+                await client.query('ROLLBACK');
 
-        await pool.query(`
+                return res.status(400).json({
+
+                    message: "Close tournament first"
+
+                });
+
+            }
+
+            /* ===========================
+            SAFE DELETE ORDER
+            (child → parent)
+            =========================== */
+
+            /* RESULTS */
+
+            await client.query(`
+
+DELETE FROM tournament_results
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+            /* INTEREST LOG */
+
+            await client.query(`
+
+DELETE FROM tournament_interest_log
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+            /* FAILED FUNDING */
+
+            await client.query(`
+
+DELETE FROM failed_transactions
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+            /* LOANS */
+
+            await client.query(`
+
+DELETE FROM board_loans
+WHERE tournament_id=$1
+
+`, [tournament_id]);
+
+            /* COIN TRANSACTIONS */
+
+            await client.query(`
+
+DELETE FROM coin_transactions
+WHERE reference_id=$1
+AND reference_type='TOURNAMENT'
+
+`, [tournament_id]);
+
+            /* REGISTRATIONS */
+
+            await client.query(`
+
 DELETE FROM tournament_registrations
 WHERE tournament_id=$1
+
 `, [tournament_id]);
 
-        await pool.query(`
+            /* REWARD BANK */
+
+            await client.query(`
+
 DELETE FROM reward_bank
 WHERE tournament_id=$1
+
 `, [tournament_id]);
 
-        await pool.query(`
+            /* MAIN TOURNAMENT */
+
+            await client.query(`
+
 DELETE FROM ce_tournaments
 WHERE tournament_id=$1
+
 `, [tournament_id]);
 
-        res.json({
+            await client.query('COMMIT');
 
-            message: "Tournament removed"
+            res.json({
 
-        });
+                message: "Tournament removed successfully"
 
-    } catch (err) {
+            });
 
-        console.log(err);
+        }
+        catch (err) {
+
+            await client.query('ROLLBACK');
+
+            console.log("DELETE ERROR:", err.message);
+
+            throw err;
+
+        }
+        finally {
+
+            client.release();
+
+        }
+
+    }
+    catch (err) {
 
         res.status(500).json({
-            message: "Delete failed"
+
+            message: "Delete failed",
+
+            error: err.message
+
         });
 
     }
