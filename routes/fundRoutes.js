@@ -3517,4 +3517,65 @@ bl.approved_at DESC NULLS LAST
     }
 
 });
+
+/* ==========================================
+TOURNAMENT RESULTS (PUBLIC VIEW)
+Champion & Runner rewards
+========================================== */
+
+router.get('/tournament-results', async (req, res) => {
+
+    try {
+
+        const data = await pool.query(`
+
+SELECT
+
+tr.result_id,
+
+ct.tournament_name,
+ct.tournament_type,
+
+tr.winner_team,
+tr.runner_team,
+
+bw.board_name as winner_board,
+br.board_name as runner_board,
+
+tr.winner_reward,
+tr.runner_reward,
+
+tr.distributed_at
+
+FROM tournament_results tr
+
+JOIN ce_tournaments ct
+ON ct.tournament_id = tr.tournament_id
+
+JOIN board_registration bw
+ON bw.id = tr.winner_board_id
+
+JOIN board_registration br
+ON br.id = tr.runner_board_id
+
+ORDER BY tr.distributed_at DESC
+
+`);
+
+        res.json(data.rows);
+
+    }
+    catch (err) {
+
+        console.log("RESULT VIEW ERROR:", err);
+
+        res.status(500).json({
+
+            message: "Failed to fetch results"
+
+        });
+
+    }
+
+});
 module.exports = router;
