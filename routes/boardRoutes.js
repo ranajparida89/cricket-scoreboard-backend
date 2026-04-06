@@ -116,7 +116,7 @@ router.post("/register", async (req, res) => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");   // ⭐ FIX
-      let userId = req.admin?.id || null;
+      let userId = req.user?.id || null;
       if (!userId) {
         return res.status(401).json({
           error: "User not authenticated"
