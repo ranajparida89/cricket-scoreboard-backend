@@ -55,8 +55,12 @@ const toIsoDateString = (raw) => {
 
 const startOfToday = () => {
   const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+
+  return new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate()
+  );
 };
 
 /* ===========================================================
@@ -101,8 +105,13 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    const regDateObj = new Date(isoDate);
-    if (regDateObj < startOfToday()) {
+    const todayIso = new Date().toISOString().slice(0, 10);
+
+    if (isoDate < todayIso) {
+      return res.status(400).json({
+        error: "Registration date must be today or future."
+      });
+    } {
       return res.status(400).json({
         error: "Registration date must be today or in the future.",
       });
@@ -342,8 +351,6 @@ router.put("/update/:registration_id", async (req, res) => {
     const client = await pool.connect();
     await client.query("BEGIN");
     try {
-      await client.query("BEGIN");
-
       const getBoard = await client.query(
         "SELECT id, registration_id FROM board_registration WHERE registration_id = $1",
         [registration_id]
