@@ -259,9 +259,14 @@ router.post("/test-match", async (req, res) => {
       // Only reward if not draw
       if (!isDrawLike(winner)) {
 
-        await pool.query(`
-SELECT reward_match_win($1,$2,$3)
-`, [winner, 200, match_id]);
+        await pool.query(
+          `SELECT reward_match_win($1,$2,$3)`,
+          [
+            winner,
+            200,
+            match_id.toString()
+          ]
+        );
 
       }
 

@@ -3584,7 +3584,7 @@ DELETE TOURNAMENT (ADMIN CLEANUP)
 SAFE DELETE WITH DEPENDENCIES
 ========================================== */
 
-router.delete('/delete-tournament/:tournament_id', verifyToken, async (req,res)=>{
+router.delete('/delete-tournament/:tournament_id', verifyToken, async (req, res) => {
 
     try {
 
@@ -3759,6 +3759,71 @@ WHERE tournament_id=$1
         res.status(500).json({
 
             message: "Delete failed",
+
+            error: err.message
+
+        });
+
+    }
+
+});
+/* ==========================================
+MATCH WIN REWARD ENGINE
+Central reward processor
+========================================== */
+
+router.post('/reward-match', async (req, res) => {
+
+    try {
+
+        const { team_name, match_id, tournament_name } = req.body;
+
+        if (!team_name || !match_id) {
+
+            return res.status(400).json({
+                message: "team and match required"
+            });
+
+        }
+
+        /* OPTIONAL FILTER */
+
+        if (!tournament_name?.toLowerCase().includes("cpl")) {
+
+            return res.json({
+                message: "No reward for this tournament"
+            });
+
+        }
+
+        /* EXECUTE FUNCTION */
+
+        await pool.query(
+
+            `SELECT reward_match_win($1,$2,$3)`,
+
+            [
+                team_name,
+                200,
+                match_id
+            ]
+
+        );
+
+        res.json({
+
+            message: "Match reward processed",
+
+            reward: 200
+
+        });
+
+    }
+    catch (err) {
+
+        console.log("MATCH REWARD ERROR:", err);
+
+        res.status(500).json({
 
             error: err.message
 

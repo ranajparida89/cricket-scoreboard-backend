@@ -177,7 +177,7 @@ app.use("/api/crickedge-season", crickedgeSeasonRoutes);
 app.use('/api/live-auction', liveAuctionRoutes);
 app.use("/api/live-match", liveMatchRoutes);
 app.use('/api/funds', fundRoutes);
-app.use("/api/announcements",announcementRoutes);
+app.use("/api/announcements", announcementRoutes);
 
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
@@ -308,52 +308,6 @@ app.post("/api/submit-result", async (req, res) => {
       winner = `${team2} won the match!`;
       points1 = 0; points2 = 2;
     }
-    /* ==========================================
-    MATCH WIN REWARD ENGINE (FUNDS SAFE)
-    ========================================== */
-
-    try {
-
-      let winnerTeam = null;
-
-      if (runs1 > runs2)
-        winnerTeam = team1;
-
-      else if (runs2 > runs1)
-        winnerTeam = team2;
-
-      /* CHECK IF THIS TOURNAMENT SUPPORTS FUNDS */
-
-      if (winnerTeam && tournament_name) {
-
-        const fundCheck = await pool.query(`
-
-SELECT funds_enabled
-FROM ce_tournaments
-WHERE tournament_name=$1
-
-`, [tournament_name]);
-
-        if (
-          fundCheck.rows.length > 0 &&
-          fundCheck.rows[0].funds_enabled === true
-        ) {
-
-          await pool.query(`
-SELECT reward_match_win($1,$2,$3)
-`, [winnerTeam, 200, match_id]);
-
-        }
-
-      }
-
-    }
-    catch (err) {
-
-      console.error("Reward engine error:", err);
-
-    }
-
     /* ========================================== */
 
     // ✅ TEAM 1 (NRR uses nrrOvers)
@@ -407,22 +361,22 @@ SELECT reward_match_win($1,$2,$3)
     ]);
 
     // ✅ Save MATCH HISTORY (UI uses REAL overs)
-    const matchDateSafe = match_date || new Date().toISOString().slice(0, 10);
+
     await pool.query(`
-      INSERT INTO match_history (
-  match_name, match_type,
-  team1, runs1, overs1, wickets1,
-  team2, runs2, overs2, wickets2,
-  winner, user_id, match_date,
-  tournament_name, season_year,
-  mom_player, mom_player_id, mom_reason,
-  crickedge_season_id,
-  season_type
-    )
-  VALUES (
-    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
-    )
-    `, [
+INSERT INTO match_history (
+match_name, match_type,
+team1, runs1, overs1, wickets1,
+team2, runs2, overs2, wickets2,
+winner, user_id, match_date,
+tournament_name, season_year,
+mom_player, mom_player_id, mom_reason,
+crickedge_season_id,
+season_type
+)
+VALUES (
+$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+)
+`, [
       match_name, match_type,
       team1, runs1, displayOvers1, wickets1,
       team2, runs2, displayOvers2, wickets2,
@@ -433,6 +387,46 @@ SELECT reward_match_win($1,$2,$3)
       season_type
     ]);
 
+    /* ==========================================
+    MATCH WIN REWARD ENGINE (FINAL SAFE VERSION)
+    ========================================== */
+
+    try {
+
+      let winnerTeam = null;
+
+      if (runs1 > runs2)
+        winnerTeam = team1;
+
+      else if (runs2 > runs1)
+        winnerTeam = team2;
+
+      if (winnerTeam) {
+
+        await pool.query(
+
+          `SELECT reward_match_win($1,$2,$3)`,
+
+          [
+            winnerTeam.trim(),
+            200,
+            match_id
+          ]
+
+        );
+
+      }
+
+    }
+    catch (err) {
+
+      console.error(
+        "Reward engine error:",
+        err
+      );
+
+    }
+    /* ========================================== */
     // AUTOMATION FOR MATCH HISTORY STARTS
     // =====================================================
     // 🔥 AUTO UPDATE FIXTURE STATUS
