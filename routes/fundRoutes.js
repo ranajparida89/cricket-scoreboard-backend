@@ -1430,8 +1430,30 @@ ct.tournament_type,
 ct.entry_fee,
 
 rb.total_collected,
-rb.total_distributed,
-rb.remaining_balance,
+
+COALESCE((
+SELECT SUM(ct.amount)
+FROM coin_transactions ct
+WHERE ct.transaction_type IN(
+'MATCH_WIN',
+'TOURNAMENT_WINNER',
+'TOURNAMENT_RUNNER'
+)
+),0) as total_distributed,
+
+rb.total_collected -
+
+COALESCE((
+SELECT SUM(ct.amount)
+FROM coin_transactions ct
+WHERE ct.transaction_type IN(
+'MATCH_WIN',
+'TOURNAMENT_WINNER',
+'TOURNAMENT_RUNNER'
+)
+),0)
+
+as remaining_balance,
 
 ct.tournament_status,
 
@@ -1443,15 +1465,42 @@ WHEN rb.total_collected = 0
 THEN 0
 
 ELSE ROUND(
-(rb.total_distributed::numeric /
-rb.total_collected::numeric)*100
+(
+
+COALESCE((
+SELECT SUM(ct.amount)
+FROM coin_transactions ct
+WHERE ct.transaction_type IN(
+'MATCH_WIN',
+'TOURNAMENT_WINNER',
+'TOURNAMENT_RUNNER'
+)
+),0)::numeric
+
+/
+rb.total_collected::numeric
+
+)*100
 )
 
 END as distribution_percent,
 
 CASE
 
-WHEN rb.remaining_balance = 0
+WHEN (
+rb.total_collected -
+
+COALESCE((
+SELECT SUM(ct.amount)
+FROM coin_transactions ct
+WHERE ct.transaction_type IN(
+'MATCH_WIN',
+'TOURNAMENT_WINNER',
+'TOURNAMENT_RUNNER'
+)
+),0)
+
+) = 0
 THEN 'EMPTY'
 
 WHEN rb.remaining_balance <
