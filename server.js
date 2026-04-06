@@ -153,7 +153,8 @@ app.use(
 ); // serve images
 app.use("/api/gallery", galleryRoutes);
 app.use("/api/scheduler", schedulerRoutes); // ✅ /api/scheduler/*
-app.use("/api/boards", boardRoutes);
+app.use("/api/boards", attachAdminIfPresent, boardRoutes); 
+// app.use("/api/boards", boardRoutes);
 //app.use("/api/boards", attachAdminIfPresent, boardRoutes);
 app.use("/api/boards/analytics", boardAnalyticsRoutes);
 app.use("/api/squads", attachAdminIfPresent, squadRoutes);

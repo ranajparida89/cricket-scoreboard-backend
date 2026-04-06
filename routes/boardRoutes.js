@@ -107,16 +107,21 @@ router.post("/register", async (req, res) => {
 
     const todayIso = new Date().toISOString().slice(0, 10);
 
-if (isoDate < todayIso) {
-  return res.status(400).json({
-    error: "Registration date must be today or future."
-  });
-}
+    if (isoDate < todayIso) {
+      return res.status(400).json({
+        error: "Registration date must be today or future."
+      });
+    }
     const registration_id = uuidv4();
     const client = await pool.connect();
     try {
       await client.query("BEGIN");   // ⭐ FIX
-      let userId = req.body.user_id || null;
+      let userId = req.user?.id || null;
+      if (!userId) {
+        return res.status(401).json({
+          error: "User not authenticated"
+        });
+      }
       const insertBoard = `
       INSERT INTO board_registration (
       registration_id,
