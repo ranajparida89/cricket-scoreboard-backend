@@ -139,8 +139,8 @@ router.post("/register", async (req, res) => {
 
       await client.query(
         `INSERT INTO board_wallet
-(balance,total_earned,total_spent,wallet_status,created_at,updated_at,board_id)
-VALUES(200000,0,0,'ACTIVE',NOW(),NOW(),$1)`,
+(wallet_id,balance,total_earned,total_spent,wallet_status,created_at,updated_at,board_id)
+VALUES(uuid_generate_v4(),200000,0,0,'ACTIVE',NOW(),NOW(),$1)`,
         [br.id]
       );
 
