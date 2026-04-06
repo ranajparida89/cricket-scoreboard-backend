@@ -110,8 +110,7 @@ router.post("/register", async (req, res) => {
     const registration_id = uuidv4();
     const client = await pool.connect();
     try {
-      /* OPTIONAL USER LINK */
-
+      await client.query("BEGIN");   // ⭐ FIX
       let userId = req.body.user_id || null;
       const insertBoard = `
       INSERT INTO board_registration (
