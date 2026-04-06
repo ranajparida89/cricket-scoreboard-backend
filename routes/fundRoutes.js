@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');   // same pool used in other routes
+const { requireAdminAuth } = require('../middleware/auth');
 
 /* ==========================================
 GET WALLET BALANCE
@@ -3584,7 +3585,7 @@ DELETE TOURNAMENT (ADMIN CLEANUP)
 SAFE DELETE WITH DEPENDENCIES
 ========================================== */
 
-router.delete('/delete-tournament/:tournament_id', verifyToken, async (req, res) => {
+router.delete('/delete-tournament/:tournament_id', requireAdminAuth, async (req, res) => {
 
     try {
 
@@ -3610,7 +3611,7 @@ WHERE tournament_id=$1
             ADMIN SECURITY CHECK (ADD HERE)
             =========================== */
 
-            const userRole = req.user?.role;   // from auth middleware
+            const userRole = req.admin?.role;   // from auth middleware
 
             if (userRole !== 'admin') {
 
