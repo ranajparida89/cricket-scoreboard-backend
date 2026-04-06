@@ -107,15 +107,11 @@ router.post("/register", async (req, res) => {
 
     const todayIso = new Date().toISOString().slice(0, 10);
 
-    if (isoDate < todayIso) {
-      return res.status(400).json({
-        error: "Registration date must be today or future."
-      });
-    } {
-      return res.status(400).json({
-        error: "Registration date must be today or in the future.",
-      });
-    }
+if (isoDate < todayIso) {
+  return res.status(400).json({
+    error: "Registration date must be today or future."
+  });
+}
     const registration_id = uuidv4();
     const client = await pool.connect();
     try {
