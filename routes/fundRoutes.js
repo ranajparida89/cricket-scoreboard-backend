@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');   // same pool used in other routes
-const { requireAdminAuth } = require('../middleware/auth');
+const { requireAdminAuth } = require('./auth');
 
 /* ==========================================
 GET WALLET BALANCE
