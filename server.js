@@ -153,7 +153,7 @@ app.use(
 ); // serve images
 app.use("/api/gallery", galleryRoutes);
 app.use("/api/scheduler", schedulerRoutes); // ✅ /api/scheduler/*
-app.use("/api/boards", attachAdminIfPresent, boardRoutes); 
+app.use("/api/boards", attachAdminIfPresent, boardRoutes);
 // app.use("/api/boards", boardRoutes);
 //app.use("/api/boards", attachAdminIfPresent, boardRoutes);
 app.use("/api/boards/analytics", boardAnalyticsRoutes);
@@ -381,7 +381,7 @@ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
       match_name, match_type,
       team1, runs1, displayOvers1, wickets1,
       team2, runs2, displayOvers2, wickets2,
-      winner, user_id, matchDateSafe,
+      winner, user_id, match_date,
       tournament_name, season_year,
       mom_player, mom_player_id, mom_reason,
       crickedge_season_id,
