@@ -70,10 +70,32 @@ AUTO LINK ACTIVE SEASON
     let seasonId = crickedge_season_id;
     let tournamentNameFinal = tournament_name;
 
-    if (!seasonId) {
+    /* ==================================
+    ALWAYS GET TOURNAMENT FROM SEASON TABLE
+    ================================== */
 
-      const seasonResult = await pool.query(`
-SELECT id, tournament_name
+    if (seasonId) {
+
+      const seasonResult =
+        await pool.query(`
+SELECT tournament_name
+FROM crickedge_seasons
+WHERE id=$1
+`, [seasonId]);
+
+      if (seasonResult.rows.length > 0) {
+
+        tournamentNameFinal =
+          seasonResult.rows[0].tournament_name;
+
+      }
+
+    }
+    else {
+
+      const seasonResult =
+        await pool.query(`
+SELECT id,tournament_name
 FROM crickedge_seasons
 WHERE status='ACTIVE'
 LIMIT 1
