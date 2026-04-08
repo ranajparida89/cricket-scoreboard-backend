@@ -423,95 +423,48 @@ router.get("/rankings/test", async (req, res) => {
 ------------------------------------------------------------------- */
 router.get("/leaderboard/test", async (req, res) => {
   try {
-
-    const { season_id, tournament_name } = req.query;
-
     const result = await pool.query(`
-
-WITH all_teams AS (
-
-SELECT team1 AS team, winner
-FROM test_match_results
-WHERE crickedge_season_id=$1
-AND tournament_name=$2
-
-UNION ALL
-
-SELECT team2 AS team, winner
-FROM test_match_results
-WHERE crickedge_season_id=$1
-AND tournament_name=$2
-
-),
-
-agg AS (
-
-SELECT
-team AS team_name,
-COUNT(*) AS matches,
-
-SUM(
-CASE WHEN LOWER(winner)=LOWER(team)
-THEN 1 ELSE 0 END
-) AS wins,
-
-SUM(
-CASE
-WHEN LOWER(winner) NOT IN
-('draw','match draw','match drawn','tie')
-AND LOWER(winner)<>LOWER(team)
-THEN 1 ELSE 0
-END
-) AS losses,
-
-SUM(
-CASE
-WHEN LOWER(winner) IN
-('draw','match draw','match drawn','tie')
-THEN 1 ELSE 0
-END
-) AS draws
-
-FROM all_teams
-GROUP BY team
-
-)
-
-SELECT
-
-DENSE_RANK() OVER (
-ORDER BY wins DESC,
-(wins*12 + losses*6 + draws*4) DESC
-) AS rank,
-
-team_name,
-matches,
-wins,
-losses,
-draws,
-
-(wins*12 + losses*6 + draws*4) AS points
-
-FROM agg
-
-ORDER BY wins DESC,points DESC
-
-`, [
-      season_id,
-      tournament_name
-    ]);
-
+      WITH all_teams AS (
+        SELECT team1 AS team, winner FROM test_match_results
+        UNION ALL
+        SELECT team2 AS team, winner FROM test_match_results
+      ),
+      agg AS (
+        SELECT
+          team AS team_name,
+          COUNT(*) AS matches,
+          SUM(CASE WHEN LOWER(winner) = LOWER(team) THEN 1 ELSE 0 END) AS wins,
+          SUM(
+            CASE
+              WHEN LOWER(winner) NOT IN ('draw','match draw','match drawn','tie')
+                   AND LOWER(winner) <> LOWER(team)
+              THEN 1 ELSE 0
+            END
+          ) AS losses,
+          SUM(
+            CASE
+              WHEN LOWER(winner) IN ('draw','match draw','match drawn','tie')
+              THEN 1 ELSE 0
+            END
+          ) AS draws
+        FROM all_teams
+        GROUP BY team
+      )
+      SELECT
+        DENSE_RANK() OVER (ORDER BY wins DESC, (wins * 12 + losses * 6 + draws * 4) DESC) AS rank,
+        team_name,
+        matches,
+        wins,
+        losses,
+        draws,
+        (wins * 12 + losses * 6 + draws * 4) AS points
+      FROM agg
+      ORDER BY wins DESC, points DESC;
+    `);
     res.json(result.rows);
-
-  }
-  catch (err) {
-
-    console.error("Test leaderboard error", err);
-
-    res.status(500).json({
-      error: "Test leaderboard failed"
-    });
-
+  } catch (err) {
+    console.error("❌ Failed to load Test Match Leaderboard", err);
+    res.status(500).json({ error: "Failed to load Test Match Leaderboard" });
   }
 });
 
