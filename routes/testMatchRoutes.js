@@ -67,18 +67,24 @@ router.post("/test-match", async (req, res) => {
 AUTO LINK ACTIVE SEASON
 ================================ */
 
-    let seasonId = crickedge_season_id;
-    let tournamentNameFinal = tournament_name;
+    /* ================================
+  SAFE SEASON LINKING (FINAL FIX)
+  DO NOT OVERRIDE UI SELECTION
+  ================================ */
 
-    /* ==================================
-    ALWAYS GET TOURNAMENT FROM SEASON TABLE
-    ================================== */
+    let seasonId =
+      crickedge_season_id || null;
+
+    let tournamentNameFinal =
+      tournament_name || null;
+
+    /* If season selected → fetch tournament */
 
     if (seasonId) {
 
       const seasonResult =
         await pool.query(`
-SELECT tournament_name
+SELECT id,tournament_name
 FROM crickedge_seasons
 WHERE id=$1
 `, [seasonId]);
@@ -91,13 +97,17 @@ WHERE id=$1
       }
 
     }
-    else {
+
+    /* If nothing selected → fallback ACTIVE */
+
+    if (!seasonId) {
 
       const seasonResult =
         await pool.query(`
 SELECT id,tournament_name
 FROM crickedge_seasons
 WHERE status='ACTIVE'
+ORDER BY id DESC
 LIMIT 1
 `);
 
@@ -112,7 +122,6 @@ LIMIT 1
       }
 
     }
-
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
       return res.status(400).json({ error: "Missing required fields." });
     }

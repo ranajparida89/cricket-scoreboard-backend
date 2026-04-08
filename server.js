@@ -279,22 +279,25 @@ app.post("/api/submit-result", async (req, res) => {
       return res.status(400).json({ error: "Invalid match_id" });
 
     const { match_name, match_type } = matchResult.rows[0];
-    /* ================================
-AUTO LINK ACTIVE SEASON
-================================ */
+   
+/* ================================
+ SAFE SEASON LINKING (FINAL FIX)
+ DO NOT OVERRIDE UI SELECTION
+ ================================ */
 
-    let seasonId = crickedge_season_id;
-    let tournamentNameFinal = tournament_name;
+    let seasonId =
+      crickedge_season_id || null;
 
-    /* ==================================
-    ALWAYS GET TOURNAMENT FROM SEASON TABLE
-    ================================== */
+    let tournamentNameFinal =
+      tournament_name || null;
+
+    /* If season selected → fetch tournament */
 
     if (seasonId) {
 
       const seasonResult =
         await pool.query(`
-SELECT tournament_name
+SELECT id,tournament_name
 FROM crickedge_seasons
 WHERE id=$1
 `, [seasonId]);
@@ -307,13 +310,17 @@ WHERE id=$1
       }
 
     }
-    else {
+
+    /* If nothing selected → fallback ACTIVE */
+
+    if (!seasonId) {
 
       const seasonResult =
         await pool.query(`
 SELECT id,tournament_name
 FROM crickedge_seasons
 WHERE status='ACTIVE'
+ORDER BY id DESC
 LIMIT 1
 `);
 
