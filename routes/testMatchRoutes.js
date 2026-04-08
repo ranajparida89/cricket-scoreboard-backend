@@ -59,9 +59,37 @@ router.post("/test-match", async (req, res) => {
       mom_player_id = null,
 
       // ✅ CrickEdge Season
-      crickedge_season_id = null,
+      crickedge_season_id,
       season_type = "NORMAL"
     } = req.body;
+
+    /* ================================
+AUTO LINK ACTIVE SEASON
+================================ */
+
+    let seasonId = crickedge_season_id;
+    let tournamentNameFinal = tournament_name;
+
+    if (!seasonId) {
+
+      const seasonResult = await pool.query(`
+SELECT id, tournament_name
+FROM crickedge_seasons
+WHERE status='ACTIVE'
+LIMIT 1
+`);
+
+      if (seasonResult.rows.length > 0) {
+
+        seasonId =
+          seasonResult.rows[0].id;
+
+        tournamentNameFinal =
+          seasonResult.rows[0].tournament_name;
+
+      }
+
+    }
 
     if (!match_id || !team1 || !team2 || winner === undefined || points === undefined) {
       return res.status(400).json({ error: "Missing required fields." });
@@ -173,13 +201,13 @@ router.post("/test-match", async (req, res) => {
           total_overs_used,
           match_name?.toUpperCase(),
           user_id,
-          tournament_name,
+          tournamentNameFinal,
           season_year,
           matchDateSafe,
           mom_player,
           mom_player_id,
           mom_reason,
-          crickedge_season_id,
+          seasonId,
           season_type
         ]
       );
@@ -233,13 +261,13 @@ router.post("/test-match", async (req, res) => {
           total_overs_used,
           match_name?.toUpperCase(),
           user_id,
-          tournament_name,
+          tournamentNameFinal,
           season_year,
           matchDateSafe,
           mom_player,
           mom_player_id,
           mom_reason,
-          crickedge_season_id,
+          seasonId,
           season_type
         ]
       );

@@ -191,31 +191,16 @@ router.delete("/delete/:id", async (req, res) => {
     await client.query("BEGIN");
 
     // Convert matches back to INTERNATIONAL
-    await client.query(`
 
-      UPDATE match_history
-      SET
-      season_type='INTERNATIONAL',
-      crickedge_season_id=NULL
-      WHERE crickedge_season_id=$1
-    `, [id]);
     await client.query(`
-      UPDATE test_match_results
-      SET
-      season_type='INTERNATIONAL',
-      crickedge_season_id=NULL
-
-      WHERE crickedge_season_id=$1
-
-    `, [id]);
-    await client.query(`
-      DELETE FROM crickedge_seasons
-      WHERE id=$1
-    `, [id]);
+UPDATE crickedge_seasons
+SET status='COMPLETED'
+WHERE id=$1
+`, [id]);
 
     await client.query("COMMIT");
     res.json({
-      message: "Season deleted"
+      message: "Season completed"
     });
 
   }
@@ -234,7 +219,7 @@ router.delete("/delete/:id", async (req, res) => {
 // =======================================================
 router.get("/leaderboard", async (req, res) => {
   try {
-    const { match_type, season_id } = req.query;
+    const { match_type, season_id, tournament } = req.query;
     // ================================
     // 1️⃣ SELECT SEASON
     // ================================
@@ -298,6 +283,7 @@ match_type
 FROM match_history
 WHERE crickedge_season_id=$1
 ${odiFilter}
+${tournament ? "AND tournament_name=$2" : ""}
 UNION ALL
 SELECT
 team2 team,
@@ -310,6 +296,7 @@ match_type
 FROM match_history
 WHERE crickedge_season_id=$1
 ${odiFilter}
+${tournament ? "AND tournament_name=$2" : ""}
 )t
 GROUP BY team
 `;
@@ -354,6 +341,7 @@ END AS result
 FROM test_match_results
 WHERE crickedge_season_id=$1
 ${testFilter}
+${tournament ? "AND tournament_name=$2" : ""}
 
 UNION ALL
 
@@ -367,14 +355,19 @@ END AS result
 FROM test_match_results
 WHERE crickedge_season_id=$1
 ${testFilter}
+${tournament ? "AND tournament_name=$2" : ""}
 )t
 GROUP BY team
 `;
     // ================================
     // 4️⃣ EXECUTE
     // ================================
-    const odiData = await pool.query(odiQuery, [seasonId]);
-    const testData = await pool.query(testQuery, [seasonId]);
+    const odiData = tournament
+      ? await pool.query(odiQuery, [seasonId, tournament])
+      : await pool.query(odiQuery, [seasonId]);
+    const testData = tournament
+      ? await pool.query(testQuery, [seasonId, tournament])
+      : await pool.query(testQuery, [seasonId]);
     // ================================
     // 5️⃣ MERGE
     // ================================

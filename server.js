@@ -263,7 +263,7 @@ app.post("/api/submit-result", async (req, res) => {
       mom_reason = null,
       mom_player_id = null,
       // ✅ CrickEdge Season
-      crickedge_season_id = null,
+      crickedge_season_id,
       season_type = "INTERNATIONAL"
 
     } = req.body;
@@ -279,6 +279,33 @@ app.post("/api/submit-result", async (req, res) => {
       return res.status(400).json({ error: "Invalid match_id" });
 
     const { match_name, match_type } = matchResult.rows[0];
+    /* ================================
+AUTO LINK ACTIVE SEASON
+================================ */
+
+    let seasonId = crickedge_season_id;
+    let tournamentNameFinal = tournament_name;
+
+    if (!seasonId) {
+
+      const seasonResult = await pool.query(`
+SELECT id, tournament_name
+FROM crickedge_seasons
+WHERE status='ACTIVE'
+LIMIT 1
+`);
+
+      if (seasonResult.rows.length > 0) {
+
+        seasonId =
+          seasonResult.rows[0].id;
+
+        tournamentNameFinal =
+          seasonResult.rows[0].tournament_name;
+
+      }
+
+    }
     const maxOvers = match_type === "T20" ? 20 : 50;
 
     // ✅ Convert UI overs input (e.g. 29.4 → decimal)
@@ -369,8 +396,11 @@ match_name, match_type,
 team1, runs1, overs1, wickets1,
 team2, runs2, overs2, wickets2,
 winner, user_id, match_date,
-tournament_name, season_year,
-mom_player, mom_player_id, mom_reason,
+tournament_name,
+season_year,
+mom_player,
+mom_player_id,
+mom_reason,
 crickedge_season_id,
 season_type
 )
@@ -382,9 +412,9 @@ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
       team1, runs1, displayOvers1, wickets1,
       team2, runs2, displayOvers2, wickets2,
       winner, user_id, match_date,
-      tournament_name, season_year,
+      tournamentNameFinal, season_year,
       mom_player, mom_player_id, mom_reason,
-      crickedge_season_id,
+      seasonId,
       season_type
     ]);
 
