@@ -515,5 +515,46 @@ router.get("/all", async (req, res) => {
     });
   }
 });
+/* =====================================================
+   GET ACHIEVEMENT BY ID
+===================================================== */
+router.get("/:achievementId", async (req, res) => {
+  try {
+    const { achievementId } = req.params;
 
+    const result = await pool.query(
+      `
+      SELECT *
+      FROM player_achievements
+      WHERE achievement_id = $1
+      `,
+      [achievementId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Achievement not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      achievement: result.rows[0],
+    });
+
+  } catch (err) {
+    console.error(
+      "Get Achievement By ID Error:",
+      err
+    );
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+      detail: err.detail,
+      code: err.code,
+    });
+  }
+});
 module.exports = router;
