@@ -732,4 +732,238 @@ router.put("/update/:achievementId", async (req, res) => {
     client.release();
   }
 });
+/* =====================================================
+   DELETE ACHIEVEMENT
+===================================================== */
+router.delete("/delete/:achievementId", async (req, res) => {
+  try {
+    const { achievementId } = req.params;
+
+    const result = await pool.query(
+      `
+      DELETE FROM player_achievements
+      WHERE achievement_id = $1
+      RETURNING *
+      `,
+      [achievementId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Achievement not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Achievement deleted successfully",
+      achievement: result.rows[0],
+    });
+
+  } catch (err) {
+    console.error("Delete Achievement Error:", err);
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+      code: err.code,
+    });
+  }
+});
+/* =====================================================
+   DASHBOARD SUMMARY
+===================================================== */
+router.get("/dashboard", async (req, res) => {
+  try {
+
+    const totalAchievements = await pool.query(`
+      SELECT COUNT(*) total
+      FROM player_achievements
+    `);
+
+    const verifiedAchievements = await pool.query(`
+      SELECT COUNT(*) total
+      FROM player_achievements
+      WHERE status='Verified'
+    `);
+
+    const hallOfFame = await pool.query(`
+      SELECT COUNT(*) total
+      FROM player_achievements
+      WHERE status='Hall Of Fame'
+    `);
+
+    const legendaryAchievements = await pool.query(`
+      SELECT COUNT(*) total
+      FROM player_achievements
+      WHERE rarity_level IN ('Legendary','Mythical','Historic')
+    `);
+
+    res.json({
+      success: true,
+
+      totalAchievements:
+        parseInt(totalAchievements.rows[0].total),
+
+      verifiedAchievements:
+        parseInt(verifiedAchievements.rows[0].total),
+
+      hallOfFame:
+        parseInt(hallOfFame.rows[0].total),
+
+      legendaryAchievements:
+        parseInt(legendaryAchievements.rows[0].total),
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+/* =====================================================
+   TOP ACHIEVEMENT PLAYERS
+===================================================== */
+router.get("/top-players", async (req, res) => {
+  try {
+
+    const result = await pool.query(`
+      SELECT
+        player_name,
+        COUNT(*) total_achievements,
+        SUM(achievement_points) total_points
+      FROM player_achievements
+      GROUP BY player_name
+      ORDER BY total_points DESC
+      LIMIT 20
+    `);
+
+    res.json({
+      success: true,
+      data: result.rows,
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+/* =====================================================
+   TOP ACHIEVEMENT PLAYERS
+===================================================== */
+router.get("/top-players", async (req, res) => {
+  try {
+
+    const result = await pool.query(`
+      SELECT
+        player_name,
+        COUNT(*) total_achievements,
+        SUM(achievement_points) total_points
+      FROM player_achievements
+      GROUP BY player_name
+      ORDER BY total_points DESC
+      LIMIT 20
+    `);
+
+    res.json({
+      success: true,
+      data: result.rows,
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+/* =====================================================
+   HALL OF FAME RECORDS
+===================================================== */
+router.get("/hall-of-fame", async (req, res) => {
+  try {
+
+    const result = await pool.query(`
+      SELECT *
+      FROM player_achievements
+      WHERE status='Hall Of Fame'
+      ORDER BY achievement_points DESC
+    `);
+
+    res.json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows,
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+/* =====================================================
+   ACHIEVEMENT STATISTICS
+===================================================== */
+router.get("/statistics", async (req, res) => {
+  try {
+
+    const categoryStats = await pool.query(`
+      SELECT
+        achievement_category,
+        COUNT(*) total
+      FROM player_achievements
+      GROUP BY achievement_category
+      ORDER BY total DESC
+    `);
+
+    const rarityStats = await pool.query(`
+      SELECT
+        rarity_level,
+        COUNT(*) total
+      FROM player_achievements
+      GROUP BY rarity_level
+      ORDER BY total DESC
+    `);
+
+    const matchTypeStats = await pool.query(`
+      SELECT
+        match_type,
+        COUNT(*) total
+      FROM player_achievements
+      GROUP BY match_type
+      ORDER BY total DESC
+    `);
+
+    res.json({
+      success: true,
+      categoryStats: categoryStats.rows,
+      rarityStats: rarityStats.rows,
+      matchTypeStats: matchTypeStats.rows,
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+
+
 module.exports = router;
