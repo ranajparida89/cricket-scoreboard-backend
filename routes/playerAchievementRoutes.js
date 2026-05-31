@@ -20,9 +20,35 @@ router.get("/health", async (req, res) => {
     });
   } catch (err) {
     console.error("Health Check Error:", err);
+
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
+
+/* =====================================================
+   DATABASE TEST
+===================================================== */
+router.get("/master-test", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT COUNT(*) FROM achievement_master"
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result.rows,
+    });
+  } catch (err) {
+    console.error("Master Test Error:", err);
+
     res.status(500).json({
       success: false,
       message: err.message,
+      detail: err.detail,
+      code: err.code,
     });
   }
 });
@@ -50,6 +76,9 @@ router.get("/master", async (req, res) => {
     res.status(500).json({
       success: false,
       message: err.message,
+      detail: err.detail,
+      code: err.code,
+      stack: err.stack,
     });
   }
 });
@@ -66,7 +95,7 @@ router.get("/master/:category", async (req, res) => {
       SELECT *
       FROM achievement_master
       WHERE is_active = TRUE
-      AND LOWER(achievement_category)=LOWER($1)
+      AND LOWER(achievement_category) = LOWER($1)
       ORDER BY achievement_name
       `,
       [category]
@@ -83,6 +112,9 @@ router.get("/master/:category", async (req, res) => {
     res.status(500).json({
       success: false,
       message: err.message,
+      detail: err.detail,
+      code: err.code,
+      stack: err.stack,
     });
   }
 });
