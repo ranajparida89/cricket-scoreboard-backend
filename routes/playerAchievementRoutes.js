@@ -387,4 +387,133 @@ router.post("/register", async (req, res) => {
   }
 });
 
+/* =====================================================
+   GET ALL ACHIEVEMENTS
+===================================================== */
+router.get("/all", async (req, res) => {
+  try {
+    const {
+      playerName,
+      matchType,
+      achievement,
+      category,
+      status,
+      rarity,
+      page = 1,
+      limit = 20,
+    } = req.query;
+
+    const conditions = [];
+    const values = [];
+    let idx = 1;
+
+    if (playerName) {
+      conditions.push(`LOWER(player_name) LIKE LOWER($${idx})`);
+      values.push(`%${playerName}%`);
+      idx++;
+    }
+
+    if (matchType) {
+      conditions.push(`LOWER(match_type)=LOWER($${idx})`);
+      values.push(matchType);
+      idx++;
+    }
+
+    if (achievement) {
+      conditions.push(`LOWER(achievement_name) LIKE LOWER($${idx})`);
+      values.push(`%${achievement}%`);
+      idx++;
+    }
+
+    if (category) {
+      conditions.push(`LOWER(achievement_category)=LOWER($${idx})`);
+      values.push(category);
+      idx++;
+    }
+
+    if (status) {
+      conditions.push(`LOWER(status)=LOWER($${idx})`);
+      values.push(status);
+      idx++;
+    }
+
+    if (rarity) {
+      conditions.push(`LOWER(rarity_level)=LOWER($${idx})`);
+      values.push(rarity);
+      idx++;
+    }
+
+    const whereClause =
+      conditions.length > 0
+        ? `WHERE ${conditions.join(" AND ")}`
+        : "";
+
+    const offset =
+      (parseInt(page) - 1) * parseInt(limit);
+
+    const totalQuery = `
+      SELECT COUNT(*) AS total
+      FROM player_achievements
+      ${whereClause}
+    `;
+
+    const totalResult = await pool.query(
+      totalQuery,
+      values
+    );
+
+    const dataQuery = `
+      SELECT *
+      FROM player_achievements
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT $${idx}
+      OFFSET $${idx + 1}
+    `;
+
+    const dataResult = await pool.query(
+      dataQuery,
+      [
+        ...values,
+        parseInt(limit),
+        parseInt(offset),
+      ]
+    );
+
+    res.status(200).json({
+      success: true,
+
+      totalRecords:
+        parseInt(totalResult.rows[0].total),
+
+      currentPage:
+        parseInt(page),
+
+      pageSize:
+        parseInt(limit),
+
+      totalPages:
+        Math.ceil(
+          parseInt(totalResult.rows[0].total) /
+          parseInt(limit)
+        ),
+
+      data: dataResult.rows,
+    });
+
+  } catch (err) {
+    console.error(
+      "Get All Achievements Error:",
+      err
+    );
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+      detail: err.detail,
+      code: err.code,
+    });
+  }
+});
+
 module.exports = router;
