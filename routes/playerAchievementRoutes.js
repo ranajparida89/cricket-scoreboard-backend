@@ -516,48 +516,6 @@ router.get("/all", async (req, res) => {
   }
 });
 /* =====================================================
-   GET ACHIEVEMENT BY ID
-===================================================== */
-router.get("/:achievementId", async (req, res) => {
-  try {
-    const { achievementId } = req.params;
-
-    const result = await pool.query(
-      `
-      SELECT *
-      FROM player_achievements
-      WHERE achievement_id = $1
-      `,
-      [achievementId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Achievement not found",
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      achievement: result.rows[0],
-    });
-
-  } catch (err) {
-    console.error(
-      "Get Achievement By ID Error:",
-      err
-    );
-
-    res.status(500).json({
-      success: false,
-      message: err.message,
-      detail: err.detail,
-      code: err.code,
-    });
-  }
-});
-/* =====================================================
    UPDATE ACHIEVEMENT
 ===================================================== */
 router.put("/update/:achievementId", async (req, res) => {
@@ -857,37 +815,6 @@ router.get("/top-players", async (req, res) => {
   }
 });
 /* =====================================================
-   TOP ACHIEVEMENT PLAYERS
-===================================================== */
-router.get("/top-players", async (req, res) => {
-  try {
-
-    const result = await pool.query(`
-      SELECT
-        player_name,
-        COUNT(*) total_achievements,
-        SUM(achievement_points) total_points
-      FROM player_achievements
-      GROUP BY player_name
-      ORDER BY total_points DESC
-      LIMIT 20
-    `);
-
-    res.json({
-      success: true,
-      data: result.rows,
-    });
-
-  } catch (err) {
-    console.error(err);
-
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
-});
-/* =====================================================
    HALL OF FAME RECORDS
 ===================================================== */
 router.get("/hall-of-fame", async (req, res) => {
@@ -965,5 +892,46 @@ router.get("/statistics", async (req, res) => {
   }
 });
 
+/* =====================================================
+   GET ACHIEVEMENT BY ID
+===================================================== */
+router.get("/:achievementId", async (req, res) => {
+  try {
+    const { achievementId } = req.params;
 
+    const result = await pool.query(
+      `
+      SELECT *
+      FROM player_achievements
+      WHERE achievement_id = $1
+      `,
+      [achievementId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Achievement not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      achievement: result.rows[0],
+    });
+
+  } catch (err) {
+    console.error(
+      "Get Achievement By ID Error:",
+      err
+    );
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+      detail: err.detail,
+      code: err.code,
+    });
+  }
+});
 module.exports = router;
