@@ -112,4 +112,279 @@ router.get("/master/:category", async (req, res) => {
   }
 });
 
+/* =====================================================
+   REGISTER PLAYER ACHIEVEMENT
+===================================================== */
+router.post("/register", async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const {
+      match_type,
+      match_name,
+      board_name,
+      team_name,
+      player_name,
+      achievement_category,
+      achievement_name,
+      achievement_date,
+      innings_type,
+
+      runs_scored,
+      balls_faced,
+      fours,
+      sixes,
+
+      wickets,
+      runs_conceded,
+      overs_bowled,
+
+      consecutive_wickets,
+      balls_for_wickets,
+
+      catches,
+      stumpings,
+      run_outs,
+
+      remarks,
+      created_by,
+    } = req.body;
+
+    /* ==========================
+       VALIDATION
+    ========================== */
+
+    const requiredFields = [
+      "match_type",
+      "match_name",
+      "board_name",
+      "team_name",
+      "player_name",
+      "achievement_category",
+      "achievement_name",
+      "achievement_date",
+    ];
+
+    const missingFields = [];
+
+    requiredFields.forEach((field) => {
+      if (!req.body[field]) {
+        missingFields.push(field);
+      }
+    });
+
+    if (missingFields.length > 0) {
+      await client.query("ROLLBACK");
+
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields",
+        missingFields,
+      });
+    }
+
+    /* ==========================
+       DUPLICATE CHECK
+    ========================== */
+
+    const duplicateCheck = await client.query(
+      `
+      SELECT id
+      FROM player_achievements
+      WHERE LOWER(player_name)=LOWER($1)
+      AND LOWER(match_name)=LOWER($2)
+      AND LOWER(achievement_name)=LOWER($3)
+      AND achievement_date=$4
+      LIMIT 1
+      `,
+      [
+        player_name,
+        match_name,
+        achievement_name,
+        achievement_date,
+      ]
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      await client.query("ROLLBACK");
+
+      return res.status(409).json({
+        success: false,
+        message:
+          "Duplicate achievement already exists for this player in this match.",
+      });
+    }
+
+    /* ==========================
+       FETCH MASTER DATA
+    ========================== */
+
+    const masterResult = await client.query(
+      `
+      SELECT *
+      FROM achievement_master
+      WHERE achievement_name = $1
+      AND is_active = TRUE
+      LIMIT 1
+      `,
+      [achievement_name]
+    );
+
+    if (masterResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return res.status(404).json({
+        success: false,
+        message: "Achievement not found in achievement_master.",
+      });
+    }
+
+    const master = masterResult.rows[0];
+
+    const achievement_points = master.points || 0;
+    const rarity_level = master.rarity_level || "Common";
+
+    /* ==========================
+       GENERATE ACHIEVEMENT ID
+    ========================== */
+
+    const year = new Date().getFullYear();
+
+    const countResult = await client.query(
+      `
+      SELECT COUNT(*) AS total
+      FROM player_achievements
+      `
+    );
+
+    const nextNumber =
+      parseInt(countResult.rows[0].total || 0) + 1;
+
+    const achievement_id =
+      `PA-${year}-${String(nextNumber).padStart(6, "0")}`;
+
+    /* ==========================
+       INSERT RECORD
+    ========================== */
+
+    const insertResult = await client.query(
+      `
+      INSERT INTO player_achievements
+      (
+        achievement_id,
+
+        match_type,
+        match_name,
+
+        board_name,
+        team_name,
+
+        player_name,
+
+        achievement_category,
+        achievement_name,
+
+        achievement_date,
+
+        innings_type,
+
+        runs_scored,
+        balls_faced,
+        fours,
+        sixes,
+
+        wickets,
+        runs_conceded,
+        overs_bowled,
+
+        consecutive_wickets,
+        balls_for_wickets,
+
+        catches,
+        stumpings,
+        run_outs,
+
+        achievement_points,
+        rarity_level,
+
+        remarks,
+        created_by
+      )
+      VALUES
+      (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+        $11,$12,$13,$14,$15,$16,$17,
+        $18,$19,$20,$21,$22,
+        $23,$24,$25,$26
+      )
+      RETURNING *
+      `,
+      [
+        achievement_id,
+
+        match_type,
+        match_name,
+
+        board_name,
+        team_name,
+
+        player_name,
+
+        achievement_category,
+        achievement_name,
+
+        achievement_date,
+
+        innings_type || null,
+
+        runs_scored || 0,
+        balls_faced || 0,
+        fours || 0,
+        sixes || 0,
+
+        wickets || 0,
+        runs_conceded || 0,
+        overs_bowled || null,
+
+        consecutive_wickets || 0,
+        balls_for_wickets || 0,
+
+        catches || 0,
+        stumpings || 0,
+        run_outs || 0,
+
+        achievement_points,
+        rarity_level,
+
+        remarks || null,
+        created_by || "System",
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      success: true,
+      message: "Achievement registered successfully.",
+      achievement: insertResult.rows[0],
+    });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+
+    console.error("Achievement Register Error:", err);
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+      detail: err.detail,
+      code: err.code,
+    });
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = router;
