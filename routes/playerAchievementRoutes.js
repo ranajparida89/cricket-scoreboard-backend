@@ -557,4 +557,179 @@ router.get("/:achievementId", async (req, res) => {
     });
   }
 });
+/* =====================================================
+   UPDATE ACHIEVEMENT
+===================================================== */
+router.put("/update/:achievementId", async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const { achievementId } = req.params;
+
+    const existing = await client.query(
+      `
+      SELECT *
+      FROM player_achievements
+      WHERE achievement_id = $1
+      `,
+      [achievementId]
+    );
+
+    if (existing.rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return res.status(404).json({
+        success: false,
+        message: "Achievement not found",
+      });
+    }
+
+    const achievement_name =
+      req.body.achievement_name ||
+      existing.rows[0].achievement_name;
+
+    let achievement_points =
+      existing.rows[0].achievement_points;
+
+    let rarity_level =
+      existing.rows[0].rarity_level;
+
+    const master = await client.query(
+      `
+      SELECT *
+      FROM achievement_master
+      WHERE achievement_name = $1
+      LIMIT 1
+      `,
+      [achievement_name]
+    );
+
+    if (master.rows.length > 0) {
+      achievement_points =
+        master.rows[0].points;
+
+      rarity_level =
+        master.rows[0].rarity_level;
+    }
+
+    const result = await client.query(
+      `
+      UPDATE player_achievements
+      SET
+
+      match_type = COALESCE($1, match_type),
+      match_name = COALESCE($2, match_name),
+
+      board_name = COALESCE($3, board_name),
+      team_name = COALESCE($4, team_name),
+
+      player_name = COALESCE($5, player_name),
+
+      achievement_category = COALESCE($6, achievement_category),
+      achievement_name = COALESCE($7, achievement_name),
+
+      achievement_date = COALESCE($8, achievement_date),
+
+      innings_type = COALESCE($9, innings_type),
+
+      runs_scored = COALESCE($10, runs_scored),
+      balls_faced = COALESCE($11, balls_faced),
+      fours = COALESCE($12, fours),
+      sixes = COALESCE($13, sixes),
+
+      wickets = COALESCE($14, wickets),
+      runs_conceded = COALESCE($15, runs_conceded),
+      overs_bowled = COALESCE($16, overs_bowled),
+
+      consecutive_wickets = COALESCE($17, consecutive_wickets),
+      balls_for_wickets = COALESCE($18, balls_for_wickets),
+
+      catches = COALESCE($19, catches),
+      stumpings = COALESCE($20, stumpings),
+      run_outs = COALESCE($21, run_outs),
+
+      achievement_points = $22,
+      rarity_level = $23,
+
+      status = COALESCE($24, status),
+
+      remarks = COALESCE($25, remarks),
+
+      updated_at = NOW()
+
+      WHERE achievement_id = $26
+
+      RETURNING *
+      `,
+      [
+        req.body.match_type,
+        req.body.match_name,
+
+        req.body.board_name,
+        req.body.team_name,
+
+        req.body.player_name,
+
+        req.body.achievement_category,
+        req.body.achievement_name,
+
+        req.body.achievement_date,
+
+        req.body.innings_type,
+
+        req.body.runs_scored,
+        req.body.balls_faced,
+        req.body.fours,
+        req.body.sixes,
+
+        req.body.wickets,
+        req.body.runs_conceded,
+        req.body.overs_bowled,
+
+        req.body.consecutive_wickets,
+        req.body.balls_for_wickets,
+
+        req.body.catches,
+        req.body.stumpings,
+        req.body.run_outs,
+
+        achievement_points,
+        rarity_level,
+
+        req.body.status,
+
+        req.body.remarks,
+
+        achievementId,
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    res.status(200).json({
+      success: true,
+      message: "Achievement updated successfully",
+      achievement: result.rows[0],
+    });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+
+    console.error(
+      "Achievement Update Error:",
+      err
+    );
+
+    res.status(500).json({
+      success: false,
+      message: err.message,
+      detail: err.detail,
+      code: err.code,
+    });
+  } finally {
+    client.release();
+  }
+});
 module.exports = router;
