@@ -6,191 +6,189 @@ const pool = require("../db");
    HEALTH CHECK
 ===================================================== */
 router.get("/health", async (req, res) => {
-  try {
-    res.status(200).json({
-      success: true,
-      message: "Player Achievement API is working",
-    });
-  } catch (err) {
-    console.error("Health Check Error:", err);
+    try {
+        res.status(200).json({
+            success: true,
+            message: "Player Achievement API is working",
+        });
+    } catch (err) {
+        console.error("Health Check Error:", err);
 
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
+        res.status(500).json({
+            success: false,
+            error: err.message,
+        });
+    }
 });
 
 /* =====================================================
    DATABASE TEST
 ===================================================== */
 router.get("/master-test", async (req, res) => {
-  try {
-    const result = await pool.query(
-      "SELECT COUNT(*) FROM achievement_master"
-    );
+    try {
+        const result = await pool.query(
+            "SELECT COUNT(*) FROM achievement_master"
+        );
 
-    res.status(200).json({
-      success: true,
-      data: result.rows,
-    });
-  } catch (err) {
-    console.error("Master Test Error:", err);
+        res.status(200).json({
+            success: true,
+            data: result.rows,
+        });
+    } catch (err) {
+        console.error("Master Test Error:", err);
 
-    res.status(500).json({
-      success: false,
-      message: err.message,
-      detail: err.detail,
-      code: err.code,
-    });
-  }
+        res.status(500).json({
+            success: false,
+            message: err.message,
+            detail: err.detail,
+            code: err.code,
+        });
+    }
 });
 
 /* =====================================================
    GET ALL ACHIEVEMENT MASTER RECORDS
 ===================================================== */
 router.get("/master", async (req, res) => {
-  try {
-    const result = await pool.query(`
+    try {
+        const result = await pool.query(`
       SELECT *
       FROM achievement_master
       WHERE is_active = TRUE
       ORDER BY achievement_category, achievement_name
     `);
 
-    res.status(200).json({
-      success: true,
-      count: result.rows.length,
-      data: result.rows,
-    });
-  } catch (err) {
-    console.error("Master Fetch Error:", err);
+        res.status(200).json({
+            success: true,
+            count: result.rows.length,
+            data: result.rows,
+        });
+    } catch (err) {
+        console.error("Master Fetch Error:", err);
 
-    res.status(500).json({
-      success: false,
-      message: err.message,
-      detail: err.detail,
-      code: err.code,
-      stack: err.stack,
-    });
-  }
+        res.status(500).json({
+            success: false,
+            message: err.message,
+            detail: err.detail,
+            code: err.code,
+            stack: err.stack,
+        });
+    }
 });
 
 /* =====================================================
    GET ACHIEVEMENTS BY CATEGORY
 ===================================================== */
 router.get("/master/:category", async (req, res) => {
-  try {
-    const { category } = req.params;
+    try {
+        const { category } = req.params;
 
-    const result = await pool.query(
-      `
+        const result = await pool.query(
+            `
       SELECT *
       FROM achievement_master
       WHERE is_active = TRUE
       AND LOWER(achievement_category) = LOWER($1)
       ORDER BY achievement_name
       `,
-      [category]
-    );
+            [category]
+        );
 
-    res.status(200).json({
-      success: true,
-      count: result.rows.length,
-      data: result.rows,
-    });
-  } catch (err) {
-    console.error("Category Fetch Error:", err);
+        res.status(200).json({
+            success: true,
+            count: result.rows.length,
+            data: result.rows,
+        });
+    } catch (err) {
+        console.error("Category Fetch Error:", err);
 
-    res.status(500).json({
-      success: false,
-      message: err.message,
-      detail: err.detail,
-      code: err.code,
-      stack: err.stack,
-    });
-  }
+        res.status(500).json({
+            success: false,
+            message: err.message,
+            detail: err.detail,
+            code: err.code,
+            stack: err.stack,
+        });
+    }
 });
 
 /* =====================================================
    REGISTER PLAYER ACHIEVEMENT
 ===================================================== */
 router.post("/register", async (req, res) => {
-  const client = await pool.connect();
+    const client = await pool.connect();
 
-  try {
-    await client.query("BEGIN");
+    try {
+        await client.query("BEGIN");
 
-    const {
-      match_type,
-      match_name,
-      board_name,
-      team_name,
-      player_name,
-      achievement_category,
-      achievement_name,
-      achievement_date,
-      innings_type,
+        const {
+            match_type,
+            match_name,
+            board_name,
+            team_name,
+            player_name,
+            achievement_category,
+            achievement_name,
+            achievement_date,
+            innings_type,
 
-      runs_scored,
-      balls_faced,
-      fours,
-      sixes,
+            runs_scored,
+            balls_faced,
+            fours,
+            sixes,
 
-      wickets,
-      runs_conceded,
-      overs_bowled,
+            wickets,
+            runs_conceded,
+            overs_bowled,
 
-      consecutive_wickets,
-      balls_for_wickets,
+            consecutive_wickets,
+            balls_for_wickets,
 
-      catches,
-      stumpings,
-      run_outs,
+            catches,
+            stumpings,
+            run_outs,
 
-      remarks,
-      created_by,
-    } = req.body;
+            remarks,
+            created_by,
+        } = req.body;
 
-    /* ==========================
-       VALIDATION
-    ========================== */
+        /* ==========================
+           VALIDATION
+        ========================== */
+        const requiredFields = [
+            "match_type",
+            "match_name",
+            "team_name",
+            "player_name",
+            "achievement_category",
+            "achievement_name",
+            "achievement_date",
+        ];
 
-    const requiredFields = [
-      "match_type",
-      "match_name",
-      "board_name",
-      "team_name",
-      "player_name",
-      "achievement_category",
-      "achievement_name",
-      "achievement_date",
-    ];
+        const missingFields = [];
 
-    const missingFields = [];
+        requiredFields.forEach((field) => {
+            if (!req.body[field]) {
+                missingFields.push(field);
+            }
+        });
 
-    requiredFields.forEach((field) => {
-      if (!req.body[field]) {
-        missingFields.push(field);
-      }
-    });
+        if (missingFields.length > 0) {
+            await client.query("ROLLBACK");
 
-    if (missingFields.length > 0) {
-      await client.query("ROLLBACK");
+            return res.status(400).json({
+                success: false,
+                message: "Missing required fields",
+                missingFields,
+            });
+        }
 
-      return res.status(400).json({
-        success: false,
-        message: "Missing required fields",
-        missingFields,
-      });
-    }
+        /* ==========================
+           DUPLICATE CHECK
+        ========================== */
 
-    /* ==========================
-       DUPLICATE CHECK
-    ========================== */
-
-    const duplicateCheck = await client.query(
-      `
+        const duplicateCheck = await client.query(
+            `
       SELECT id
       FROM player_achievements
       WHERE LOWER(player_name)=LOWER($1)
@@ -199,78 +197,78 @@ router.post("/register", async (req, res) => {
       AND achievement_date=$4
       LIMIT 1
       `,
-      [
-        player_name,
-        match_name,
-        achievement_name,
-        achievement_date,
-      ]
-    );
+            [
+                player_name,
+                match_name,
+                achievement_name,
+                achievement_date,
+            ]
+        );
 
-    if (duplicateCheck.rows.length > 0) {
-      await client.query("ROLLBACK");
+        if (duplicateCheck.rows.length > 0) {
+            await client.query("ROLLBACK");
 
-      return res.status(409).json({
-        success: false,
-        message:
-          "Duplicate achievement already exists for this player in this match.",
-      });
-    }
+            return res.status(409).json({
+                success: false,
+                message:
+                    "Duplicate achievement already exists for this player in this match.",
+            });
+        }
 
-    /* ==========================
-       FETCH MASTER DATA
-    ========================== */
+        /* ==========================
+           FETCH MASTER DATA
+        ========================== */
 
-    const masterResult = await client.query(
-      `
+        const masterResult = await client.query(
+            `
       SELECT *
       FROM achievement_master
       WHERE achievement_name = $1
       AND is_active = TRUE
       LIMIT 1
       `,
-      [achievement_name]
-    );
+            [achievement_name]
+        );
 
-    if (masterResult.rows.length === 0) {
-      await client.query("ROLLBACK");
+        if (masterResult.rows.length === 0) {
+            await client.query("ROLLBACK");
 
-      return res.status(404).json({
-        success: false,
-        message: "Achievement not found in achievement_master.",
-      });
-    }
+            return res.status(404).json({
+                success: false,
+                message: "Achievement not found in achievement_master.",
+            });
+        }
 
-    const master = masterResult.rows[0];
+        const master = masterResult.rows[0];
 
-    const achievement_points = master.points || 0;
-    const rarity_level = master.rarity_level || "Common";
+        const achievement_points = master.points || 0;
+        const rarity_level = master.rarity_level || "Common";
 
-    /* ==========================
-       GENERATE ACHIEVEMENT ID
-    ========================== */
+        /* ==========================
+           GENERATE ACHIEVEMENT ID
+        ========================== */
 
-    const year = new Date().getFullYear();
+        const year = new Date().getFullYear();
 
-    const countResult = await client.query(
-      `
+        const countResult = await client.query(
+            `
       SELECT COUNT(*) AS total
       FROM player_achievements
       `
-    );
+        );
 
-    const nextNumber =
-      parseInt(countResult.rows[0].total || 0) + 1;
+        const nextNumber =
+            parseInt(countResult.rows[0].total || 0) + 1;
 
-    const achievement_id =
-      `PA-${year}-${String(nextNumber).padStart(6, "0")}`;
+        const achievement_id =
+            `PA-${year}-${String(nextNumber).padStart(6, "0")}`;
 
-    /* ==========================
-       INSERT RECORD
-    ========================== */
+        /* ==========================
+           INSERT RECORD
+        ========================== */
 
-    const insertResult = await client.query(
-      `
+        const insertResult = await client.query(
+            `
       INSERT INTO player_achievements
       (
         achievement_id,
@@ -321,148 +319,148 @@ router.post("/register", async (req, res) => {
       )
       RETURNING *
       `,
-      [
-        achievement_id,
+            [
+                achievement_id,
 
-        match_type,
-        match_name,
+                match_type,
+                match_name,
 
-        board_name,
-        team_name,
+                board_name,
+                team_name,
 
-        player_name,
+                player_name,
 
-        achievement_category,
-        achievement_name,
+                achievement_category,
+                achievement_name,
 
-        achievement_date,
+                achievement_date,
 
-        innings_type || null,
+                innings_type || null,
 
-        runs_scored || 0,
-        balls_faced || 0,
-        fours || 0,
-        sixes || 0,
+                runs_scored || 0,
+                balls_faced || 0,
+                fours || 0,
+                sixes || 0,
 
-        wickets || 0,
-        runs_conceded || 0,
-        overs_bowled || null,
+                wickets || 0,
+                runs_conceded || 0,
+                overs_bowled || null,
 
-        consecutive_wickets || 0,
-        balls_for_wickets || 0,
+                consecutive_wickets || 0,
+                balls_for_wickets || 0,
 
-        catches || 0,
-        stumpings || 0,
-        run_outs || 0,
+                catches || 0,
+                stumpings || 0,
+                run_outs || 0,
 
-        achievement_points,
-        rarity_level,
+                achievement_points,
+                rarity_level,
 
-        remarks || null,
-        created_by || "System",
-      ]
-    );
+                remarks || null,
+                created_by || "System",
+            ]
+        );
 
-    await client.query("COMMIT");
+        await client.query("COMMIT");
 
-    res.status(201).json({
-      success: true,
-      message: "Achievement registered successfully.",
-      achievement: insertResult.rows[0],
-    });
+        res.status(201).json({
+            success: true,
+            message: "Achievement registered successfully.",
+            achievement: insertResult.rows[0],
+        });
 
-  } catch (err) {
-    await client.query("ROLLBACK");
+    } catch (err) {
+        await client.query("ROLLBACK");
 
-    console.error("Achievement Register Error:", err);
+        console.error("Achievement Register Error:", err);
 
-    res.status(500).json({
-      success: false,
-      message: err.message,
-      detail: err.detail,
-      code: err.code,
-    });
-  } finally {
-    client.release();
-  }
+        res.status(500).json({
+            success: false,
+            message: err.message,
+            detail: err.detail,
+            code: err.code,
+        });
+    } finally {
+        client.release();
+    }
 });
 
 /* =====================================================
    GET ALL ACHIEVEMENTS
 ===================================================== */
 router.get("/all", async (req, res) => {
-  try {
-    const {
-      playerName,
-      matchType,
-      achievement,
-      category,
-      status,
-      rarity,
-      page = 1,
-      limit = 20,
-    } = req.query;
+    try {
+        const {
+            playerName,
+            matchType,
+            achievement,
+            category,
+            status,
+            rarity,
+            page = 1,
+            limit = 20,
+        } = req.query;
 
-    const conditions = [];
-    const values = [];
-    let idx = 1;
+        const conditions = [];
+        const values = [];
+        let idx = 1;
 
-    if (playerName) {
-      conditions.push(`LOWER(player_name) LIKE LOWER($${idx})`);
-      values.push(`%${playerName}%`);
-      idx++;
-    }
+        if (playerName) {
+            conditions.push(`LOWER(player_name) LIKE LOWER($${idx})`);
+            values.push(`%${playerName}%`);
+            idx++;
+        }
 
-    if (matchType) {
-      conditions.push(`LOWER(match_type)=LOWER($${idx})`);
-      values.push(matchType);
-      idx++;
-    }
+        if (matchType) {
+            conditions.push(`LOWER(match_type)=LOWER($${idx})`);
+            values.push(matchType);
+            idx++;
+        }
 
-    if (achievement) {
-      conditions.push(`LOWER(achievement_name) LIKE LOWER($${idx})`);
-      values.push(`%${achievement}%`);
-      idx++;
-    }
+        if (achievement) {
+            conditions.push(`LOWER(achievement_name) LIKE LOWER($${idx})`);
+            values.push(`%${achievement}%`);
+            idx++;
+        }
 
-    if (category) {
-      conditions.push(`LOWER(achievement_category)=LOWER($${idx})`);
-      values.push(category);
-      idx++;
-    }
+        if (category) {
+            conditions.push(`LOWER(achievement_category)=LOWER($${idx})`);
+            values.push(category);
+            idx++;
+        }
 
-    if (status) {
-      conditions.push(`LOWER(status)=LOWER($${idx})`);
-      values.push(status);
-      idx++;
-    }
+        if (status) {
+            conditions.push(`LOWER(status)=LOWER($${idx})`);
+            values.push(status);
+            idx++;
+        }
 
-    if (rarity) {
-      conditions.push(`LOWER(rarity_level)=LOWER($${idx})`);
-      values.push(rarity);
-      idx++;
-    }
+        if (rarity) {
+            conditions.push(`LOWER(rarity_level)=LOWER($${idx})`);
+            values.push(rarity);
+            idx++;
+        }
 
-    const whereClause =
-      conditions.length > 0
-        ? `WHERE ${conditions.join(" AND ")}`
-        : "";
+        const whereClause =
+            conditions.length > 0
+                ? `WHERE ${conditions.join(" AND ")}`
+                : "";
 
-    const offset =
-      (parseInt(page) - 1) * parseInt(limit);
+        const offset =
+            (parseInt(page) - 1) * parseInt(limit);
 
-    const totalQuery = `
+        const totalQuery = `
       SELECT COUNT(*) AS total
       FROM player_achievements
       ${whereClause}
     `;
 
-    const totalResult = await pool.query(
-      totalQuery,
-      values
-    );
+        const totalResult = await pool.query(
+            totalQuery,
+            values
+        );
 
-    const dataQuery = `
+        const dataQuery = `
       SELECT *
       FROM player_achievements
       ${whereClause}
@@ -471,109 +469,109 @@ router.get("/all", async (req, res) => {
       OFFSET $${idx + 1}
     `;
 
-    const dataResult = await pool.query(
-      dataQuery,
-      [
-        ...values,
-        parseInt(limit),
-        parseInt(offset),
-      ]
-    );
+        const dataResult = await pool.query(
+            dataQuery,
+            [
+                ...values,
+                parseInt(limit),
+                parseInt(offset),
+            ]
+        );
 
-    res.status(200).json({
-      success: true,
+        res.status(200).json({
+            success: true,
 
-      totalRecords:
-        parseInt(totalResult.rows[0].total),
+            totalRecords:
+                parseInt(totalResult.rows[0].total),
 
-      currentPage:
-        parseInt(page),
+            currentPage:
+                parseInt(page),
 
-      pageSize:
-        parseInt(limit),
+            pageSize:
+                parseInt(limit),
 
-      totalPages:
-        Math.ceil(
-          parseInt(totalResult.rows[0].total) /
-          parseInt(limit)
-        ),
+            totalPages:
+                Math.ceil(
+                    parseInt(totalResult.rows[0].total) /
+                    parseInt(limit)
+                ),
 
-      data: dataResult.rows,
-    });
+            data: dataResult.rows,
+        });
 
-  } catch (err) {
-    console.error(
-      "Get All Achievements Error:",
-      err
-    );
+    } catch (err) {
+        console.error(
+            "Get All Achievements Error:",
+            err
+        );
 
-    res.status(500).json({
-      success: false,
-      message: err.message,
-      detail: err.detail,
-      code: err.code,
-    });
-  }
+        res.status(500).json({
+            success: false,
+            message: err.message,
+            detail: err.detail,
+            code: err.code,
+        });
+    }
 });
 /* =====================================================
    UPDATE ACHIEVEMENT
 ===================================================== */
 router.put("/update/:achievementId", async (req, res) => {
-  const client = await pool.connect();
+    const client = await pool.connect();
 
-  try {
-    await client.query("BEGIN");
+    try {
+        await client.query("BEGIN");
 
-    const { achievementId } = req.params;
+        const { achievementId } = req.params;
 
-    const existing = await client.query(
-      `
+        const existing = await client.query(
+            `
       SELECT *
       FROM player_achievements
       WHERE achievement_id = $1
       `,
-      [achievementId]
-    );
+            [achievementId]
+        );
 
-    if (existing.rows.length === 0) {
-      await client.query("ROLLBACK");
+        if (existing.rows.length === 0) {
+            await client.query("ROLLBACK");
 
-      return res.status(404).json({
-        success: false,
-        message: "Achievement not found",
-      });
-    }
+            return res.status(404).json({
+                success: false,
+                message: "Achievement not found",
+            });
+        }
 
-    const achievement_name =
-      req.body.achievement_name ||
-      existing.rows[0].achievement_name;
+        const achievement_name =
+            req.body.achievement_name ||
+            existing.rows[0].achievement_name;
 
-    let achievement_points =
-      existing.rows[0].achievement_points;
+        let achievement_points =
+            existing.rows[0].achievement_points;
 
-    let rarity_level =
-      existing.rows[0].rarity_level;
+        let rarity_level =
+            existing.rows[0].rarity_level;
 
-    const master = await client.query(
-      `
+        const master = await client.query(
+            `
       SELECT *
       FROM achievement_master
       WHERE achievement_name = $1
       LIMIT 1
       `,
-      [achievement_name]
-    );
+            [achievement_name]
+        );
 
-    if (master.rows.length > 0) {
-      achievement_points =
-        master.rows[0].points;
+        if (master.rows.length > 0) {
+            achievement_points =
+                master.rows[0].points;
 
-      rarity_level =
-        master.rows[0].rarity_level;
-    }
+            rarity_level =
+                master.rows[0].rarity_level;
+        }
 
-    const result = await client.query(
-      `
+        const result = await client.query(
+            `
       UPDATE player_achievements
       SET
 
@@ -621,175 +619,175 @@ router.put("/update/:achievementId", async (req, res) => {
 
       RETURNING *
       `,
-      [
-        req.body.match_type,
-        req.body.match_name,
+            [
+                req.body.match_type,
+                req.body.match_name,
 
-        req.body.board_name,
-        req.body.team_name,
+                req.body.board_name,
+                req.body.team_name,
 
-        req.body.player_name,
+                req.body.player_name,
 
-        req.body.achievement_category,
-        req.body.achievement_name,
+                req.body.achievement_category,
+                req.body.achievement_name,
 
-        req.body.achievement_date,
+                req.body.achievement_date,
 
-        req.body.innings_type,
+                req.body.innings_type,
 
-        req.body.runs_scored,
-        req.body.balls_faced,
-        req.body.fours,
-        req.body.sixes,
+                req.body.runs_scored,
+                req.body.balls_faced,
+                req.body.fours,
+                req.body.sixes,
 
-        req.body.wickets,
-        req.body.runs_conceded,
-        req.body.overs_bowled,
+                req.body.wickets,
+                req.body.runs_conceded,
+                req.body.overs_bowled,
 
-        req.body.consecutive_wickets,
-        req.body.balls_for_wickets,
+                req.body.consecutive_wickets,
+                req.body.balls_for_wickets,
 
-        req.body.catches,
-        req.body.stumpings,
-        req.body.run_outs,
+                req.body.catches,
+                req.body.stumpings,
+                req.body.run_outs,
 
-        achievement_points,
-        rarity_level,
+                achievement_points,
+                rarity_level,
 
-        req.body.status,
+                req.body.status,
 
-        req.body.remarks,
+                req.body.remarks,
 
-        achievementId,
-      ]
-    );
+                achievementId,
+            ]
+        );
 
-    await client.query("COMMIT");
+        await client.query("COMMIT");
 
-    res.status(200).json({
-      success: true,
-      message: "Achievement updated successfully",
-      achievement: result.rows[0],
-    });
+        res.status(200).json({
+            success: true,
+            message: "Achievement updated successfully",
+            achievement: result.rows[0],
+        });
 
-  } catch (err) {
-    await client.query("ROLLBACK");
+    } catch (err) {
+        await client.query("ROLLBACK");
 
-    console.error(
-      "Achievement Update Error:",
-      err
-    );
+        console.error(
+            "Achievement Update Error:",
+            err
+        );
 
-    res.status(500).json({
-      success: false,
-      message: err.message,
-      detail: err.detail,
-      code: err.code,
-    });
-  } finally {
-    client.release();
-  }
+        res.status(500).json({
+            success: false,
+            message: err.message,
+            detail: err.detail,
+            code: err.code,
+        });
+    } finally {
+        client.release();
+    }
 });
 /* =====================================================
    DELETE ACHIEVEMENT
 ===================================================== */
 router.delete("/delete/:achievementId", async (req, res) => {
-  try {
-    const { achievementId } = req.params;
+    try {
+        const { achievementId } = req.params;
 
-    const result = await pool.query(
-      `
+        const result = await pool.query(
+            `
       DELETE FROM player_achievements
       WHERE achievement_id = $1
       RETURNING *
       `,
-      [achievementId]
-    );
+            [achievementId]
+        );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Achievement not found",
-      });
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Achievement not found",
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Achievement deleted successfully",
+            achievement: result.rows[0],
+        });
+
+    } catch (err) {
+        console.error("Delete Achievement Error:", err);
+
+        res.status(500).json({
+            success: false,
+            message: err.message,
+            code: err.code,
+        });
     }
-
-    res.status(200).json({
-      success: true,
-      message: "Achievement deleted successfully",
-      achievement: result.rows[0],
-    });
-
-  } catch (err) {
-    console.error("Delete Achievement Error:", err);
-
-    res.status(500).json({
-      success: false,
-      message: err.message,
-      code: err.code,
-    });
-  }
 });
 /* =====================================================
    DASHBOARD SUMMARY
 ===================================================== */
 router.get("/dashboard", async (req, res) => {
-  try {
+    try {
 
-    const totalAchievements = await pool.query(`
+        const totalAchievements = await pool.query(`
       SELECT COUNT(*) total
       FROM player_achievements
     `);
 
-    const verifiedAchievements = await pool.query(`
+        const verifiedAchievements = await pool.query(`
       SELECT COUNT(*) total
       FROM player_achievements
       WHERE status='Verified'
     `);
 
-    const hallOfFame = await pool.query(`
+        const hallOfFame = await pool.query(`
       SELECT COUNT(*) total
       FROM player_achievements
       WHERE status='Hall Of Fame'
     `);
 
-    const legendaryAchievements = await pool.query(`
+        const legendaryAchievements = await pool.query(`
       SELECT COUNT(*) total
       FROM player_achievements
       WHERE rarity_level IN ('Legendary','Mythical','Historic')
     `);
 
-    res.json({
-      success: true,
+        res.json({
+            success: true,
 
-      totalAchievements:
-        parseInt(totalAchievements.rows[0].total),
+            totalAchievements:
+                parseInt(totalAchievements.rows[0].total),
 
-      verifiedAchievements:
-        parseInt(verifiedAchievements.rows[0].total),
+            verifiedAchievements:
+                parseInt(verifiedAchievements.rows[0].total),
 
-      hallOfFame:
-        parseInt(hallOfFame.rows[0].total),
+            hallOfFame:
+                parseInt(hallOfFame.rows[0].total),
 
-      legendaryAchievements:
-        parseInt(legendaryAchievements.rows[0].total),
-    });
+            legendaryAchievements:
+                parseInt(legendaryAchievements.rows[0].total),
+        });
 
-  } catch (err) {
-    console.error(err);
+    } catch (err) {
+        console.error(err);
 
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
+        res.status(500).json({
+            success: false,
+            message: err.message,
+        });
+    }
 });
 /* =====================================================
    TOP ACHIEVEMENT PLAYERS
 ===================================================== */
 router.get("/top-players", async (req, res) => {
-  try {
+    try {
 
-    const result = await pool.query(`
+        const result = await pool.query(`
       SELECT
         player_name,
         COUNT(*) total_achievements,
@@ -800,55 +798,55 @@ router.get("/top-players", async (req, res) => {
       LIMIT 20
     `);
 
-    res.json({
-      success: true,
-      data: result.rows,
-    });
+        res.json({
+            success: true,
+            data: result.rows,
+        });
 
-  } catch (err) {
-    console.error(err);
+    } catch (err) {
+        console.error(err);
 
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
+        res.status(500).json({
+            success: false,
+            message: err.message,
+        });
+    }
 });
 /* =====================================================
    HALL OF FAME RECORDS
 ===================================================== */
 router.get("/hall-of-fame", async (req, res) => {
-  try {
+    try {
 
-    const result = await pool.query(`
+        const result = await pool.query(`
       SELECT *
       FROM player_achievements
       WHERE status='Hall Of Fame'
       ORDER BY achievement_points DESC
     `);
 
-    res.json({
-      success: true,
-      count: result.rows.length,
-      data: result.rows,
-    });
+        res.json({
+            success: true,
+            count: result.rows.length,
+            data: result.rows,
+        });
 
-  } catch (err) {
-    console.error(err);
+    } catch (err) {
+        console.error(err);
 
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
+        res.status(500).json({
+            success: false,
+            message: err.message,
+        });
+    }
 });
 /* =====================================================
    ACHIEVEMENT STATISTICS
 ===================================================== */
 router.get("/statistics", async (req, res) => {
-  try {
+    try {
 
-    const categoryStats = await pool.query(`
+        const categoryStats = await pool.query(`
       SELECT
         achievement_category,
         COUNT(*) total
@@ -857,7 +855,7 @@ router.get("/statistics", async (req, res) => {
       ORDER BY total DESC
     `);
 
-    const rarityStats = await pool.query(`
+        const rarityStats = await pool.query(`
       SELECT
         rarity_level,
         COUNT(*) total
@@ -866,7 +864,7 @@ router.get("/statistics", async (req, res) => {
       ORDER BY total DESC
     `);
 
-    const matchTypeStats = await pool.query(`
+        const matchTypeStats = await pool.query(`
       SELECT
         match_type,
         COUNT(*) total
@@ -875,63 +873,63 @@ router.get("/statistics", async (req, res) => {
       ORDER BY total DESC
     `);
 
-    res.json({
-      success: true,
-      categoryStats: categoryStats.rows,
-      rarityStats: rarityStats.rows,
-      matchTypeStats: matchTypeStats.rows,
-    });
+        res.json({
+            success: true,
+            categoryStats: categoryStats.rows,
+            rarityStats: rarityStats.rows,
+            matchTypeStats: matchTypeStats.rows,
+        });
 
-  } catch (err) {
-    console.error(err);
+    } catch (err) {
+        console.error(err);
 
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
+        res.status(500).json({
+            success: false,
+            message: err.message,
+        });
+    }
 });
 
 /* =====================================================
    GET ACHIEVEMENT BY ID
 ===================================================== */
 router.get("/:achievementId", async (req, res) => {
-  try {
-    const { achievementId } = req.params;
+    try {
+        const { achievementId } = req.params;
 
-    const result = await pool.query(
-      `
+        const result = await pool.query(
+            `
       SELECT *
       FROM player_achievements
       WHERE achievement_id = $1
       `,
-      [achievementId]
-    );
+            [achievementId]
+        );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Achievement not found",
-      });
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Achievement not found",
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            achievement: result.rows[0],
+        });
+
+    } catch (err) {
+        console.error(
+            "Get Achievement By ID Error:",
+            err
+        );
+
+        res.status(500).json({
+            success: false,
+            message: err.message,
+            detail: err.detail,
+            code: err.code,
+        });
     }
-
-    res.status(200).json({
-      success: true,
-      achievement: result.rows[0],
-    });
-
-  } catch (err) {
-    console.error(
-      "Get Achievement By ID Error:",
-      err
-    );
-
-    res.status(500).json({
-      success: false,
-      message: err.message,
-      detail: err.detail,
-      code: err.code,
-    });
-  }
 });
 module.exports = router;
