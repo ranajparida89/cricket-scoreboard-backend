@@ -932,4 +932,52 @@ router.get("/:achievementId", async (req, res) => {
         });
     }
 });
+// =====================================
+// GET DISTINCT TOURNAMENTS
+// =====================================
+router.get("/tournaments/:matchType", async (req, res) => {
+    try {
+
+        const { matchType } = req.params;
+
+        let result;
+
+        if (
+            matchType.toUpperCase() === "TEST"
+        ) {
+
+            result = await pool.query(`
+        SELECT DISTINCT tournament_name
+        FROM test_match_results
+        WHERE tournament_name IS NOT NULL
+        ORDER BY tournament_name
+      `);
+
+        } else {
+
+            result = await pool.query(`
+        SELECT DISTINCT tournament_name
+        FROM match_history
+        WHERE tournament_name IS NOT NULL
+        ORDER BY tournament_name
+      `);
+
+        }
+
+        res.json({
+            success: true,
+            tournaments: result.rows,
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+
+    }
+});
 module.exports = router;
