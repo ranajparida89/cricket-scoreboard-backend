@@ -3882,4 +3882,32 @@ router.post('/reward-match', async (req, res) => {
     }
 
 });
+
+/* ==========================================
+GET PARTICIPATED TEAMS BY TOURNAMENT
+========================================== */
+
+router.get('/tournament-teams/:tournament_id', async (req, res) => {
+    try {
+        const { tournament_id } = req.params;
+
+        const teams = await pool.query(`
+      SELECT DISTINCT
+        bt.team_name
+      FROM tournament_registrations tr
+      JOIN board_teams bt
+        ON bt.board_id = tr.board_id
+      WHERE tr.tournament_id = $1
+        AND bt.left_at IS NULL
+      ORDER BY bt.team_name ASC
+    `, [tournament_id]);
+
+        res.json(teams.rows);
+    } catch (err) {
+        console.error("Tournament teams fetch error:", err.message);
+        res.status(500).json({
+            error: "Failed to fetch participated teams"
+        });
+    }
+});
 module.exports = router;
