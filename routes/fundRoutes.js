@@ -3977,4 +3977,65 @@ router.get('/tournament-teams/:tournament_id', async (req, res) => {
         });
     }
 });
+/* ==========================================
+EXTEND TOURNAMENT REGISTRATION DEADLINE
+Admin can extend registration by N days
+========================================== */
+
+router.put('/extend-registration', async (req, res) => {
+    try {
+        const { tournament_id, days } = req.body;
+
+        if (!tournament_id || !days) {
+            return res.status(400).json({
+                message: "Tournament id and days are required"
+            });
+        }
+
+        const extendDays = parseInt(days);
+
+        if (isNaN(extendDays) || extendDays <= 0) {
+            return res.status(400).json({
+                message: "Days must be greater than 0"
+            });
+        }
+
+        const result = await pool.query(`
+
+            UPDATE ce_tournaments
+            SET registration_deadline =
+                CASE
+                    WHEN registration_deadline IS NULL
+                         OR registration_deadline < NOW()
+                    THEN NOW() + ($2 || ' days')::interval
+                    ELSE registration_deadline + ($2 || ' days')::interval
+                END,
+                tournament_status = 'REGISTRATION_OPEN'
+            WHERE tournament_id = $1
+            RETURNING
+                tournament_id,
+                tournament_name,
+                registration_deadline,
+                tournament_status
+
+        `, [tournament_id, extendDays]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                message: "Tournament not found"
+            });
+        }
+
+        res.json({
+            message: `Registration extended by ${extendDays} day(s)`,
+            tournament: result.rows[0]
+        });
+
+    } catch (err) {
+        console.error("EXTEND REGISTRATION ERROR:", err.message);
+        res.status(500).json({
+            message: "Failed to extend registration"
+        });
+    }
+});
 module.exports = router;
