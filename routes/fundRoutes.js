@@ -1989,6 +1989,41 @@ ORDER BY ct.created_at DESC
 });
 
 /* ==========================================
+GLOBAL TOURNAMENT REWARD TRANSACTIONS
+========================================== */
+
+router.get('/transactions/tournament-rewards', async (req, res) => {
+    try {
+        const data = await pool.query(`
+            SELECT
+                ct.transaction_id,
+                ct.transaction_type,
+                ct.amount,
+                ct.balance_before,
+                ct.balance_after,
+                ct.remarks,
+                ct.created_at,
+                br.board_name
+            FROM coin_transactions ct
+            JOIN board_registration br
+                ON br.id = ct.board_id
+            WHERE ct.transaction_type IN (
+                'TOURNAMENT_WINNER',
+                'TOURNAMENT_RUNNER'
+            )
+            ORDER BY ct.created_at DESC
+        `);
+
+        res.json(data.rows || []);
+    } catch (err) {
+        console.error("GLOBAL REWARD TX ERROR:", err.message);
+        res.status(500).json({
+            error: "Failed to fetch global reward transactions"
+        });
+    }
+});
+
+/* ==========================================
 TRANSACTION HISTORY
 ========================================== */
 
@@ -3907,41 +3942,6 @@ router.get('/tournament-teams/:tournament_id', async (req, res) => {
         console.error("Tournament teams fetch error:", err.message);
         res.status(500).json({
             error: "Failed to fetch participated teams"
-        });
-    }
-});
-/* ==========================================
-GLOBAL TOURNAMENT REWARD TRANSACTIONS
-Shows winner/runner rewards across all boards
-========================================== */
-
-router.get('/transactions/tournament-rewards', async (req, res) => {
-    try {
-        const data = await pool.query(`
-            SELECT
-                ct.transaction_id,
-                ct.transaction_type,
-                ct.amount,
-                ct.balance_before,
-                ct.balance_after,
-                ct.remarks,
-                ct.created_at,
-                br.board_name
-            FROM coin_transactions ct
-            JOIN board_registration br
-                ON br.id = ct.board_id
-            WHERE ct.transaction_type IN (
-                'TOURNAMENT_WINNER',
-                'TOURNAMENT_RUNNER'
-            )
-            ORDER BY ct.created_at DESC
-        `);
-
-        res.json(data.rows || []);
-    } catch (err) {
-        console.error("GLOBAL REWARD TX ERROR:", err.message);
-        res.status(500).json({
-            error: "Failed to fetch global reward transactions"
         });
     }
 });
