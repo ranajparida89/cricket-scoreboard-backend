@@ -112,11 +112,20 @@ INSERT INTO ce_tournaments(
 tournament_name,
 tournament_type,
 entry_fee,
-start_date
+start_date,
+registration_deadline
 
 )
 
-VALUES($1,$2,$3,$4)
+VALUES(
+
+$1,
+$2,
+$3,
+$4,
+NOW() + INTERVAL '7 days'
+
+)
 
 RETURNING tournament_id
 
@@ -218,8 +227,13 @@ router.post('/register-tournament', async (req, res) => {
 
             const tournament = await client.query(`
 
-SELECT entry_fee,tournament_status
+SELECT
+entry_fee,
+tournament_status,
+registration_deadline
+
 FROM ce_tournaments
+
 WHERE tournament_id=$1
 
 `, [tournament_id]);
@@ -235,6 +249,23 @@ WHERE tournament_id=$1
             }
 
             const entryFee = tournament.rows[0].entry_fee;
+            const deadline =
+                tournament.rows[0].registration_deadline;
+
+            if (
+                deadline &&
+                new Date() > new Date(deadline)
+            ) {
+
+                await client.query('ROLLBACK');
+
+                return res.status(400).json({
+
+                    message: "Registration period ended"
+
+                });
+
+            }
 
             /* CHECK REGISTRATION STATUS */
 
@@ -603,7 +634,8 @@ tournament_id,
 tournament_name,
 tournament_type,
 entry_fee,
-start_date
+start_date,
+registration_deadline
 
 FROM ce_tournaments
 
