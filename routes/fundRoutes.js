@@ -4146,4 +4146,92 @@ router.post('/finalize-registration-defaults', async (req, res) => {
     }
 
 });
+/* ==========================================
+BOARD PARTICIPATION WARNING REPORT
+Shows declined / auto declined / warning status
+========================================== */
+
+router.get('/participation-warning', async (req, res) => {
+
+    try {
+
+        const data = await pool.query(`
+
+            SELECT
+                br.id AS board_id,
+                br.board_name,
+
+                COUNT(DISTINCT tr.tournament_id) AS participated_count,
+
+                COUNT(*) FILTER (
+                    WHERE til.interest_status = 'NOT_INTERESTED'
+                ) AS declined_by_member_count,
+
+                COUNT(*) FILTER (
+                    WHERE til.interest_status = 'AUTO_NOT_INTERESTED'
+                ) AS auto_declined_count,
+
+                CASE
+                    WHEN COUNT(*) FILTER (
+                        WHERE til.interest_status = 'AUTO_NOT_INTERESTED'
+                    ) >= 4
+                    THEN 'FLAGGED'
+
+                    WHEN COUNT(*) FILTER (
+                        WHERE til.interest_status = 'AUTO_NOT_INTERESTED'
+                    ) = 3
+                    THEN 'WARNING'
+
+                    WHEN COUNT(*) FILTER (
+                        WHERE til.interest_status = 'AUTO_NOT_INTERESTED'
+                    ) = 2
+                    THEN 'WATCH'
+
+                    ELSE 'ACTIVE'
+                END AS participation_status
+
+            FROM board_registration br
+
+            LEFT JOIN tournament_registrations tr
+                ON tr.board_id = br.id
+
+            LEFT JOIN tournament_interest_log til
+                ON til.board_id = br.id
+
+            GROUP BY
+                br.id,
+                br.board_name
+
+            ORDER BY
+                CASE
+                    WHEN COUNT(*) FILTER (
+                        WHERE til.interest_status = 'AUTO_NOT_INTERESTED'
+                    ) >= 4 THEN 1
+                    WHEN COUNT(*) FILTER (
+                        WHERE til.interest_status = 'AUTO_NOT_INTERESTED'
+                    ) = 3 THEN 2
+                    WHEN COUNT(*) FILTER (
+                        WHERE til.interest_status = 'AUTO_NOT_INTERESTED'
+                    ) = 2 THEN 3
+                    ELSE 4
+                END,
+                auto_declined_count DESC,
+                br.board_name ASC
+
+        `);
+
+        res.json(data.rows || []);
+
+    } catch (err) {
+
+        console.error("PARTICIPATION WARNING ERROR:", err.message);
+
+        res.status(500).json({
+            message: "Failed to fetch participation warning report",
+            error: err.message
+        });
+
+    }
+
+});
 module.exports = router;
