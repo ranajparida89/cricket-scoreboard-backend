@@ -4038,4 +4038,112 @@ router.put('/extend-registration', async (req, res) => {
         });
     }
 });
+
+/* ==========================================
+FINALIZE EXPIRED REGISTRATION DEFAULTS
+Auto mark no-response boards as AUTO_NOT_INTERESTED
+========================================== */
+
+router.post('/finalize-registration-defaults', async (req, res) => {
+
+    const client = await pool.connect();
+
+    try {
+
+        await client.query('BEGIN');
+
+        const expiredTournaments = await client.query(`
+
+            SELECT
+                tournament_id,
+                tournament_name
+            FROM ce_tournaments
+            WHERE tournament_status = 'REGISTRATION_OPEN'
+              AND registration_deadline IS NOT NULL
+              AND registration_deadline < NOW()
+
+        `);
+
+        let totalAutoMarked = 0;
+
+        for (const t of expiredTournaments.rows) {
+
+            const boardsToMark = await client.query(`
+
+                SELECT br.id AS board_id
+                FROM board_registration br
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM tournament_registrations tr
+                    WHERE tr.tournament_id = $1
+                      AND tr.board_id = br.id
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM tournament_interest_log til
+                    WHERE til.tournament_id = $1
+                      AND til.board_id = br.id
+                )
+
+            `, [t.tournament_id]);
+
+            for (const b of boardsToMark.rows) {
+
+                await client.query(`
+
+                    INSERT INTO tournament_interest_log(
+                        board_id,
+                        tournament_id,
+                        interest_status,
+                        created_at
+                    )
+                    VALUES($1,$2,'AUTO_NOT_INTERESTED',NOW())
+                    ON CONFLICT (board_id,tournament_id)
+                    DO NOTHING
+
+                `, [
+                    b.board_id,
+                    t.tournament_id
+                ]);
+
+                totalAutoMarked++;
+
+            }
+
+            await client.query(`
+
+                UPDATE ce_tournaments
+                SET tournament_status = 'REGISTRATION_CLOSED'
+                WHERE tournament_id = $1
+
+            `, [t.tournament_id]);
+
+        }
+
+        await client.query('COMMIT');
+
+        res.json({
+            message: "Expired registrations finalized",
+            tournaments_processed: expiredTournaments.rows.length,
+            auto_marked_boards: totalAutoMarked
+        });
+
+    } catch (err) {
+
+        await client.query('ROLLBACK');
+
+        console.error("FINALIZE REGISTRATION DEFAULTS ERROR:", err.message);
+
+        res.status(500).json({
+            message: "Failed to finalize registration defaults",
+            error: err.message
+        });
+
+    } finally {
+
+        client.release();
+
+    }
+
+});
 module.exports = router;
