@@ -79,6 +79,7 @@ const liveMatchRoutes = require("./routes/liveMatchRoutes");
 const fundRoutes = require('./routes/fundRoutes');
 const announcementRoutes = require("./routes/announcementRoutes");
 const playerAchievementRoutes = require("./routes/playerAchievementRoutes");
+const userBoardMapRoutes = require("./routes/userBoardMapRoutes"); // -- boardmapping
 
 const app = express();
 const server = http.createServer(app);
@@ -181,7 +182,7 @@ app.use("/api/live-match", liveMatchRoutes);
 app.use('/api/funds', fundRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/player-achievements",playerAchievementRoutes);
-
+app.use("/api/user-board-map", userBoardMapRoutes); // boardmapping
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
