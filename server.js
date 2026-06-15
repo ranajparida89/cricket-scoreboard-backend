@@ -181,7 +181,7 @@ app.use('/api/live-auction', liveAuctionRoutes);
 app.use("/api/live-match", liveMatchRoutes);
 app.use('/api/funds', fundRoutes);
 app.use("/api/announcements", announcementRoutes);
-app.use("/api/player-achievements",playerAchievementRoutes);
+app.use("/api/player-achievements", playerAchievementRoutes);
 app.use("/api/user-board-map", requireAdminAuth, userBoardMapRoutes); // boardmapping admin only // boardmapping
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
@@ -282,11 +282,11 @@ app.post("/api/submit-result", async (req, res) => {
       return res.status(400).json({ error: "Invalid match_id" });
 
     const { match_name, match_type } = matchResult.rows[0];
-   
-/* ================================
- SAFE SEASON LINKING (FINAL FIX)
- DO NOT OVERRIDE UI SELECTION
- ================================ */
+
+    /* ================================
+     SAFE SEASON LINKING (FINAL FIX)
+     DO NOT OVERRIDE UI SELECTION
+     ================================ */
 
     let seasonId =
       crickedge_season_id || null;
@@ -488,38 +488,38 @@ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
       );
 
     }
-   // AUTOMATION FOR MATCH HISTORY STARTS
-// =====================================================
-// 🔥 AUTO UPDATE FIXTURE STATUS - SAFE + STRONG MATCHING
-// =====================================================
+    // AUTOMATION FOR MATCH HISTORY STARTS
+    // =====================================================
+    // 🔥 AUTO UPDATE FIXTURE STATUS - SAFE + STRONG MATCHING
+    // =====================================================
 
-try {
-  const cleanKey = (value) => {
-    return (value || "")
-      .toString()
-      .normalize("NFKD")
-      .replace(/[’‘`]/g, "'")
-      .toLowerCase()
-      .replace(/&/g, "and")
-      .replace(/[^a-z0-9]/g, "")
-      .trim();
-  };
+    try {
+      const cleanKey = (value) => {
+        return (value || "")
+          .toString()
+          .normalize("NFKD")
+          .replace(/[’‘`]/g, "'")
+          .toLowerCase()
+          .replace(/&/g, "and")
+          .replace(/[^a-z0-9]/g, "")
+          .trim();
+      };
 
-  const normalizeFixtureTeam = (name) => {
-    const key = cleanKey(name);
+      const normalizeFixtureTeam = (name) => {
+        const key = cleanKey(name);
 
-    const map = {
-      uae: "unitedarabemirates",
-      unitedarabemirates: "unitedarabemirates",
+        const map = {
+          uae: "unitedarabemirates",
+          unitedarabemirates: "unitedarabemirates",
 
-      usa: "unitedstatesofamerica",
-      unitedstatesofamerica: "unitedstatesofamerica"
-    };
+          usa: "unitedstatesofamerica",
+          unitedstatesofamerica: "unitedstatesofamerica"
+        };
 
-    return map[key] || key;
-  };
+        return map[key] || key;
+      };
 
-  const activeGroupRes = await pool.query(`
+      const activeGroupRes = await pool.query(`
     SELECT id 
     FROM cr_excel_group
     WHERE tournament_status = 'RUNNING'
@@ -528,12 +528,12 @@ try {
     LIMIT 1
   `);
 
-  if (activeGroupRes.rowCount === 0) {
-    console.warn("⚠️ Fixture automation skipped: No active RUNNING tournament found.");
-  } else {
-    const groupId = activeGroupRes.rows[0].id;
+      if (activeGroupRes.rowCount === 0) {
+        console.warn("⚠️ Fixture automation skipped: No active RUNNING tournament found.");
+      } else {
+        const groupId = activeGroupRes.rows[0].id;
 
-    const fixturesRes = await pool.query(`
+        const fixturesRes = await pool.query(`
       SELECT id, row_data
       FROM cr_excel_fixture
       WHERE fixture_group_id = $1
@@ -541,31 +541,31 @@ try {
       ORDER BY id ASC
     `, [groupId]);
 
-    const dbTeam1 = normalizeFixtureTeam(team1);
-    const dbTeam2 = normalizeFixtureTeam(team2);
-    const dbMatchName = cleanKey(match_name);
+        const dbTeam1 = normalizeFixtureTeam(team1);
+        const dbTeam2 = normalizeFixtureTeam(team2);
+        const dbMatchName = cleanKey(match_name);
 
-    let matched = false;
+        let matched = false;
 
-    for (const fixture of fixturesRes.rows) {
-      const row = fixture.row_data || {};
+        for (const fixture of fixturesRes.rows) {
+          const row = fixture.row_data || {};
 
-      const excelTeam1 = normalizeFixtureTeam(row["Team 1"]);
-      const excelTeam2 = normalizeFixtureTeam(row["Team 2"]);
-      const excelMatchId = cleanKey(row["Match ID"]);
+          const excelTeam1 = normalizeFixtureTeam(row["Team 1"]);
+          const excelTeam2 = normalizeFixtureTeam(row["Team 2"]);
+          const excelMatchId = cleanKey(row["Match ID"]);
 
-      const matchByTeams =
-        (excelTeam1 === dbTeam1 && excelTeam2 === dbTeam2) ||
-        (excelTeam1 === dbTeam2 && excelTeam2 === dbTeam1);
+          const matchByTeams =
+            (excelTeam1 === dbTeam1 && excelTeam2 === dbTeam2) ||
+            (excelTeam1 === dbTeam2 && excelTeam2 === dbTeam1);
 
-      // Future safe support: if match_name ever contains CPL M-87, this will also work
-      const matchByMatchId =
-        excelMatchId &&
-        dbMatchName &&
-        dbMatchName.includes(excelMatchId);
+          // Future safe support: if match_name ever contains CPL M-87, this will also work
+          const matchByMatchId =
+            excelMatchId &&
+            dbMatchName &&
+            dbMatchName.includes(excelMatchId);
 
-      if (matchByTeams || matchByMatchId) {
-        const updateRes = await pool.query(`
+          if (matchByTeams || matchByMatchId) {
+            const updateRes = await pool.query(`
           UPDATE cr_excel_fixture
           SET status = 'COMPLETED',
               winner = $1
@@ -574,60 +574,60 @@ try {
           RETURNING id
         `, [winner, fixture.id]);
 
-        if (updateRes.rowCount > 0) {
-          matched = true;
+            if (updateRes.rowCount > 0) {
+              matched = true;
 
-          console.log("✅ Fixture auto-completed:", {
-            fixtureId: fixture.id,
-            excelMatchId: row["Match ID"],
-            excelTeam1: row["Team 1"],
-            excelTeam2: row["Team 2"],
+              console.log("✅ Fixture auto-completed:", {
+                fixtureId: fixture.id,
+                excelMatchId: row["Match ID"],
+                excelTeam1: row["Team 1"],
+                excelTeam2: row["Team 2"],
+                submittedTeam1: team1,
+                submittedTeam2: team2,
+                matchByTeams,
+                matchByMatchId
+              });
+            }
+
+            break;
+          }
+        }
+
+        if (!matched) {
+          console.warn("⚠️ Fixture automation failed: No matching NOT_PLAYED fixture found.", {
+            groupId,
             submittedTeam1: team1,
             submittedTeam2: team2,
-            matchByTeams,
-            matchByMatchId
+            submittedTeam1Key: dbTeam1,
+            submittedTeam2Key: dbTeam2
           });
         }
 
-        break;
-      }
-    }
-
-    if (!matched) {
-      console.warn("⚠️ Fixture automation failed: No matching NOT_PLAYED fixture found.", {
-        groupId,
-        submittedTeam1: team1,
-        submittedTeam2: team2,
-        submittedTeam1Key: dbTeam1,
-        submittedTeam2Key: dbTeam2
-      });
-    }
-
-    const pendingCheck = await pool.query(`
+        const pendingCheck = await pool.query(`
       SELECT COUNT(*) 
       FROM cr_excel_fixture
       WHERE fixture_group_id = $1
       AND status = 'NOT_PLAYED'
     `, [groupId]);
 
-    const pendingCount = parseInt(pendingCheck.rows[0].count, 10);
+        const pendingCount = parseInt(pendingCheck.rows[0].count, 10);
 
-    if (pendingCount === 0) {
-      await pool.query(`
+        if (pendingCount === 0) {
+          await pool.query(`
         UPDATE cr_excel_group
         SET tournament_status = 'COMPLETED',
             is_active = false
         WHERE id = $1
       `, [groupId]);
 
-      console.log("🏆 Tournament auto-marked COMPLETED:", groupId);
-    }
-  }
+          console.log("🏆 Tournament auto-marked COMPLETED:", groupId);
+        }
+      }
 
-} catch (automationError) {
-  console.error("Scheduler Automation Error:", automationError);
-}
-// AUTOMATION MATCH_HISTORY ENDS HERE
+    } catch (automationError) {
+      console.error("Scheduler Automation Error:", automationError);
+    }
+    // AUTOMATION MATCH_HISTORY ENDS HERE
 
     io.emit("matchUpdate", { match_id, winner });
 
@@ -648,6 +648,36 @@ try {
 
 });
 
+// ✅ Match Form Team Dropdown API
+// Shows registered board teams + already played teams
+// Does NOT affect leaderboard or match stats
+app.get("/api/team-dropdown", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      WITH all_teams AS (
+        SELECT DISTINCT TRIM(team_name) AS team_name
+        FROM board_teams
+        WHERE team_name IS NOT NULL
+        AND TRIM(team_name) <> ''
+
+        UNION
+
+        SELECT DISTINCT TRIM(name) AS team_name
+        FROM teams
+        WHERE name IS NOT NULL
+        AND TRIM(name) <> ''
+      )
+      SELECT team_name
+      FROM all_teams
+      ORDER BY team_name ASC
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Team Dropdown API Error:", err);
+    res.status(500).json({ error: "Failed to fetch team dropdown list" });
+  }
+});
 
 // ✅ Leaderboard
 // ✅ Leaderboard with manual point calculation [Updated by Ranaj Parida - 19-April-2025]
