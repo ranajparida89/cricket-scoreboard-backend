@@ -182,7 +182,7 @@ app.use("/api/live-match", liveMatchRoutes);
 app.use('/api/funds', fundRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/player-achievements",playerAchievementRoutes);
-app.use("/api/user-board-map", userBoardMapRoutes); // boardmapping
+app.use("/api/user-board-map", requireAdminAuth, userBoardMapRoutes); // boardmapping admin only // boardmapping
 // app.use("/api/squads/ocr", squadImportRoutes);  disbaled OCR
 
 // ✅ Setup socket.io with CORS (support for multiple frontend domains)
@@ -488,114 +488,146 @@ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
       );
 
     }
-    /* ========================================== */
-    // AUTOMATION FOR MATCH HISTORY STARTS
-    // =====================================================
-    // 🔥 AUTO UPDATE FIXTURE STATUS
-    // =====================================================
+   // AUTOMATION FOR MATCH HISTORY STARTS
+// =====================================================
+// 🔥 AUTO UPDATE FIXTURE STATUS - SAFE + STRONG MATCHING
+// =====================================================
 
-    try {
-      const activeGroupRes = await pool.query(`
-        SELECT id 
-        FROM cr_excel_group
-        WHERE tournament_status = 'RUNNING'
-        AND is_active = true
-        ORDER BY id DESC
-        LIMIT 1
-      `);
+try {
+  const cleanKey = (value) => {
+    return (value || "")
+      .toString()
+      .normalize("NFKD")
+      .replace(/[’‘`]/g, "'")
+      .toLowerCase()
+      .replace(/&/g, "and")
+      .replace(/[^a-z0-9]/g, "")
+      .trim();
+  };
 
-      // 🔒 SAFETY GUARD — Only ONE active tournament allowed
-      if (activeGroupRes.rowCount !== 1) {
+  const normalizeFixtureTeam = (name) => {
+    const key = cleanKey(name);
 
-        console.warn("⚠️ No active tournament found. Skipping fixture automation.");
+    const map = {
+      uae: "unitedarabemirates",
+      unitedarabemirates: "unitedarabemirates",
 
-      } else {
+      usa: "unitedstatesofamerica",
+      unitedstatesofamerica: "unitedstatesofamerica"
+    };
 
-        const groupId = activeGroupRes.rows[0].id;
+    return map[key] || key;
+  };
 
-        const fixturesRes = await pool.query(`
-    SELECT id, row_data
-    FROM cr_excel_fixture
-    WHERE fixture_group_id = $1
-    AND status = 'NOT_PLAYED'
-  `, [groupId]);
+  const activeGroupRes = await pool.query(`
+    SELECT id 
+    FROM cr_excel_group
+    WHERE tournament_status = 'RUNNING'
+    AND is_active = true
+    ORDER BY id DESC
+    LIMIT 1
+  `);
 
-        // existing fixture loop continues here
-      }
+  if (activeGroupRes.rowCount === 0) {
+    console.warn("⚠️ Fixture automation skipped: No active RUNNING tournament found.");
+  } else {
+    const groupId = activeGroupRes.rows[0].id;
 
-      if (activeGroupRes.rowCount > 0) {
-        const groupId = activeGroupRes.rows[0].id;
+    const fixturesRes = await pool.query(`
+      SELECT id, row_data
+      FROM cr_excel_fixture
+      WHERE fixture_group_id = $1
+      AND status = 'NOT_PLAYED'
+      ORDER BY id ASC
+    `, [groupId]);
 
-        const fixturesRes = await pool.query(`
-          SELECT id, row_data
-          FROM cr_excel_fixture
-          WHERE fixture_group_id = $1
+    const dbTeam1 = normalizeFixtureTeam(team1);
+    const dbTeam2 = normalizeFixtureTeam(team2);
+    const dbMatchName = cleanKey(match_name);
+
+    let matched = false;
+
+    for (const fixture of fixturesRes.rows) {
+      const row = fixture.row_data || {};
+
+      const excelTeam1 = normalizeFixtureTeam(row["Team 1"]);
+      const excelTeam2 = normalizeFixtureTeam(row["Team 2"]);
+      const excelMatchId = cleanKey(row["Match ID"]);
+
+      const matchByTeams =
+        (excelTeam1 === dbTeam1 && excelTeam2 === dbTeam2) ||
+        (excelTeam1 === dbTeam2 && excelTeam2 === dbTeam1);
+
+      // Future safe support: if match_name ever contains CPL M-87, this will also work
+      const matchByMatchId =
+        excelMatchId &&
+        dbMatchName &&
+        dbMatchName.includes(excelMatchId);
+
+      if (matchByTeams || matchByMatchId) {
+        const updateRes = await pool.query(`
+          UPDATE cr_excel_fixture
+          SET status = 'COMPLETED',
+              winner = $1
+          WHERE id = $2
           AND status = 'NOT_PLAYED'
-        `, [groupId]);
+          RETURNING id
+        `, [winner, fixture.id]);
 
-        for (const fixture of fixturesRes.rows) {
-          const row = fixture.row_data;
-          if (!row) continue;
+        if (updateRes.rowCount > 0) {
+          matched = true;
 
-          function normalizeTeamName(name) {
-            const map = {
-              "uae": "united arab emirates",
-              "united arab emirates": "united arab emirates",
-
-              "usa": "united states of america",
-              "united states of america": "united states of america"
-            };
-
-            const n = (name || "").toString().trim().toLowerCase();
-
-            return map[n] || n;
-          }
-
-          const excelTeam1 = normalizeTeamName(row["Team 1"]);
-          const excelTeam2 = normalizeTeamName(row["Team 2"]);
-
-          const dbTeam1 = normalizeTeamName(team1);
-          const dbTeam2 = normalizeTeamName(team2);
-
-          const isMatch =
-            (excelTeam1 === dbTeam1 && excelTeam2 === dbTeam2) ||
-            (excelTeam1 === dbTeam2 && excelTeam2 === dbTeam1);
-
-          if (isMatch) {
-            await pool.query(`
-              UPDATE cr_excel_fixture
-              SET status = 'COMPLETED',
-                  winner = $1
-              WHERE id = $2
-            `, [winner, fixture.id]);
-
-            break;
-          }
+          console.log("✅ Fixture auto-completed:", {
+            fixtureId: fixture.id,
+            excelMatchId: row["Match ID"],
+            excelTeam1: row["Team 1"],
+            excelTeam2: row["Team 2"],
+            submittedTeam1: team1,
+            submittedTeam2: team2,
+            matchByTeams,
+            matchByMatchId
+          });
         }
 
-        const pendingCheck = await pool.query(`
-          SELECT COUNT(*) 
-          FROM cr_excel_fixture
-          WHERE fixture_group_id = $1
-          AND status = 'NOT_PLAYED'
-        `, [groupId]);
-
-        const pendingCount = parseInt(pendingCheck.rows[0].count);
-
-        if (pendingCount === 0) {
-          await pool.query(`
-            UPDATE cr_excel_group
-            SET tournament_status = 'COMPLETED',
-                is_active = false
-            WHERE id = $1
-          `, [groupId]);
-        }
+        break;
       }
-
-    } catch (automationError) {
-      console.error("Scheduler Automation Error:", automationError);
     }
-    // AUTOMATION MATCH_HISTORY ENDS HERE
+
+    if (!matched) {
+      console.warn("⚠️ Fixture automation failed: No matching NOT_PLAYED fixture found.", {
+        groupId,
+        submittedTeam1: team1,
+        submittedTeam2: team2,
+        submittedTeam1Key: dbTeam1,
+        submittedTeam2Key: dbTeam2
+      });
+    }
+
+    const pendingCheck = await pool.query(`
+      SELECT COUNT(*) 
+      FROM cr_excel_fixture
+      WHERE fixture_group_id = $1
+      AND status = 'NOT_PLAYED'
+    `, [groupId]);
+
+    const pendingCount = parseInt(pendingCheck.rows[0].count, 10);
+
+    if (pendingCount === 0) {
+      await pool.query(`
+        UPDATE cr_excel_group
+        SET tournament_status = 'COMPLETED',
+            is_active = false
+        WHERE id = $1
+      `, [groupId]);
+
+      console.log("🏆 Tournament auto-marked COMPLETED:", groupId);
+    }
+  }
+
+} catch (automationError) {
+  console.error("Scheduler Automation Error:", automationError);
+}
+// AUTOMATION MATCH_HISTORY ENDS HERE
 
     io.emit("matchUpdate", { match_id, winner });
 
