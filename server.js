@@ -490,7 +490,7 @@ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
     }
     // AUTOMATION FOR MATCH HISTORY STARTS
     // =====================================================
-    // 🔥 AUTO UPDATE FIXTURE STATUS - SAFE + STRONG MATCHING
+    // 🔥 AUTO UPDATE FIXTURE STATUS - TEAM NAME OR BOARD CODE MATCH
     // =====================================================
 
     try {
@@ -505,19 +505,41 @@ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
           .trim();
       };
 
-      const normalizeFixtureTeam = (name) => {
-        const key = cleanKey(name);
-
-        const map = {
-          uae: "unitedarabemirates",
-          unitedarabemirates: "unitedarabemirates",
-
-          usa: "unitedstatesofamerica",
-          unitedstatesofamerica: "unitedstatesofamerica"
-        };
-
-        return map[key] || key;
+      const cleanCode = (value) => {
+        return (value || "")
+          .toString()
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "");
       };
+
+      // ✅ Get submitted team board codes dynamically from board_teams + board_registration
+      const submittedBoardsRes = await pool.query(`
+    SELECT 
+      bt.team_name,
+      br.board_name
+    FROM board_teams bt
+    JOIN board_registration br
+      ON br.id = bt.board_id
+    WHERE regexp_replace(lower(bt.team_name), '[^a-z0-9]', '', 'g') IN ($1, $2)
+  `, [cleanKey(team1), cleanKey(team2)]);
+
+      const getBoardCodeFromBoardName = (boardName) => {
+        // Example: DIPESH-DKCC -> DKCC
+        const parts = (boardName || "").toString().split("-");
+        return cleanCode(parts[parts.length - 1]);
+      };
+
+      let dbTeam1BoardCode = "";
+      let dbTeam2BoardCode = "";
+
+      submittedBoardsRes.rows.forEach((r) => {
+        const teamKey = cleanKey(r.team_name);
+        const boardCode = getBoardCodeFromBoardName(r.board_name);
+
+        if (teamKey === cleanKey(team1)) dbTeam1BoardCode = boardCode;
+        if (teamKey === cleanKey(team2)) dbTeam2BoardCode = boardCode;
+      });
 
       const activeGroupRes = await pool.query(`
     SELECT id 
@@ -541,30 +563,33 @@ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
       ORDER BY id ASC
     `, [groupId]);
 
-        const dbTeam1 = normalizeFixtureTeam(team1);
-        const dbTeam2 = normalizeFixtureTeam(team2);
-        const dbMatchName = cleanKey(match_name);
+        const dbTeam1 = cleanKey(team1);
+        const dbTeam2 = cleanKey(team2);
 
         let matched = false;
 
         for (const fixture of fixturesRes.rows) {
           const row = fixture.row_data || {};
 
-          const excelTeam1 = normalizeFixtureTeam(row["Team 1"]);
-          const excelTeam2 = normalizeFixtureTeam(row["Team 2"]);
-          const excelMatchId = cleanKey(row["Match ID"]);
+          const excelTeam1 = cleanKey(row["Team 1"]);
+          const excelTeam2 = cleanKey(row["Team 2"]);
 
-          const matchByTeams =
+          const excelBoard1 = cleanCode(row["Board 1"]);
+          const excelBoard2 = cleanCode(row["Board 2"]);
+
+          const matchByTeamName =
             (excelTeam1 === dbTeam1 && excelTeam2 === dbTeam2) ||
             (excelTeam1 === dbTeam2 && excelTeam2 === dbTeam1);
 
-          // Future safe support: if match_name ever contains CPL M-87, this will also work
-          const matchByMatchId =
-            excelMatchId &&
-            dbMatchName &&
-            dbMatchName.includes(excelMatchId);
+          const matchByBoardCode =
+            dbTeam1BoardCode &&
+            dbTeam2BoardCode &&
+            (
+              (excelBoard1 === dbTeam1BoardCode && excelBoard2 === dbTeam2BoardCode) ||
+              (excelBoard1 === dbTeam2BoardCode && excelBoard2 === dbTeam1BoardCode)
+            );
 
-          if (matchByTeams || matchByMatchId) {
+          if (matchByTeamName || matchByBoardCode) {
             const updateRes = await pool.query(`
           UPDATE cr_excel_fixture
           SET status = 'COMPLETED',
@@ -579,13 +604,17 @@ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
 
               console.log("✅ Fixture auto-completed:", {
                 fixtureId: fixture.id,
-                excelMatchId: row["Match ID"],
+                matchId: row["Match ID"],
                 excelTeam1: row["Team 1"],
                 excelTeam2: row["Team 2"],
+                excelBoard1: row["Board 1"],
+                excelBoard2: row["Board 2"],
                 submittedTeam1: team1,
                 submittedTeam2: team2,
-                matchByTeams,
-                matchByMatchId
+                submittedBoard1: dbTeam1BoardCode,
+                submittedBoard2: dbTeam2BoardCode,
+                matchByTeamName,
+                matchByBoardCode
               });
             }
 
@@ -594,12 +623,12 @@ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
         }
 
         if (!matched) {
-          console.warn("⚠️ Fixture automation failed: No matching NOT_PLAYED fixture found.", {
+          console.warn("⚠️ Fixture automation failed: No matching fixture found.", {
             groupId,
             submittedTeam1: team1,
             submittedTeam2: team2,
-            submittedTeam1Key: dbTeam1,
-            submittedTeam2Key: dbTeam2
+            submittedBoard1: dbTeam1BoardCode,
+            submittedBoard2: dbTeam2BoardCode
           });
         }
 
