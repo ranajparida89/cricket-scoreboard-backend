@@ -683,28 +683,59 @@ $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
 app.get("/api/team-dropdown", async (req, res) => {
   try {
     const result = await pool.query(`
-      WITH all_teams AS (
-        SELECT DISTINCT TRIM(team_name) AS team_name
+      WITH board_team_list AS (
+        SELECT DISTINCT
+          TRIM(team_name) AS team_name,
+          regexp_replace(
+            replace(lower(TRIM(team_name)), 'punjab', 'panjab'),
+            '[^a-z0-9]',
+            '',
+            'g'
+          ) AS team_key
         FROM board_teams
         WHERE team_name IS NOT NULL
         AND TRIM(team_name) <> ''
+      ),
 
-        UNION
-
-        SELECT DISTINCT TRIM(name) AS team_name
+      old_team_list AS (
+        SELECT DISTINCT
+          TRIM(name) AS team_name,
+          regexp_replace(
+            replace(lower(TRIM(name)), 'punjab', 'panjab'),
+            '[^a-z0-9]',
+            '',
+            'g'
+          ) AS team_key
         FROM teams
         WHERE name IS NOT NULL
         AND TRIM(name) <> ''
+      ),
+
+      final_teams AS (
+        SELECT team_name
+        FROM board_team_list
+
+        UNION
+
+        SELECT o.team_name
+        FROM old_team_list o
+        LEFT JOIN board_team_list b
+          ON b.team_key = o.team_key
+        WHERE b.team_key IS NULL
       )
+
       SELECT team_name
-      FROM all_teams
+      FROM final_teams
       ORDER BY team_name ASC
     `);
 
     res.json(result.rows);
+
   } catch (err) {
     console.error("Team Dropdown API Error:", err);
-    res.status(500).json({ error: "Failed to fetch team dropdown list" });
+    res.status(500).json({
+      error: "Failed to fetch team dropdown list"
+    });
   }
 });
 
