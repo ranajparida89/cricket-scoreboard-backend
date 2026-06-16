@@ -122,6 +122,7 @@ router.post("/register", async (req, res) => {
         await client.query("BEGIN");
 
         const {
+            match_id,
             match_type,
             match_name,
             board_name,
@@ -155,7 +156,9 @@ router.post("/register", async (req, res) => {
         /* ==========================
            VALIDATION
         ========================== */
+
         const requiredFields = [
+            "match_id",
             "match_type",
             "match_name",
             "team_name",
@@ -191,17 +194,15 @@ router.post("/register", async (req, res) => {
             `
       SELECT id
       FROM player_achievements
-      WHERE LOWER(player_name)=LOWER($1)
-      AND LOWER(match_name)=LOWER($2)
-      AND LOWER(achievement_name)=LOWER($3)
-      AND achievement_date=$4
+      WHERE LOWER(TRIM(player_name)) = LOWER(TRIM($1))
+      AND LOWER(TRIM(match_id)) = LOWER(TRIM($2))
+      AND LOWER(TRIM(achievement_name)) = LOWER(TRIM($3))
       LIMIT 1
       `,
             [
                 player_name,
-                match_name,
+                match_id,
                 achievement_name,
-                achievement_date,
             ]
         );
 
@@ -211,7 +212,7 @@ router.post("/register", async (req, res) => {
             return res.status(409).json({
                 success: false,
                 message:
-                    "Duplicate achievement already exists for this player in this match.",
+                    "Duplicate achievement already exists for this player in this Match ID.",
             });
         }
 
@@ -270,15 +271,15 @@ router.post("/register", async (req, res) => {
         const insertResult = await client.query(
             `
       INSERT INTO player_achievements
-      (
+(
         achievement_id,
 
+        match_id,
         match_type,
         match_name,
 
         board_name,
         team_name,
-
         player_name,
 
         achievement_category,
@@ -311,17 +312,18 @@ router.post("/register", async (req, res) => {
         created_by
       )
       VALUES
-      (
+        (
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-        $11,$12,$13,$14,$15,$16,$17,
-        $18,$19,$20,$21,$22,
-        $23,$24,$25,$26
-      )
+        $11,$12,$13,$14,$15,$16,$17,$18,
+        $19,$20,$21,$22,$23,
+        $24,$25,$26,$27
+        )
       RETURNING *
       `,
             [
                 achievement_id,
 
+                match_id,
                 match_type,
                 match_name,
 
