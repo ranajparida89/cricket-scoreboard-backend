@@ -21,6 +21,90 @@ const normFormat = (t) => {
 };
 
 /* =========================================================
+ * POST /api/ensure-mom-player
+ * Purpose: Add missing MoM player and return mapped player_id
+ * ======================================================= */
+router.post("/ensure-mom-player", async (req, res) => {
+  const {
+    player_name,
+    team_name,
+    lineup_type,
+    skill_type,
+    user_id,
+  } = req.body;
+
+  try {
+    if (!player_name || !team_name || !lineup_type || !skill_type || !user_id) {
+      return res.status(400).json({
+        error: "player_name, team_name, lineup_type, skill_type and user_id are required",
+      });
+    }
+
+    const fmt = normFormat(lineup_type);
+
+    // Check if already exists for same team, format and user
+    const existing = await pool.query(
+      `
+      SELECT *
+      FROM players
+      WHERE LOWER(TRIM(player_name)) = LOWER(TRIM($1))
+      AND LOWER(TRIM(team_name)) = LOWER(TRIM($2))
+      AND lineup_type = $3
+      AND user_id = $4
+      LIMIT 1
+      `,
+      [player_name, team_name, fmt, user_id]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.json({
+        message: "Player already exists",
+        player: existing.rows[0],
+        created: false,
+      });
+    }
+
+    const result = await pool.query(
+      `
+      INSERT INTO players
+      (
+        lineup_type,
+        player_name,
+        team_name,
+        skill_type,
+        bowling_type,
+        batting_style,
+        is_captain,
+        is_vice_captain,
+        user_id
+      )
+      VALUES ($1,$2,$3,$4,NULL,NULL,false,false,$5)
+      RETURNING *
+      `,
+      [
+        fmt,
+        player_name.trim(),
+        team_name.trim(),
+        skill_type,
+        user_id,
+      ]
+    );
+
+    return res.json({
+      message: "Player added and selected as MoM",
+      player: result.rows[0],
+      created: true,
+    });
+
+  } catch (err) {
+    console.error("Ensure MoM Player Error:", err);
+    return res.status(500).json({
+      error: "Failed to add MoM player",
+    });
+  }
+});
+
+/* =========================================================
  * POST /api/add-player
  * ======================================================= */
 router.post("/add-player", async (req, res) => {
