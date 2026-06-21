@@ -875,6 +875,30 @@ const startAuctionTimer =
   require('./timer/auctionTimer');
 startAuctionTimer();
 
+// ✅ Match Form Tournament Dropdown API
+// Shows ONLY active CrickEdge tournament
+app.get("/api/match/active-tournaments", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT DISTINCT tournament_name
+      FROM crickedge_seasons
+      WHERE status = 'ACTIVE'
+        AND tournament_name IS NOT NULL
+        AND TRIM(tournament_name) <> ''
+      ORDER BY tournament_name ASC
+    `);
+
+    res.json({
+      tournaments: result.rows.map((r) => r.tournament_name),
+    });
+  } catch (err) {
+    console.error("Active tournament dropdown error:", err);
+    res.status(500).json({
+      error: "Failed to fetch active tournaments",
+    });
+  }
+});
+
 // ✅ Start the backend server
 server.listen(5000, () => {
   console.log("✅ Server running on port 5000");
