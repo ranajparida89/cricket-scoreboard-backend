@@ -1329,6 +1329,7 @@ SELECT
 p.player_name,
 p.category,
 p.role,
+p.role_category,
 p.sold_price,
 b.board_name
 FROM auction_players_live p
