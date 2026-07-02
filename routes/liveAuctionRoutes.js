@@ -662,6 +662,26 @@ FOR UPDATE`,
                 error: "Auction is paused. Player cannot be closed."
             });
         }
+        // ✅ TIMER PROTECTION
+        // Player can close only when timer has actually ended
+        const timerCheck = await client.query(
+            `
+    SELECT EXTRACT(EPOCH FROM (timer_end_time - NOW())) AS remaining
+    FROM auction_live_state
+    WHERE auction_id=$1
+    `,
+            [auction_id]
+        );
+
+        const remainingSeconds =
+            Math.floor(Number(timerCheck.rows[0].remaining));
+
+        if (remainingSeconds > 0) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+                error: "Timer still running. Player cannot be closed yet."
+            });
+        }
         /*
         STEP 2 — Get Player
         */
