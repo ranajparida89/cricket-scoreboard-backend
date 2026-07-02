@@ -653,7 +653,7 @@ FOR UPDATE`,
             });
         }
         const state = liveState.rows[0];
-        
+
         // ✅ PAUSE PROTECTION
         // If auction is paused, player should not close or change
         if (state.is_paused) {
@@ -1170,6 +1170,8 @@ WHERE auction_id=$1`,
                 player.category,
             role:
                 player.role,
+            role_category:
+                player.role_category,
             base_price:
                 player.base_price,
             current_price:
