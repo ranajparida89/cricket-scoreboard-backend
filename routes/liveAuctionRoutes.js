@@ -1613,10 +1613,11 @@ router.post("/pause-auction/:auction_id", async (req, res) => {
         */
         await pool.query(
             `
-            UPDATE auction_live_state
+          UPDATE auction_live_state
             SET
             is_paused=true,
-            paused_seconds=$1
+            paused_seconds=$1,
+            paused_player_id=current_player_id
             WHERE auction_id=$2
             `,
             [
@@ -1693,9 +1694,10 @@ router.post("/resume-auction/:auction_id", async (req, res) => {
 
         await pool.query(
             `
-            UPDATE auction_live_state
+           UPDATE auction_live_state
             SET
             is_paused=false,
+            current_player_id=paused_player_id,
             timer_end_time =
             NOW() + (paused_seconds || ' seconds')::interval
             WHERE auction_id=$1
