@@ -654,27 +654,31 @@ FOR UPDATE`,
         }
         const state = liveState.rows[0];
 
-        // ✅ PAUSE PROTECTION
-        // If auction is paused, player should not close or change
-        if (state.is_paused) {
+        // ✅ STRONG PAUSE + TIMER PROTECTION
+        const guardCheck = await client.query(
+            `
+    SELECT
+        is_paused,
+        paused_seconds,
+        EXTRACT(EPOCH FROM (timer_end_time - NOW())) AS remaining
+    FROM auction_live_state
+    WHERE auction_id=$1
+    FOR UPDATE
+    `,
+            [auction_id]
+        );
+
+        const guard = guardCheck.rows[0];
+
+        if (guard.is_paused === true) {
             await client.query("ROLLBACK");
             return res.status(400).json({
                 error: "Auction is paused. Player cannot be closed."
             });
         }
-        // ✅ TIMER PROTECTION
-        // Player can close only when timer has actually ended
-        const timerCheck = await client.query(
-            `
-    SELECT EXTRACT(EPOCH FROM (timer_end_time - NOW())) AS remaining
-    FROM auction_live_state
-    WHERE auction_id=$1
-    `,
-            [auction_id]
-        );
 
         const remainingSeconds =
-            Math.floor(Number(timerCheck.rows[0].remaining));
+            Math.floor(Number(guard.remaining));
 
         if (remainingSeconds > 0) {
             await client.query("ROLLBACK");
