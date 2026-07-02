@@ -282,7 +282,7 @@ RETURNING *
                 is_wicketkeeper || false,
                 basePrice
             ]
-        ); 
+        );
         res.json({
             success: true,
             player: result.rows[0]
@@ -653,6 +653,15 @@ FOR UPDATE`,
             });
         }
         const state = liveState.rows[0];
+        
+        // ✅ PAUSE PROTECTION
+        // If auction is paused, player should not close or change
+        if (state.is_paused) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+                error: "Auction is paused. Player cannot be closed."
+            });
+        }
         /*
         STEP 2 — Get Player
         */
